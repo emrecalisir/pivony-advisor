@@ -58,8 +58,12 @@ MONGODB_COLLECTION = (
     or "ETSReviews"
 )
 
-# Date filter — ETS uses ReviewSubmissionDate (string "dd-mm-yyyy HH:mm:ss")
-DATE_FIELD = os.environ.get("ETS_DATE_FIELD", "ReviewSubmissionDate")
+# Date: in Mongo, ReviewSubmissionDate is stored as sk ("dd-mm-yyyy HH:mm:ss")
+DATE_FIELDS = [
+    f.strip()
+    for f in os.environ.get("ETS_DATE_FIELD", "sk,ReviewSubmissionDate").split(",")
+    if f.strip()
+]
 DAYS_BACK = int(os.environ.get("ETS_DAYS_BACK", "365"))
 
 # Text / metadata (ETS API schema: ReviewContent, ReviewTitle, Rating)
@@ -111,6 +115,44 @@ def _first_value(doc: dict[str, Any], keys: list[str]) -> Any:
     return None
 
 
+def _doc_review_date(doc: dict[str, Any]) -> datetime | None:
+    for field in DATE_FIELDS:
+        parsed = _parse_date(doc.get(field))
+        if parsed:
+            return parsed
+    return None
+
+
+def _property_name(doc: dict[str, Any]) -> str | None:
+    attrs = doc.get("CustomAttributes") or {}
+    if isinstance(attrs, dict):
+        for key in ("vendorName", "projectName"):
+            val = attrs.get(key)
+            if val and str(val).strip():
+                return str(val).strip()
+    title = _first_value(doc, TITLE_FIELDS)
+    return str(title).strip() if title else None
+
+
+def _review_source(doc: dict[str, Any]) -> str | None:
+    attrs = doc.get("CustomAttributes") or {}
+    if isinstance(attrs, dict):
+        for key in ("channel", "clientName"):
+            val = attrs.get(key)
+            if val and str(val).strip():
+                return str(val).strip()
+    source = _first_value(doc, SOURCE_FIELDS)
+    return str(source).strip() if source else None
+
+
+def _coalesce_date_field_expr() -> dict[str, Any]:
+    """Mongo $ifNull chain: sk first, then ReviewSubmissionDate, etc."""
+    expr: Any = f"${DATE_FIELDS[0]}"
+    for field in DATE_FIELDS[1:]:
+        expr = {"$ifNull": [expr, f"${field}"]}
+    return expr
+
+
 def _parse_date(value: Any) -> datetime | None:
     if value is None:
         return None
@@ -144,12 +186,15 @@ def _review_to_markdown(doc: dict[str, Any], index: int) -> str | None:
     if not text:
         return None
 
-    title = _first_value(doc, TITLE_FIELDS)
+    title = _property_name(doc)
     rating = _first_value(doc, RATING_FIELDS)
-    source = _first_value(doc, SOURCE_FIELDS)
-    when = _parse_date(_first_value(doc, [DATE_FIELD]) or doc.get(DATE_FIELD))
+    source = _review_source(doc)
+    when = _doc_review_date(doc)
+    survey_id = doc.get("pk") or doc.get("sk")
 
     lines = [f"### Review {index}"]
+    if survey_id:
+        lines.append(f"- Survey: {survey_id}")
     if title:
         lines.append(f"- Property: {title}")
     if rating is not None:
@@ -172,53 +217,36 @@ def _base_match() -> dict[str, Any]:
     return match
 
 
-def _build_find_query(since: datetime) -> dict[str, Any]:
-    query: dict[str, Any] = {**_base_match(), DATE_FIELD: {"$gte": since}}
-    if EXTRA_FILTER_JSON.strip():
-        extra = json.loads(EXTRA_FILTER_JSON)
-        if not isinstance(extra, dict):
-            raise ValueError("ETS_EXTRA_FILTER_JSON must be a JSON object")
-        query = {"$and": [query, extra]}
-    return query
-
-
 def _fetch_reviews(collection, since: datetime) -> list[dict[str, Any]]:
-    projection = {DATE_FIELD: 1, "pk": 1, "sk": 1}
-    for field in TEXT_FIELDS + TITLE_FIELDS + RATING_FIELDS + SOURCE_FIELDS:
+    projection: dict[str, int] = {"pk": 1, "sk": 1, "CustomAttributes": 1}
+    for field in DATE_FIELDS + TEXT_FIELDS + TITLE_FIELDS + RATING_FIELDS + SOURCE_FIELDS:
         projection[field] = 1
 
-    # ETS ReviewSubmissionDate is "dd-mm-yyyy HH:mm:ss" — string $gte is wrong; use $dateFromString
-    if DATE_FIELD == "ReviewSubmissionDate":
-        pipeline: list[dict[str, Any]] = [
-            {"$match": _base_match()},
-            {
-                "$addFields": {
-                    "_parsedDate": {
-                        "$dateFromString": {
-                            "dateString": f"${DATE_FIELD}",
-                            "format": "%d-%m-%Y %H:%M:%S",
-                            "onError": None,
-                            "onNull": None,
-                        }
+    # ETS dates are "dd-mm-yyyy HH:mm:ss" on sk (not comparable as plain strings)
+    pipeline: list[dict[str, Any]] = [
+        {"$match": _base_match()},
+        {
+            "$addFields": {
+                "_parsedDate": {
+                    "$dateFromString": {
+                        "dateString": _coalesce_date_field_expr(),
+                        "format": "%d-%m-%Y %H:%M:%S",
+                        "onError": None,
+                        "onNull": None,
                     }
                 }
-            },
-            {"$match": {"_parsedDate": {"$gte": since}}},
-            {"$sort": {"_parsedDate": -1}},
-            {"$project": {**projection, "_parsedDate": 0}},
-        ]
-        if EXTRA_FILTER_JSON.strip():
-            extra = json.loads(EXTRA_FILTER_JSON)
-            pipeline[0]["$match"] = {"$and": [pipeline[0]["$match"], extra]}
-        if MAX_REVIEWS > 0:
-            pipeline.append({"$limit": MAX_REVIEWS})
-        return list(collection.aggregate(pipeline, allowDiskUse=True))
-
-    query = _build_find_query(since)
-    cursor = collection.find(query, projection=projection).sort(DATE_FIELD, -1)
+            }
+        },
+        {"$match": {"_parsedDate": {"$gte": since}}},
+        {"$sort": {"_parsedDate": -1}},
+        {"$project": {**projection, "_parsedDate": 0}},
+    ]
+    if EXTRA_FILTER_JSON.strip():
+        extra = json.loads(EXTRA_FILTER_JSON)
+        pipeline[0]["$match"] = {"$and": [pipeline[0]["$match"], extra]}
     if MAX_REVIEWS > 0:
-        cursor = cursor.limit(MAX_REVIEWS)
-    return list(cursor)
+        pipeline.append({"$limit": MAX_REVIEWS})
+    return list(collection.aggregate(pipeline, allowDiskUse=True))
 
 
 def _month_header(month_key: str) -> str:
@@ -332,7 +360,7 @@ def main() -> None:
 
     since = datetime.now(timezone.utc) - timedelta(days=DAYS_BACK)
     print(f"Connecting to MongoDB db={MONGODB_DB} collection={MONGODB_COLLECTION}")
-    print(f"Exporting reviews with {DATE_FIELD} >= {since.isoformat()}")
+    print(f"Exporting reviews with date field(s) {DATE_FIELDS} >= {since.isoformat()}")
 
     client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=15000)
     client.admin.command("ping")
@@ -342,7 +370,7 @@ def main() -> None:
     print(f"Fetched {len(docs)} documents")
 
     if not docs:
-        print("WARNING: No documents matched. Check DATE_FIELD / ETS_EXTRA_FILTER_JSON.")
+        print("WARNING: No documents matched. Check ETS_DATE_FIELD / ETS_EXTRA_FILTER_JSON.")
         sample = collection.find_one()
         if sample:
             print("Sample document keys:", sorted(sample.keys()))
@@ -358,7 +386,7 @@ def main() -> None:
             skipped += 1
             continue
         blocks.append(block)
-        when = _parse_date(doc.get(DATE_FIELD))
+        when = _doc_review_date(doc)
         month_key = (when or since).strftime("%Y-%m")
         by_month[month_key].append(block)
 

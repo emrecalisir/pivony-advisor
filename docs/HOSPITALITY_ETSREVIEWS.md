@@ -15,7 +15,9 @@ pip install pymongo
 | Collection | `ETSReviews` (not `etsreviews`) |
 | DB | `production` (prod) or `staging` |
 | Review text | `ReviewContent` |
-| Date | `ReviewSubmissionDate` (`dd-mm-yyyy HH:mm:ss`) |
+| Date | `sk` (ingest sonrası; format `dd-mm-yyyy HH:mm:ss`) |
+| Hotel | `CustomAttributes.vendorName` |
+| Text | `ReviewContent` (+ `SubQuestionAnswers` ayrı alan) |
 | Rating | `Rating` |
 | Title | `ReviewTitle` (optional) |
 
