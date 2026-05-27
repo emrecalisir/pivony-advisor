@@ -7,3 +7,4 @@ qdrant-client>=1.10.1
 google-cloud-storage>=2.17.0
 fastapi>=0.110.0
 uvicorn>=0.28.0
+pymongo>=4.6.0
