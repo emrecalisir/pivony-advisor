@@ -18,13 +18,25 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+# core package lives under src/ (same as ingest.py)
 _SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _SRC not in sys.path:
-    sys.path.insert(0, os.path.dirname(_SRC))
 
-from core.config import BASE_DIR, load_project_env
 
-load_project_env()
+def _load_advisor_config():
+    """Load config.py without importing core.__init__ (avoids RAG/LLM deps)."""
+    import importlib.util
+
+    config_path = os.path.join(_SRC, "core", "config.py")
+    spec = importlib.util.spec_from_file_location("pivony_advisor_config", config_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load config from {config_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_config = _load_advisor_config()
+BASE_DIR = _config.BASE_DIR
 
 # ---------------------------------------------------------------------------
 # Configuration (.env) — canonical: PRODUCTION_MONGODB_URI, MONGO_COLLECTION
