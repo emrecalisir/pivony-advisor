@@ -18,15 +18,28 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-_BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _BASE not in sys.path:
-    sys.path.insert(0, _BASE)
+_SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _SRC not in sys.path:
+    sys.path.insert(0, os.path.dirname(_SRC))
+
+from core.config import BASE_DIR, load_project_env
+
+load_project_env()
 
 # ---------------------------------------------------------------------------
-# Configuration (override via environment)
+# Configuration (.env or shell; Pivony aliases supported)
 # ---------------------------------------------------------------------------
-MONGODB_URI = os.environ.get("MONGODB_URI", "")
-MONGODB_DB = os.environ.get("MONGODB_DB", "")
+MONGODB_URI = (
+    os.environ.get("MONGODB_URI", "")
+    or os.environ.get("PRODUCTION_MONGODB_URI", "")
+    or os.environ.get("MONGODB_CONNECTION_STRING", "")
+)
+MONGODB_DB = (
+    os.environ.get("MONGODB_DB", "")
+    or os.environ.get("PRODUCTION_MONGODB_DATABASE", "")
+    or os.environ.get("MONGODB_DATABASE_NAME", "")
+    or "production"
+)
 # Pivony prod collection name is ETSReviews (see pivony-external-api / pivony-scripts)
 MONGODB_COLLECTION = os.environ.get("MONGODB_COLLECTION", "ETSReviews")
 
@@ -69,10 +82,7 @@ REVIEWS_PER_FILE = int(os.environ.get("ETS_REVIEWS_PER_FILE", "500"))
 MAX_REVIEWS = int(os.environ.get("ETS_MAX_REVIEWS", "0"))  # 0 = no limit
 SKIP_EXISTING = os.environ.get("ETS_SKIP_EXISTING", "").lower() in ("1", "true", "yes")
 OUTPUT_DIR = Path(
-    os.environ.get(
-        "ETS_OUTPUT_DIR",
-        os.path.join(os.path.dirname(os.path.dirname(_BASE)), "output", "hospitality"),
-    )
+    os.environ.get("ETS_OUTPUT_DIR", os.path.join(BASE_DIR, "output", "hospitality"))
 )
 
 # Optional Mongo filter JSON, e.g. {"status":"published"}
@@ -268,9 +278,9 @@ def _write_raw_batches(by_month: dict[str, list[str]], out_dir: Path) -> int:
 
 
 def main() -> None:
-    if not MONGODB_URI or not MONGODB_DB:
-        print("ERROR: Set MONGODB_URI and MONGODB_DB environment variables.")
-        print("See docs/HOSPITALITY_ETSREVIEWS.md")
+    if not MONGODB_URI:
+        print("ERROR: Set MONGODB_URI in .env (or PRODUCTION_MONGODB_URI).")
+        print("Copy .env.example to .env and fill values. See docs/HOSPITALITY_ETSREVIEWS.md")
         sys.exit(1)
 
     try:

@@ -5,6 +5,7 @@ __pycache__/
 venv/
 .env
 .env.*
+!.env.example
 logs/*.log
 logs/*.log.*
 .DS_Store

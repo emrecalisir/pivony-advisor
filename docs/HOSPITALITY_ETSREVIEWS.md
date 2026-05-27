@@ -27,26 +27,31 @@ Verify once:
 mongosh "$MONGODB_URI" --eval 'db.getSiblingDB("production").ETSReviews.findOne({ReviewContent:{$exists:true}})'
 ```
 
-## 3. Export (last 365 days)
+## 3. `.env` setup
 
 ```bash
-export MONGODB_URI="mongodb://..."
-export MONGODB_DB="production"
-export MONGODB_COLLECTION="ETSReviews"
+cp .env.example .env
+# Edit .env — set MONGODB_URI (or PRODUCTION_MONGODB_URI)
+```
 
-# Defaults already match ETS schema; override only if needed:
-export ETS_DATE_FIELD="ReviewSubmissionDate"
-export ETS_TEXT_FIELDS="ReviewContent,ReviewText"
-export ETS_TITLE_FIELDS="ReviewTitle"
-export ETS_RATING_FIELDS="Rating"
-export ETS_DAYS_BACK=365
+Example `.env`:
 
-# Test with 1000 reviews first:
-export ETS_MAX_REVIEWS=1000
-export ETS_EXPORT_MODE=monthly   # or raw_files
+```env
+MONGODB_URI=mongodb+srv://USER:PASS@cluster.mongodb.net/?appName=production
+MONGODB_DB=production
+MONGODB_COLLECTION=ETSReviews
+ETS_DAYS_BACK=365
+ETS_MAX_REVIEWS=5000
+```
 
+## 4. Export (last 365 days)
+
+```bash
+pip install -r requirements.txt
 python src/data/export_etsreviews.py
 ```
+
+Optional overrides (shell or `.env`): `ETS_DATE_FIELD`, `ETS_TEXT_FIELDS`, `ETS_SKIP_EXISTING`, `ETS_EXPORT_MODE`.
 
 Output layout (ay klasörleri — GCS ile aynı):
 
@@ -59,14 +64,14 @@ output/hospitality/
 
 Zaten yüklü ayları atlamak için: `export ETS_SKIP_EXISTING=true`
 
-## 4. Upload to GCS
+## 5. Upload to GCS
 
 ```bash
 export GOOGLE_APPLICATION_CREDENTIALS=config/google_creds.json
 gsutil -m rsync -r output/hospitality gs://pivony-advisor/hospitality
 ```
 
-## 5. Ingest into Qdrant
+## 6. Ingest into Qdrant
 
 On Qdrant VM:
 
@@ -82,7 +87,7 @@ Verify:
 curl -s http://127.0.0.1:6333/collections/pivony_sector_hospitality
 ```
 
-## 6. Test advisor
+## 7. Test advisor
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/v1/chat/completions \

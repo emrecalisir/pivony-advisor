@@ -6,6 +6,22 @@ import os
 import re
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def load_project_env() -> None:
+    """Load pivony-advisor/.env if present (does not override existing env vars)."""
+    env_path = os.path.join(BASE_DIR, ".env")
+    if not os.path.isfile(env_path):
+        return
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(env_path, override=False)
+    except ImportError:
+        pass
+
+
+load_project_env()
 CREDS_PATH = os.path.join(BASE_DIR, "config", "google_creds.json")
 LOGS_DIR = os.path.join(BASE_DIR, "logs")
 ADVISOR_LOG_PATH = os.path.join(LOGS_DIR, "advisor.log")
