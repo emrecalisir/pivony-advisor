@@ -41,7 +41,10 @@ from core.config import (
     QDRANT_TIMEOUT_SEC,
     QDRANT_URL,
     VECTOR_SIZE,
+    load_project_env,
 )
+
+INGEST_BUILD = "month-by-month-v2"
 from core.ingest_utils import load_bucket_documents, load_local_documents
 from ingest_logging import INGEST_LOG_PATH, setup_ingest_logger
 
@@ -51,14 +54,19 @@ if not os.path.exists(CREDS_PATH):
 
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = CREDS_PATH
 
-RECREATE_COLLECTIONS = os.environ.get("RECREATE_COLLECTIONS", "").lower() in (
-    "1",
-    "true",
-    "yes",
-)
-INGEST_PROGRESS_EVERY = int(os.environ.get("INGEST_PROGRESS_EVERY", "25"))
-INGEST_BATCH_SIZE = int(os.environ.get("INGEST_BATCH_SIZE", "100"))
+RECREATE_COLLECTIONS = False
+INGEST_PROGRESS_EVERY = 25
+INGEST_BATCH_SIZE = 100
 _MONTH_DIR_RE = re.compile(r"^\d{4}-\d{2}$")
+
+
+def _reload_settings_from_env() -> None:
+    """Read .env then refresh module settings (call at start of main)."""
+    global RECREATE_COLLECTIONS, INGEST_PROGRESS_EVERY, INGEST_BATCH_SIZE
+    load_project_env()
+    RECREATE_COLLECTIONS = _parse_bool_env("RECREATE_COLLECTIONS", False)
+    INGEST_PROGRESS_EVERY = int(os.environ.get("INGEST_PROGRESS_EVERY", "25"))
+    INGEST_BATCH_SIZE = int(os.environ.get("INGEST_BATCH_SIZE", "100"))
 
 
 def _parse_bool_env(name: str, default: bool) -> bool:
@@ -217,13 +225,27 @@ def _ingest_local_by_month(
             logger,
             recreate=RECREATE_COLLECTIONS and idx == 0,
         )
+        logger.info(
+            "=== Month %s COMPLETE (%s/%s) ===",
+            month_path.name,
+            idx + 1,
+            len(months),
+        )
 
 
 def main() -> None:
+    _reload_settings_from_env()
     logger = setup_ingest_logger()
     started = time.monotonic()
     logger.info("Pivony Advisor - Multi-collection ingestion started")
+    logger.info("Ingest build: %s (expect month-by-month logs below)", INGEST_BUILD)
     logger.info("Log file: %s", INGEST_LOG_PATH)
+    logger.info(
+        "Settings: RECREATE_COLLECTIONS=%s INGEST_BATCH_SIZE=%s INGEST_PROGRESS_EVERY=%s",
+        RECREATE_COLLECTIONS,
+        INGEST_BATCH_SIZE,
+        INGEST_PROGRESS_EVERY,
+    )
 
     local_dir = os.environ.get("INGEST_LOCAL_DIR", "").strip()
     local_prefix = os.environ.get("INGEST_LOCAL_PREFIX", "hospitality").strip()
