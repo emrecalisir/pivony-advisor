@@ -160,6 +160,26 @@ def _ingest_local_path(
     gc.collect()
 
 
+def _filter_month_dirs(months: list[Path], logger) -> list[Path]:
+    only_month = os.environ.get("INGEST_ONLY_MONTH", "").strip()
+    from_month = os.environ.get("INGEST_FROM_MONTH", "").strip()
+    selected: list[Path] = []
+    for month_path in months:
+        if only_month and month_path.name != only_month:
+            continue
+        if from_month and month_path.name < from_month:
+            logger.info(
+                "Skip month %s (INGEST_FROM_MONTH=%s)",
+                month_path.name,
+                from_month,
+            )
+            continue
+        selected.append(month_path)
+    if only_month and not selected:
+        logger.warning("INGEST_ONLY_MONTH=%s not found under output.", only_month)
+    return selected
+
+
 def _ingest_local_by_month(
     root_dir: str,
     local_prefix: str,
@@ -168,7 +188,7 @@ def _ingest_local_by_month(
     logger,
 ) -> None:
     root = Path(root_dir)
-    months = _discover_month_dirs(root)
+    months = _filter_month_dirs(_discover_month_dirs(root), logger)
     if not months:
         logger.warning("No YYYY-MM subfolders under %s; ingesting as single tree.", root)
         _ingest_local_path(
@@ -182,8 +202,9 @@ def _ingest_local_by_month(
         return
 
     logger.info(
-        "Month-by-month ingest: %s folders (avoids loading all 5118 files into RAM)",
+        "Month-by-month ingest: %s folder(s) | RECREATE_COLLECTIONS=%s (append if false)",
         len(months),
+        RECREATE_COLLECTIONS,
     )
     for idx, month_path in enumerate(months):
         prefix = f"{local_prefix}/{month_path.name}" if local_prefix else month_path.name

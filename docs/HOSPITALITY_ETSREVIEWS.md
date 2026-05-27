@@ -91,9 +91,22 @@ export QDRANT_HOST=127.0.0.1
 export RECREATE_COLLECTIONS=false
 export INGEST_LOCAL_DIR=output/hospitality
 export INGEST_LOCAL_PREFIX=hospitality
+export INGEST_BY_MONTH=true
 
 python src/data/ingest.py
 tail -f logs/ingest.log
+```
+
+**Resume** (export files already on disk; do not wipe Qdrant):
+
+```bash
+export RECREATE_COLLECTIONS=false
+export INGEST_BY_MONTH=true
+# Optional: skip months already done, start from e.g. 2025-08
+export INGEST_FROM_MONTH=2025-08
+# Or a single month only:
+# export INGEST_ONLY_MONTH=2025-09
+python src/data/ingest.py
 ```
 
 Progress in `logs/ingest.log`. Large exports auto-use **month-by-month** ingest (`INGEST_BY_MONTH=true`) to avoid OOM on 1M+ chunks.
