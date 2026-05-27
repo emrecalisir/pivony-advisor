@@ -99,6 +99,7 @@ SOURCE_FIELDS = [
 EXPORT_MODE = os.environ.get("ETS_EXPORT_MODE", "monthly")  # monthly | raw_files
 REVIEWS_PER_FILE = int(os.environ.get("ETS_REVIEWS_PER_FILE", "500"))
 MAX_REVIEWS = int(os.environ.get("ETS_MAX_REVIEWS", "0"))  # 0 = no limit
+CURSOR_BATCH_SIZE = int(os.environ.get("ETS_CURSOR_BATCH_SIZE", "100"))
 SKIP_EXISTING = os.environ.get("ETS_SKIP_EXISTING", "").lower() in ("1", "true", "yes")
 OUTPUT_DIR = Path(
     os.environ.get("ETS_OUTPUT_DIR", os.path.join(BASE_DIR, "output", "hospitality"))
@@ -217,14 +218,37 @@ def _base_match() -> dict[str, Any]:
     return match
 
 
-def _fetch_reviews(collection, since: datetime) -> list[dict[str, Any]]:
+def _projection_fields() -> dict[str, int]:
     projection: dict[str, int] = {"pk": 1, "sk": 1, "CustomAttributes": 1}
     for field in DATE_FIELDS + TEXT_FIELDS + TITLE_FIELDS + RATING_FIELDS + SOURCE_FIELDS:
         projection[field] = 1
+    return projection
 
-    # ETS dates are "dd-mm-yyyy HH:mm:ss" on sk (not comparable as plain strings)
+
+def _month_windows(since: datetime, until: datetime):
+    """Yield (window_start, window_end, YYYY-MM) calendar months in [since, until)."""
+    current = datetime(since.year, since.month, 1, tzinfo=timezone.utc)
+    while current < until:
+        if current.month == 12:
+            next_month = datetime(current.year + 1, 1, 1, tzinfo=timezone.utc)
+        else:
+            next_month = datetime(current.year, current.month + 1, 1, tzinfo=timezone.utc)
+        window_start = max(current, since)
+        window_end = min(next_month, until)
+        if window_start < window_end:
+            yield window_start, window_end, current.strftime("%Y-%m")
+        current = next_month
+
+
+def _build_pipeline(date_start: datetime, date_end: datetime) -> list[dict[str, Any]]:
+    projection = _projection_fields()
+    match_stage = _base_match()
+    if EXTRA_FILTER_JSON.strip():
+        extra = json.loads(EXTRA_FILTER_JSON)
+        match_stage = {"$and": [match_stage, extra]}
+
     pipeline: list[dict[str, Any]] = [
-        {"$match": _base_match()},
+        {"$match": match_stage},
         {
             "$addFields": {
                 "_parsedDate": {
@@ -237,16 +261,63 @@ def _fetch_reviews(collection, since: datetime) -> list[dict[str, Any]]:
                 }
             }
         },
-        {"$match": {"_parsedDate": {"$gte": since}}},
+        {"$match": {"_parsedDate": {"$gte": date_start, "$lt": date_end}}},
         {"$sort": {"_parsedDate": -1}},
         {"$project": projection},
     ]
-    if EXTRA_FILTER_JSON.strip():
-        extra = json.loads(EXTRA_FILTER_JSON)
-        pipeline[0]["$match"] = {"$and": [pipeline[0]["$match"], extra]}
-    if MAX_REVIEWS > 0:
-        pipeline.append({"$limit": MAX_REVIEWS})
-    return list(collection.aggregate(pipeline, allowDiskUse=True))
+    return pipeline
+
+
+def _iter_month_documents(collection, since: datetime, until: datetime):
+    """Stream reviews month-by-month to limit memory (client + server)."""
+    for window_start, window_end, month_key in _month_windows(since, until):
+        month_dir = OUTPUT_DIR / month_key
+        if SKIP_EXISTING and month_dir.is_dir() and any(month_dir.glob("*.md")):
+            print(f"Skip month {month_key} (folder already has .md files)")
+            continue
+
+        pipeline = _build_pipeline(window_start, window_end)
+        print(f"Query month {month_key} ({window_start.date()} .. {window_end.date()})")
+        cursor = collection.aggregate(
+            pipeline,
+            allowDiskUse=True,
+            batchSize=CURSOR_BATCH_SIZE,
+        )
+        for doc in cursor:
+            yield month_key, doc
+
+
+class _MonthFileWriter:
+    """Append reviews to part files; flush every REVIEWS_PER_FILE blocks."""
+
+    def __init__(self, out_dir: Path) -> None:
+        self.out_dir = out_dir
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+        self._part: dict[str, int] = defaultdict(int)
+        self._count: dict[str, int] = defaultdict(int)
+        self.files_written = 0
+
+    def _next_path(self, month_key: str) -> Path:
+        month_dir = self.out_dir / month_key
+        month_dir.mkdir(parents=True, exist_ok=True)
+        if self._part[month_key] == 0:
+            self._part[month_key] = 1
+        return month_dir / f"etsreviews_part_{self._part[month_key]:03d}.md"
+
+    def append(self, month_key: str, block: str) -> None:
+        if self._count[month_key] >= REVIEWS_PER_FILE:
+            self._part[month_key] += 1
+            self._count[month_key] = 0
+
+        path = self._next_path(month_key)
+        if not path.exists():
+            path.write_text(_month_header(month_key) + block, encoding="utf-8")
+            self.files_written += 1
+            print(f"Wrote {path}")
+        else:
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write("\n\n" + block)
+        self._count[month_key] += 1
 
 
 def _month_header(month_key: str) -> str:
@@ -358,46 +429,46 @@ def main() -> None:
         print("ERROR: pip install pymongo")
         sys.exit(1)
 
-    since = datetime.now(timezone.utc) - timedelta(days=DAYS_BACK)
+    until = datetime.now(timezone.utc)
+    since = until - timedelta(days=DAYS_BACK)
     print(f"Connecting to MongoDB db={MONGODB_DB} collection={MONGODB_COLLECTION}")
-    print(f"Exporting reviews with date field(s) {DATE_FIELDS} >= {since.isoformat()}")
+    print(
+        f"Streaming export {DATE_FIELDS} from {since.date()} to {until.date()} "
+        f"(batch={CURSOR_BATCH_SIZE}, part_size={REVIEWS_PER_FILE})"
+    )
 
     client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=15000)
     client.admin.command("ping")
     collection = client[MONGODB_DB][MONGODB_COLLECTION]
 
-    docs = _fetch_reviews(collection, since)
-    print(f"Fetched {len(docs)} documents")
-
-    if not docs:
-        print("WARNING: No documents matched. Check ETS_DATE_FIELD / ETS_EXTRA_FILTER_JSON.")
-        sample = collection.find_one()
-        if sample:
-            print("Sample document keys:", sorted(sample.keys()))
-        sys.exit(0)
-
-    blocks: list[str] = []
-    by_month: dict[str, list[str]] = defaultdict(list)
+    writer = _MonthFileWriter(OUTPUT_DIR)
+    exported = 0
     skipped = 0
+    idx = 0
 
-    for idx, doc in enumerate(docs, start=1):
+    for month_key, doc in _iter_month_documents(collection, since, until):
+        if MAX_REVIEWS > 0 and exported >= MAX_REVIEWS:
+            print(f"Reached ETS_MAX_REVIEWS={MAX_REVIEWS}, stopping.")
+            break
+        idx += 1
         block = _review_to_markdown(doc, idx)
         if not block:
             skipped += 1
             continue
-        blocks.append(block)
-        when = _doc_review_date(doc)
-        month_key = (when or since).strftime("%Y-%m")
-        by_month[month_key].append(block)
+        writer.append(month_key, block)
+        exported += 1
+        if exported % 1000 == 0:
+            print(f"  … {exported} reviews written")
 
-    print(f"Usable reviews: {len(blocks)} (skipped {skipped} without text)")
+    if exported == 0:
+        print("WARNING: No documents matched. Check ETS_DATE_FIELD / ETS_EXTRA_FILTER_JSON.")
+        sample = collection.find_one(_base_match())
+        if sample:
+            print("Sample document keys:", sorted(sample.keys()))
+        sys.exit(0)
 
-    if EXPORT_MODE == "raw_files":
-        file_count = _write_raw_batches(by_month, OUTPUT_DIR)
-    else:
-        file_count = _write_monthly_files(by_month, OUTPUT_DIR)
-
-    print(f"Done. {file_count} file(s) under {OUTPUT_DIR}/YYYY-MM/")
+    print(f"Usable reviews: {exported} (skipped {skipped} without text)")
+    print(f"Done. {writer.files_written} new file(s) under {OUTPUT_DIR}/YYYY-MM/")
     print("Next:")
     print(f"  gsutil -m rsync -r {OUTPUT_DIR} gs://pivony-advisor/hospitality")
     print("  export RECREATE_COLLECTIONS=false && python src/data/ingest.py")

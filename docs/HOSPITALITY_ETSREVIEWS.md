@@ -111,6 +111,8 @@ export ETS_EXTRA_FILTER_JSON='{"status":"published"}'
 
 ## Volume tips
 
-- Full year may be millions of rows — start with `ETS_MAX_REVIEWS=50000` and increase.
-- `monthly` mode keeps fewer, larger files (better for ingest).
+- Full year may be millions of rows — export streams **month-by-month** to avoid OOM (`Killed`).
+- Test first: `ETS_MAX_REVIEWS=5000` in `.env`
+- Tune memory: `ETS_CURSOR_BATCH_SIZE=50`, `ETS_REVIEWS_PER_FILE=500`
+- If the VM is small, run export on a machine with more RAM, then `rsync output/hospitality` to Qdrant VM.
 - Platform KC stays in `master/`; reviews only in `hospitality/`.
