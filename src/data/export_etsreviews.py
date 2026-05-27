@@ -239,7 +239,7 @@ def _fetch_reviews(collection, since: datetime) -> list[dict[str, Any]]:
         },
         {"$match": {"_parsedDate": {"$gte": since}}},
         {"$sort": {"_parsedDate": -1}},
-        {"$project": {**projection, "_parsedDate": 0}},
+        {"$project": projection},
     ]
     if EXTRA_FILTER_JSON.strip():
         extra = json.loads(EXTRA_FILTER_JSON)
