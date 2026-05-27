@@ -96,7 +96,9 @@ python src/data/ingest.py
 tail -f logs/ingest.log
 ```
 
-Progress every `INGEST_PROGRESS_EVERY` files (default 25) during chunking, then every `INGEST_BATCH_SIZE` chunks (default 200) during Qdrant indexing.
+Progress in `logs/ingest.log`. Large exports auto-use **month-by-month** ingest (`INGEST_BY_MONTH=true`) to avoid OOM on 1M+ chunks.
+
+`INGEST_PROGRESS_EVERY` (default 25) during chunking; `INGEST_BATCH_SIZE` (default 100) during Qdrant indexing.
 
 Or from GCS after a successful `gsutil rsync`:
 

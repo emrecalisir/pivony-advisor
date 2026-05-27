@@ -12,9 +12,12 @@ Root-level .txt/.md files are treated as platform knowledge (legacy).
 
 from __future__ import annotations
 
+import gc
 import os
+import re
 import sys
 import time
+from pathlib import Path
 
 # Allow imports from src/ (core package lives here)
 _BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -54,7 +57,21 @@ RECREATE_COLLECTIONS = os.environ.get("RECREATE_COLLECTIONS", "").lower() in (
     "yes",
 )
 INGEST_PROGRESS_EVERY = int(os.environ.get("INGEST_PROGRESS_EVERY", "25"))
-INGEST_BATCH_SIZE = int(os.environ.get("INGEST_BATCH_SIZE", "200"))
+INGEST_BATCH_SIZE = int(os.environ.get("INGEST_BATCH_SIZE", "100"))
+_MONTH_DIR_RE = re.compile(r"^\d{4}-\d{2}$")
+
+
+def _parse_bool_env(name: str, default: bool) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes")
+
+
+def _discover_month_dirs(root: Path) -> list[Path]:
+    return sorted(
+        p for p in root.iterdir() if p.is_dir() and _MONTH_DIR_RE.match(p.name)
+    )
 
 
 def _index_collection_batched(
@@ -63,9 +80,11 @@ def _index_collection_batched(
     embeddings: GoogleGenerativeAIEmbeddings,
     client: QdrantClient,
     logger,
+    *,
+    recreate: bool = False,
 ) -> None:
     total = len(docs)
-    if RECREATE_COLLECTIONS:
+    if recreate:
         logger.info("Recreating collection '%s'...", collection_name)
         client.recreate_collection(
             collection_name=collection_name,
@@ -102,6 +121,83 @@ def _index_collection_batched(
         )
 
 
+def _ingest_local_path(
+    local_dir: str,
+    local_prefix: str,
+    embeddings: GoogleGenerativeAIEmbeddings,
+    client: QdrantClient,
+    logger,
+    *,
+    recreate: bool,
+) -> None:
+    by_collection = load_local_documents(
+        local_dir,
+        path_prefix=local_prefix,
+        progress_every=INGEST_PROGRESS_EVERY,
+        on_progress=logger.info,
+    )
+    if not by_collection:
+        logger.warning("No chunks from %s", local_dir)
+        return
+
+    for collection_name, docs in by_collection.items():
+        logger.info(
+            "Start indexing '%s' (%s chunks, batch=%s)",
+            collection_name,
+            len(docs),
+            INGEST_BATCH_SIZE,
+        )
+        _index_collection_batched(
+            collection_name,
+            docs,
+            embeddings,
+            client,
+            logger,
+            recreate=recreate,
+        )
+        logger.info("SUCCESS: %s (%s chunks).", collection_name, len(docs))
+    del by_collection
+    gc.collect()
+
+
+def _ingest_local_by_month(
+    root_dir: str,
+    local_prefix: str,
+    embeddings: GoogleGenerativeAIEmbeddings,
+    client: QdrantClient,
+    logger,
+) -> None:
+    root = Path(root_dir)
+    months = _discover_month_dirs(root)
+    if not months:
+        logger.warning("No YYYY-MM subfolders under %s; ingesting as single tree.", root)
+        _ingest_local_path(
+            root_dir,
+            local_prefix,
+            embeddings,
+            client,
+            logger,
+            recreate=RECREATE_COLLECTIONS,
+        )
+        return
+
+    logger.info(
+        "Month-by-month ingest: %s folders (avoids loading all 5118 files into RAM)",
+        len(months),
+    )
+    for idx, month_path in enumerate(months):
+        prefix = f"{local_prefix}/{month_path.name}" if local_prefix else month_path.name
+        logger.info("=== Month %s (%s/%s) ===", month_path.name, idx + 1, len(months))
+        _ingest_local_path(
+            str(month_path),
+            prefix,
+            embeddings,
+            client,
+            logger,
+            recreate=RECREATE_COLLECTIONS and idx == 0,
+        )
+
+
 def main() -> None:
     logger = setup_ingest_logger()
     started = time.monotonic()
@@ -110,37 +206,6 @@ def main() -> None:
 
     local_dir = os.environ.get("INGEST_LOCAL_DIR", "").strip()
     local_prefix = os.environ.get("INGEST_LOCAL_PREFIX", "hospitality").strip()
-
-    if local_dir:
-        logger.info(
-            "Loading local files from '%s' (prefix=%s, progress_every=%s)",
-            local_dir,
-            local_prefix or "(none)",
-            INGEST_PROGRESS_EVERY,
-        )
-        try:
-            by_collection = load_local_documents(
-                local_dir,
-                path_prefix=local_prefix,
-                progress_every=INGEST_PROGRESS_EVERY,
-                on_progress=logger.info,
-            )
-        except Exception as exc:
-            logger.error("Failed to read local directory: %s", exc)
-            sys.exit(1)
-    else:
-        logger.info("Scanning bucket '%s'...", GCS_BUCKET_NAME)
-        storage_client = storage.Client(project=GCP_PROJECT)
-        try:
-            bucket = storage_client.bucket(GCS_BUCKET_NAME)
-            by_collection = load_bucket_documents(bucket)
-        except Exception as exc:
-            logger.error("Failed to read GCS bucket: %s", exc)
-            sys.exit(1)
-
-    if not by_collection:
-        logger.warning("No .txt/.md files found.")
-        sys.exit(0)
 
     logger.info("Loading Vertex AI embeddings (text-embedding-004)...")
     embeddings = GoogleGenerativeAIEmbeddings(
@@ -159,14 +224,50 @@ def main() -> None:
         logger.error("Cannot reach Qdrant: %s", exc)
         sys.exit(1)
 
-    for collection_name, docs in by_collection.items():
-        logger.info("Start indexing '%s' (%s chunks, batch=%s)", collection_name, len(docs), INGEST_BATCH_SIZE)
-        try:
-            _index_collection_batched(collection_name, docs, embeddings, client, logger)
-            logger.info("SUCCESS: %s (%s chunks).", collection_name, len(docs))
-        except Exception as exc:
-            logger.error("Failed to index %s: %s", collection_name, exc)
-            sys.exit(1)
+    try:
+        if local_dir:
+            root = Path(local_dir)
+            month_dirs = _discover_month_dirs(root)
+            by_month_default = bool(month_dirs)
+            ingest_by_month = _parse_bool_env("INGEST_BY_MONTH", by_month_default)
+            logger.info(
+                "Local ingest '%s' prefix=%s progress_every=%s by_month=%s",
+                local_dir,
+                local_prefix or "(none)",
+                INGEST_PROGRESS_EVERY,
+                ingest_by_month,
+            )
+            if ingest_by_month:
+                _ingest_local_by_month(local_dir, local_prefix, embeddings, client, logger)
+            else:
+                _ingest_local_path(
+                    local_dir,
+                    local_prefix,
+                    embeddings,
+                    client,
+                    logger,
+                    recreate=RECREATE_COLLECTIONS,
+                )
+        else:
+            logger.info("Scanning bucket '%s'...", GCS_BUCKET_NAME)
+            storage_client = storage.Client(project=GCP_PROJECT)
+            bucket = storage_client.bucket(GCS_BUCKET_NAME)
+            by_collection = load_bucket_documents(bucket)
+            if not by_collection:
+                logger.warning("No .txt/.md files found.")
+                sys.exit(0)
+            for collection_name, docs in by_collection.items():
+                _index_collection_batched(
+                    collection_name,
+                    docs,
+                    embeddings,
+                    client,
+                    logger,
+                    recreate=RECREATE_COLLECTIONS,
+                )
+    except Exception as exc:
+        logger.error("Ingest failed: %s", exc)
+        sys.exit(1)
 
     logger.info("All collections indexed successfully in %.1fs.", time.monotonic() - started)
 
