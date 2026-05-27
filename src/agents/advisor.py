@@ -7,9 +7,8 @@ import sys
 import textwrap
 
 _BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_SRC = os.path.dirname(_BASE)
-if _SRC not in sys.path:
-    sys.path.insert(0, _SRC)
+if _BASE not in sys.path:
+    sys.path.insert(0, _BASE)
 
 from core.config import CREDS_PATH, DEFAULT_SECTOR
 from core.rag import build_embeddings, build_llm, create_qdrant_client, invoke_advisor

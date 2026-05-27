@@ -15,11 +15,10 @@ from __future__ import annotations
 import os
 import sys
 
-# Allow imports from src/
+# Allow imports from src/ (core package lives here)
 _BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_SRC = os.path.dirname(_BASE)
-if _SRC not in sys.path:
-    sys.path.insert(0, _SRC)
+if _BASE not in sys.path:
+    sys.path.insert(0, _BASE)
 
 from google.cloud import storage
 from langchain_google_genai import GoogleGenerativeAIEmbeddings

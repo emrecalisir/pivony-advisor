@@ -9,10 +9,10 @@ import time
 import uuid
 from typing import Literal
 
+# Allow imports from src/ (core, api, data packages live here)
 _BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_SRC = os.path.dirname(_BASE)
-if _SRC not in sys.path:
-    sys.path.insert(0, _SRC)
+if _BASE not in sys.path:
+    sys.path.insert(0, _BASE)
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
