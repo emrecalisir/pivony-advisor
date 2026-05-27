@@ -90,6 +90,7 @@ def log_conversation(
     messages: list[dict[str, str]],
     assistant_response: str,
     suggested_followups: list[str] | None = None,
+    guidance: str | None = None,
     endpoint: str = "/v1/chat/completions",
 ) -> None:
     """Append one JSON line to logs/history.log."""
@@ -103,6 +104,7 @@ def log_conversation(
         "messages": messages,
         "assistant_response": assistant_response,
         "suggested_followups": suggested_followups or [],
+        "guidance": guidance or "",
     }
     logging.getLogger(_HISTORY_LOGGER_NAME).info(
         json.dumps(record, ensure_ascii=False)

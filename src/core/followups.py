@@ -145,6 +145,22 @@ _TOPIC_RULES: tuple[_TopicRule, ...] = (
             "Dashboard nasıl oluşturabilirim?",
         ),
     ),
+    _TopicRule(
+        q_keywords=(
+            "müşteri deneyim",
+            "customer experience",
+            "deneyimini artır",
+            "memnuniyet",
+            "cx ",
+            "müşteri memnun",
+        ),
+        followups=(
+            "İç veriyi nasıl analiz ederim?",
+            "AI Insights raporu nasıl alınır?",
+            "My Workspace'e KPI widget'ı nasıl eklerim?",
+        ),
+        a_keywords=("voice of customer", "voc", "segment", "root cause"),
+    ),
 )
 
 _DEFAULT_FOLLOWUPS: tuple[str, ...] = (

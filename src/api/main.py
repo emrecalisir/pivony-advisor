@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from core.config import CREDS_PATH, DEFAULT_SECTOR, sector_slugify
 from core.conversation import prepare_conversational_input
 from core.followups import generate_followups
+from core.guidance import generate_contextual_guidance
 from core.logging_config import get_advisor_logger, log_conversation, setup_logging
 from core.rag import (
     build_embeddings,
@@ -155,6 +156,10 @@ class ChatCompletionResponse(BaseModel):
     model: str
     choices: list[ChatCompletionChoice]
     pivony_suggested_followups: list[str] = Field(default_factory=list)
+    pivony_guidance: str = Field(
+        default="",
+        description="Cursor-style contextual next-step guidance prose",
+    )
 
 
 def _prepare_chat_input(messages: list[ChatMessage]) -> dict[str, str]:
@@ -194,6 +199,7 @@ def _openai_chat_completion(
     content: str,
     *,
     suggested_followups: list[str] | None = None,
+    guidance: str | None = None,
 ) -> ChatCompletionResponse:
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex}",
@@ -203,6 +209,7 @@ def _openai_chat_completion(
             ChatCompletionChoice(message=ChatCompletionMessage(content=content))
         ],
         pivony_suggested_followups=suggested_followups or [],
+        pivony_guidance=guidance or "",
     )
 
 
@@ -266,6 +273,7 @@ async def chat_completions(
             answer,
             context_hint=api_system,
         )
+        guidance = generate_contextual_guidance(followups)
         log_conversation(
             user_id=user_id,
             user_email=user_email,
@@ -274,11 +282,13 @@ async def chat_completions(
             messages=_messages_for_history(request.messages),
             assistant_response=answer,
             suggested_followups=followups,
+            guidance=guidance,
         )
         return _openai_chat_completion(
             request.model,
             answer,
             suggested_followups=followups,
+            guidance=guidance,
         )
     except HTTPException:
         raise
@@ -306,6 +316,8 @@ async def advisor_query(
     user_id, user_email = _resolve_user_context(request, http_request)
     try:
         answer = invoke_advisor(request.question, sector_slug=sector)
+        followups = generate_followups(request.question, answer)
+        guidance = generate_contextual_guidance(followups)
         log_conversation(
             user_id=user_id,
             user_email=user_email,
@@ -313,6 +325,8 @@ async def advisor_query(
             model="advisor-query",
             messages=[{"role": "user", "content": request.question}],
             assistant_response=answer,
+            suggested_followups=followups,
+            guidance=guidance,
             endpoint="/api/v1/advisor/query",
         )
         return QueryResponse(question=request.question, answer=answer, sector=sector)
