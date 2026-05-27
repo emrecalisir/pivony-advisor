@@ -51,7 +51,10 @@ ETS_MAX_REVIEWS=5000
 ```bash
 pip install -r requirements.txt
 python src/data/export_etsreviews.py
+tail -f logs/ets_export.log
 ```
+
+Progress is written to `logs/ets_export.log` (override with `ETS_EXPORT_LOG_PATH`).
 
 Optional overrides (shell or `.env`): `ETS_DATE_FIELD`, `ETS_TEXT_FIELDS`, `ETS_SKIP_EXISTING`, `ETS_EXPORT_MODE`.
 

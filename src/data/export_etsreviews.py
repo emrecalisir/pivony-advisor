@@ -11,8 +11,10 @@ Configure field names via env (see docs/HOSPITALITY_ETSREVIEWS.md).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -37,6 +39,40 @@ def _load_advisor_config():
 
 _config = _load_advisor_config()
 BASE_DIR = _config.BASE_DIR
+LOGS_DIR = getattr(_config, "LOGS_DIR", os.path.join(BASE_DIR, "logs"))
+EXPORT_LOG_PATH = os.environ.get(
+    "ETS_EXPORT_LOG_PATH", os.path.join(LOGS_DIR, "ets_export.log")
+)
+
+_logger: logging.Logger | None = None
+
+
+def _setup_export_logger() -> logging.Logger:
+    global _logger
+    if _logger is not None:
+        return _logger
+
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    logger = logging.getLogger("pivony.export.etsreviews")
+    logger.handlers.clear()
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    file_handler = logging.FileHandler(EXPORT_LOG_PATH, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    logger.addHandler(stream_handler)
+    logger.propagate = False
+    _logger = logger
+    return logger
+
+
+def _log(level: int, message: str, *args: object) -> None:
+    _setup_export_logger().log(level, message, *args)
 
 # ---------------------------------------------------------------------------
 # Configuration (.env) — canonical: PRODUCTION_MONGODB_URI, MONGO_COLLECTION
@@ -286,11 +322,17 @@ def _iter_month_documents(collection, since: datetime, until: datetime):
     for window_start, window_end, month_key in _month_windows(since, until):
         month_dir = OUTPUT_DIR / month_key
         if SKIP_EXISTING and month_dir.is_dir() and any(month_dir.glob("*.md")):
-            print(f"Skip month {month_key} (folder already has .md files)")
+            _log(logging.INFO, "Skip month %s (folder already has .md files)", month_key)
             continue
 
         pipeline = _build_pipeline(window_start, window_end)
-        print(f"Query month {month_key} ({window_start.date()} .. {window_end.date()})")
+        _log(
+            logging.INFO,
+            "Query month %s (%s .. %s)",
+            month_key,
+            window_start.date(),
+            window_end.date(),
+        )
         cursor = collection.aggregate(
             pipeline,
             allowDiskUse=True,
@@ -327,7 +369,7 @@ class _MonthFileWriter:
         if new_file:
             fh.write(_month_header(month_key))
             self.files_written += 1
-            print(f"Opened {path} (append)")
+            _log(logging.INFO, "Opened %s (append)", path)
         return fh
 
     def _ensure_handle(self, month_key: str) -> Any:
@@ -363,15 +405,14 @@ def _month_header(month_key: str) -> str:
 
 def _diagnose_missing_mongo_env() -> None:
     env_file = os.path.join(BASE_DIR, ".env")
-    print("ERROR: PRODUCTION_MONGODB_URI is empty.")
-    print(f"  Expected .env at: {env_file}")
-    print(f"  .env exists: {os.path.isfile(env_file)}")
+    _log(logging.ERROR, "PRODUCTION_MONGODB_URI is empty.")
+    _log(logging.ERROR, "Expected .env at: %s (exists=%s)", env_file, os.path.isfile(env_file))
     try:
         import dotenv  # noqa: F401
 
-        print("  python-dotenv: installed")
+        _log(logging.INFO, "python-dotenv: installed")
     except ImportError:
-        print("  python-dotenv: not installed (using built-in .env parser)")
+        _log(logging.INFO, "python-dotenv: not installed (using built-in .env parser)")
     if os.path.isfile(env_file):
         keys = []
         with open(env_file, encoding="utf-8") as fh:
@@ -380,12 +421,12 @@ def _diagnose_missing_mongo_env() -> None:
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 keys.append(line.split("=", 1)[0].strip())
-        print(f"  Keys in .env: {', '.join(keys) or '(none)'}")
+        _log(logging.INFO, "Keys in .env: %s", ", ".join(keys) or "(none)")
         if "PRODUCTION_MONGODB_URI" not in keys:
-            print("  → Add: PRODUCTION_MONGODB_URI=mongodb+srv://...")
+            _log(logging.ERROR, "Add PRODUCTION_MONGODB_URI=... to .env")
     else:
-        print("  → Run: cp .env.example .env && nano .env")
-    print("See docs/HOSPITALITY_ETSREVIEWS.md")
+        _log(logging.ERROR, "Run: cp .env.example .env && nano .env")
+    _log(logging.INFO, "See docs/HOSPITALITY_ETSREVIEWS.md")
 
 
 def main() -> None:
@@ -396,15 +437,23 @@ def main() -> None:
     try:
         from pymongo import MongoClient
     except ImportError:
-        print("ERROR: pip install pymongo")
+        _log(logging.ERROR, "pip install pymongo")
         sys.exit(1)
 
+    logger = _setup_export_logger()
+    started = time.monotonic()
     until = datetime.now(timezone.utc)
     since = until - timedelta(days=DAYS_BACK)
-    print(f"Connecting to MongoDB db={MONGODB_DB} collection={MONGODB_COLLECTION}")
-    print(
-        f"Streaming export {DATE_FIELDS} from {since.date()} to {until.date()} "
-        f"(batch={CURSOR_BATCH_SIZE}, part_size={REVIEWS_PER_FILE})"
+    logger.info("Log file: %s", EXPORT_LOG_PATH)
+    logger.info("Connecting to MongoDB db=%s collection=%s", MONGODB_DB, MONGODB_COLLECTION)
+    logger.info(
+        "Export range %s .. %s | date_fields=%s | batch=%s | part_size=%s | max=%s",
+        since.date(),
+        until.date(),
+        DATE_FIELDS,
+        CURSOR_BATCH_SIZE,
+        REVIEWS_PER_FILE,
+        MAX_REVIEWS or "unlimited",
     )
 
     client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=15000)
@@ -415,35 +464,69 @@ def main() -> None:
     exported = 0
     skipped = 0
     idx = 0
+    current_month: str | None = None
+    month_exported = 0
 
     try:
         for month_key, doc in _iter_month_documents(collection, since, until):
+            if month_key != current_month:
+                if current_month is not None:
+                    logger.info(
+                        "Month %s done: %s reviews exported",
+                        current_month,
+                        month_exported,
+                    )
+                current_month = month_key
+                month_exported = 0
+                logger.info("Month %s started", month_key)
+
             if MAX_REVIEWS > 0 and exported >= MAX_REVIEWS:
-                print(f"Reached ETS_MAX_REVIEWS={MAX_REVIEWS}, stopping.")
+                logger.info("Reached ETS_MAX_REVIEWS=%s, stopping.", MAX_REVIEWS)
                 break
             idx += 1
             if writer.append_doc(month_key, doc, idx):
                 exported += 1
+                month_exported += 1
             else:
                 skipped += 1
             del doc
             if exported % 1000 == 0 and exported > 0:
-                print(f"  … {exported} reviews written")
+                elapsed = time.monotonic() - started
+                logger.info(
+                    "Progress: %s exported, %s skipped, %.1fs elapsed",
+                    exported,
+                    skipped,
+                    elapsed,
+                )
     finally:
         writer.close()
+        if current_month is not None:
+            logger.info(
+                "Month %s done: %s reviews exported",
+                current_month,
+                month_exported,
+            )
 
+    elapsed = time.monotonic() - started
     if exported == 0:
-        print("WARNING: No documents matched. Check ETS_DATE_FIELD / ETS_EXTRA_FILTER_JSON.")
+        logger.warning(
+            "No documents matched. Check ETS_DATE_FIELD / ETS_EXTRA_FILTER_JSON."
+        )
         sample = collection.find_one(_base_match())
         if sample:
-            print("Sample document keys:", sorted(sample.keys()))
+            logger.info("Sample document keys: %s", sorted(sample.keys()))
         sys.exit(0)
 
-    print(f"Usable reviews: {exported} (skipped {skipped} without text)")
-    print(f"Done. {writer.files_written} new file(s) under {OUTPUT_DIR}/YYYY-MM/")
-    print("Next:")
-    print(f"  gsutil -m rsync -r {OUTPUT_DIR} gs://pivony-advisor/hospitality")
-    print("  export RECREATE_COLLECTIONS=false && python src/data/ingest.py")
+    logger.info(
+        "Finished: exported=%s skipped=%s part_files=%s elapsed=%.1fs output=%s",
+        exported,
+        skipped,
+        writer.files_written,
+        elapsed,
+        OUTPUT_DIR,
+    )
+    logger.info("Next: gsutil -m rsync -r %s gs://pivony-advisor/hospitality", OUTPUT_DIR)
+    logger.info("Next: RECREATE_COLLECTIONS=false python src/data/ingest.py")
 
 
 if __name__ == "__main__":
