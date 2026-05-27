@@ -330,7 +330,7 @@ def _diagnose_missing_mongo_env() -> None:
 
         print("  python-dotenv: installed")
     except ImportError:
-        print("  python-dotenv: NOT installed — run: pip install python-dotenv")
+        print("  python-dotenv: not installed (using built-in .env parser)")
     if os.path.isfile(env_file):
         keys = []
         with open(env_file, encoding="utf-8") as fh:

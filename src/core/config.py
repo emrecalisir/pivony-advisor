@@ -8,6 +8,20 @@ import re
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+def _load_env_file_manual(env_path: str) -> None:
+    """Parse .env without python-dotenv (KEY=VALUE, optional quotes)."""
+    with open(env_path, encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
 def load_project_env() -> None:
     """Load pivony-advisor/.env if present (does not override existing env vars)."""
     env_path = os.path.join(BASE_DIR, ".env")
@@ -18,7 +32,7 @@ def load_project_env() -> None:
 
         load_dotenv(env_path, override=False)
     except ImportError:
-        pass
+        _load_env_file_manual(env_path)
 
 
 load_project_env()
