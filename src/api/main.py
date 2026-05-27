@@ -14,7 +14,7 @@ _BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _BASE not in sys.path:
     sys.path.insert(0, _BASE)
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from core.config import CREDS_PATH, DEFAULT_SECTOR, sector_slugify
 from core.conversation import prepare_conversational_input
 from core.followups import generate_followups
+from core.logging_config import get_advisor_logger, log_conversation, setup_logging
 from core.rag import (
     build_embeddings,
     build_llm,
@@ -31,8 +32,8 @@ from core.rag import (
     invoke_advisor,
 )
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+setup_logging()
+logger = get_advisor_logger("api")
 
 if not os.path.exists(CREDS_PATH):
     logger.error("google_creds.json not found at %s", CREDS_PATH)
@@ -99,6 +100,8 @@ app.add_middleware(
 class QueryRequest(BaseModel):
     question: str = Field(..., min_length=1)
     sector: str = Field(default=DEFAULT_SECTOR, description="Industry slug, e.g. hospitality")
+    pivony_user_id: str | None = Field(default=None)
+    pivony_user_email: str | None = Field(default=None)
 
 
 class QueryResponse(BaseModel):
@@ -123,6 +126,14 @@ class ChatCompletionRequest(BaseModel):
     pivony_sector: str | None = Field(
         default=None,
         description="Industry slug for sector RAG + sector prompt (from pivony-api)",
+    )
+    pivony_user_id: str | None = Field(
+        default=None,
+        description="Firebase user id (from pivony-api)",
+    )
+    pivony_user_email: str | None = Field(
+        default=None,
+        description="User email (from pivony-api)",
     )
 
 
@@ -151,6 +162,31 @@ def _prepare_chat_input(messages: list[ChatMessage]) -> dict[str, str]:
         return prepare_conversational_input(messages)
     except ValueError as exc:
         raise ValueError(str(exc)) from exc
+
+
+def _resolve_user_context(
+    request: ChatCompletionRequest | QueryRequest,
+    http_request: Request | None = None,
+) -> tuple[str | None, str | None]:
+    user_id = getattr(request, "pivony_user_id", None)
+    user_email = getattr(request, "pivony_user_email", None)
+    if http_request is not None:
+        if not user_id:
+            user_id = http_request.headers.get("x-pivony-user-id")
+        if not user_email:
+            user_email = http_request.headers.get("x-pivony-user-email")
+    return (
+        str(user_id).strip() if user_id else None,
+        str(user_email).strip() if user_email else None,
+    )
+
+
+def _messages_for_history(messages: list[ChatMessage]) -> list[dict[str, str]]:
+    return [
+        {"role": message.role, "content": message.content}
+        for message in messages
+        if message.role in ("user", "assistant") and message.content
+    ]
 
 
 def _openai_chat_completion(
@@ -196,9 +232,14 @@ async def list_models() -> dict:
 
 
 @app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
-async def chat_completions(request: ChatCompletionRequest) -> ChatCompletionResponse:
+async def chat_completions(
+    request: ChatCompletionRequest,
+    http_request: Request,
+) -> ChatCompletionResponse:
     if request.stream:
         raise HTTPException(status_code=400, detail="Streaming is not supported")
+
+    user_id, user_email = _resolve_user_context(request, http_request)
 
     try:
         chat_input = _prepare_chat_input(request.messages)
@@ -208,6 +249,15 @@ async def chat_completions(request: ChatCompletionRequest) -> ChatCompletionResp
     sector = sector_slugify(request.pivony_sector or DEFAULT_SECTOR)
     api_system = extract_api_system_prompt(request.messages)
 
+    logger.info(
+        "chat_completions user_id=%s user_email=%s sector=%s model=%s messages=%s",
+        user_id or "-",
+        user_email or "-",
+        sector,
+        request.model,
+        len(request.messages),
+    )
+
     try:
         chain = _get_chain(sector, api_system)
         answer = chain.invoke(chat_input)
@@ -215,6 +265,15 @@ async def chat_completions(request: ChatCompletionRequest) -> ChatCompletionResp
             chat_input.get("retrieval_query") or chat_input["question"],
             answer,
             context_hint=api_system,
+        )
+        log_conversation(
+            user_id=user_id,
+            user_email=user_email,
+            sector=sector,
+            model=request.model,
+            messages=_messages_for_history(request.messages),
+            assistant_response=answer,
+            suggested_followups=followups,
         )
         return _openai_chat_completion(
             request.model,
@@ -239,10 +298,23 @@ async def root() -> HealthResponse:
 
 
 @app.post("/api/v1/advisor/query", response_model=QueryResponse)
-async def advisor_query(request: QueryRequest) -> QueryResponse:
+async def advisor_query(
+    request: QueryRequest,
+    http_request: Request,
+) -> QueryResponse:
     sector = sector_slugify(request.sector)
+    user_id, user_email = _resolve_user_context(request, http_request)
     try:
         answer = invoke_advisor(request.question, sector_slug=sector)
+        log_conversation(
+            user_id=user_id,
+            user_email=user_email,
+            sector=sector,
+            model="advisor-query",
+            messages=[{"role": "user", "content": request.question}],
+            assistant_response=answer,
+            endpoint="/api/v1/advisor/query",
+        )
         return QueryResponse(question=request.question, answer=answer, sector=sector)
     except Exception as exc:
         logger.exception("Advisor query failed: %s", exc)

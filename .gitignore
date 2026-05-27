@@ -5,7 +5,8 @@ __pycache__/
 venv/
 .env
 .env.*
-*.log
+logs/*.log
+logs/*.log.*
 .DS_Store
 
 # Secrets / local credentials (never commit)

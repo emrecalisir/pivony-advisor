@@ -7,6 +7,9 @@ import re
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CREDS_PATH = os.path.join(BASE_DIR, "config", "google_creds.json")
+LOGS_DIR = os.path.join(BASE_DIR, "logs")
+ADVISOR_LOG_PATH = os.path.join(LOGS_DIR, "advisor.log")
+HISTORY_LOG_PATH = os.path.join(LOGS_DIR, "history.log")
 
 GCP_PROJECT = os.environ.get("GCP_PROJECT", "pivony-ab6d2")
 GCP_LOCATION = os.environ.get("GCP_LOCATION", "us-central1")
