@@ -1,0 +1,21 @@
+[Unit]
+Description=Pivony Advisor hospitality ingest (one-shot, background-safe)
+After=network.target qdrant.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/pivony-advisor
+Environment=PYTHONPATH=/home/ubuntu/pivony-advisor/src
+# Load RECREATE_COLLECTIONS, INGEST_* from project .env
+EnvironmentFile=-/home/ubuntu/pivony-advisor/.env
+ExecStart=/home/ubuntu/pivony-advisor/venv/bin/python /home/ubuntu/pivony-advisor/src/data/ingest.py
+# Do not restart on success (ingest exits 0 when done)
+Restart=on-failure
+RestartSec=120
+StandardOutput=append:/home/ubuntu/pivony-advisor/logs/ingest_stdout.log
+StandardError=append:/home/ubuntu/pivony-advisor/logs/ingest_stdout.log
+
+[Install]
+WantedBy=multi-user.target

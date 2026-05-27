@@ -83,7 +83,44 @@ If you see `403 Provided scope(s) are not authorized`, the service account in `g
 
 ## 6. Ingest into Qdrant
 
-On Qdrant VM — **local files** (no GCS upload):
+On Qdrant VM — **local files** (no GCS upload). Put settings in `.env` (see `.env.example`), then run in the **background** so SSH disconnect does not kill the job.
+
+```bash
+cd ~/pivony-advisor
+cp .env.example .env   # if needed; edit INGEST_* and RECREATE_COLLECTIONS
+chmod +x scripts/run_ingest_background.sh
+git pull               # includes file-stream ingest + background script
+
+./scripts/run_ingest_background.sh start
+./scripts/run_ingest_background.sh status
+./scripts/run_ingest_background.sh logs    # tail -f logs/ingest.log
+```
+
+**Logs**
+
+| File | Content |
+|------|---------|
+| `logs/ingest.log` | Progress: months, files, Qdrant batches |
+| `logs/ingest_stdout.log` | Python stdout/stderr, tracebacks |
+| `run/ingest.pid` | PID while running |
+
+**Stop / restart**
+
+```bash
+./scripts/run_ingest_background.sh stop
+./scripts/run_ingest_background.sh restart
+```
+
+**Optional: systemd** (survives reboot only if you enable the unit; still one-shot ingest)
+
+```bash
+sudo cp deploy/pivony-ingest.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl start pivony-ingest
+sudo journalctl -u pivony-ingest -f   # or tail logs/ingest.log
+```
+
+Foreground (same as before, dies when SSH drops unless using `nohup` yourself):
 
 ```bash
 export GOOGLE_APPLICATION_CREDENTIALS=config/google_creds.json

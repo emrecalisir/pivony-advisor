@@ -142,3 +142,27 @@ def load_local_documents(
         _emit(f"Collection {name}: {len(docs)} chunk(s) ready")
 
     return dict(by_collection)
+
+
+def list_markdown_files(root_dir: str | Path) -> list[Path]:
+    root = Path(root_dir)
+    return sorted(
+        p
+        for p in root.rglob("*")
+        if p.is_file() and p.name.endswith(SUPPORTED_SUFFIXES)
+    )
+
+
+def documents_from_file(path: Path, blob_name: str) -> tuple[str, str, list[Document]]:
+    """Chunk a single file; returns (collection_name, sector, documents)."""
+    char_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+        separators=["\n\n", "\n", ". ", " ", ""],
+    )
+    collection_name, sector = resolve_blob_target(blob_name)
+    text_content = path.read_text(encoding="utf-8")
+    sections = split_by_markdown_sections(text_content, blob_name)
+    chunks = char_splitter.split_documents(sections)
+    docs = [enrich_chunk_content(doc, sector) for doc in chunks]
+    return collection_name, sector, docs

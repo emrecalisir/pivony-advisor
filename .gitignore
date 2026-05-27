@@ -8,6 +8,7 @@ venv/
 !.env.example
 logs/*.log
 logs/*.log.*
+run/
 .DS_Store
 
 # Secrets / local credentials (never commit)

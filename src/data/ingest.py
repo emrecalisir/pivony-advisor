@@ -44,8 +44,12 @@ from core.config import (
     load_project_env,
 )
 
-INGEST_BUILD = "month-by-month-v2"
-from core.ingest_utils import load_bucket_documents, load_local_documents
+INGEST_BUILD = "month-by-month-file-stream-v3"
+from core.ingest_utils import (
+    documents_from_file,
+    list_markdown_files,
+    load_bucket_documents,
+)
 from ingest_logging import INGEST_LOG_PATH, setup_ingest_logger
 
 if not os.path.exists(CREDS_PATH):
@@ -82,89 +86,120 @@ def _discover_month_dirs(root: Path) -> list[Path]:
     )
 
 
-def _index_collection_batched(
-    collection_name: str,
-    docs: list,
-    embeddings: GoogleGenerativeAIEmbeddings,
-    client: QdrantClient,
-    logger,
-    *,
-    recreate: bool = False,
-) -> None:
-    total = len(docs)
-    if recreate:
-        logger.info("Recreating collection '%s'...", collection_name)
-        client.recreate_collection(
-            collection_name=collection_name,
-            vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
-        )
-    else:
-        try:
-            client.get_collection(collection_name)
-        except Exception:
-            logger.info("Creating collection '%s'...", collection_name)
-            client.create_collection(
+class _CollectionIndexer:
+    """Reuse Qdrant store per collection; index small doc lists and release memory."""
+
+    def __init__(
+        self,
+        client: QdrantClient,
+        embeddings: GoogleGenerativeAIEmbeddings,
+        logger,
+    ) -> None:
+        self.client = client
+        self.embeddings = embeddings
+        self.logger = logger
+        self._stores: dict[str, QdrantVectorStore] = {}
+        self._ready: set[str] = set()
+        self.totals: dict[str, int] = {}
+
+    def _ensure_collection(self, collection_name: str, *, recreate: bool) -> None:
+        if collection_name in self._ready:
+            return
+        if recreate:
+            self.logger.info("Recreating collection '%s'...", collection_name)
+            self.client.recreate_collection(
                 collection_name=collection_name,
                 vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
             )
-
-    store = QdrantVectorStore(
-        client=client,
-        collection_name=collection_name,
-        embedding=embeddings,
-    )
-    indexed = 0
-    batch_started = time.monotonic()
-    for offset in range(0, total, INGEST_BATCH_SIZE):
-        batch = docs[offset : offset + INGEST_BATCH_SIZE]
-        store.add_documents(batch)
-        indexed += len(batch)
-        elapsed = time.monotonic() - batch_started
-        logger.info(
-            "Indexing %s: %s/%s chunks (%.1fs elapsed)",
-            collection_name,
-            indexed,
-            total,
-            elapsed,
+        else:
+            try:
+                self.client.get_collection(collection_name)
+            except Exception:
+                self.logger.info("Creating collection '%s'...", collection_name)
+                self.client.create_collection(
+                    collection_name=collection_name,
+                    vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+                )
+        self._ready.add(collection_name)
+        self._stores[collection_name] = QdrantVectorStore(
+            client=self.client,
+            collection_name=collection_name,
+            embedding=self.embeddings,
         )
+
+    def index_documents(
+        self,
+        collection_name: str,
+        docs: list,
+        *,
+        recreate: bool = False,
+    ) -> int:
+        if not docs:
+            return 0
+        self._ensure_collection(collection_name, recreate=recreate)
+        store = self._stores[collection_name]
+        indexed = 0
+        batch_started = time.monotonic()
+        for offset in range(0, len(docs), INGEST_BATCH_SIZE):
+            batch = docs[offset : offset + INGEST_BATCH_SIZE]
+            store.add_documents(batch)
+            indexed += len(batch)
+            elapsed = time.monotonic() - batch_started
+            self.logger.info(
+                "Indexing %s: %s chunks this file (%.1fs)",
+                collection_name,
+                indexed,
+                elapsed,
+            )
+        self.totals[collection_name] = self.totals.get(collection_name, 0) + indexed
+        return indexed
 
 
 def _ingest_local_path(
     local_dir: str,
     local_prefix: str,
-    embeddings: GoogleGenerativeAIEmbeddings,
-    client: QdrantClient,
+    indexer: _CollectionIndexer,
     logger,
     *,
-    recreate: bool,
+    recreate_first_file: bool,
 ) -> None:
-    by_collection = load_local_documents(
-        local_dir,
-        path_prefix=local_prefix,
-        progress_every=INGEST_PROGRESS_EVERY,
-        on_progress=logger.info,
-    )
-    if not by_collection:
-        logger.warning("No chunks from %s", local_dir)
+    """One part file at a time — never hold a full month of chunks in RAM."""
+    root = Path(local_dir)
+    files = list_markdown_files(root)
+    if not files:
+        logger.warning("No .md files under %s", local_dir)
         return
 
-    for collection_name, docs in by_collection.items():
-        logger.info(
-            "Start indexing '%s' (%s chunks, batch=%s)",
-            collection_name,
-            len(docs),
-            INGEST_BATCH_SIZE,
-        )
-        _index_collection_batched(
+    logger.info(
+        "File-stream ingest: %s part file(s) under %s (batch=%s)",
+        len(files),
+        local_dir,
+        INGEST_BATCH_SIZE,
+    )
+    month_chunks = 0
+    for file_idx, path in enumerate(files, start=1):
+        rel = path.relative_to(root).as_posix()
+        blob_name = f"{local_prefix}/{rel}" if local_prefix else rel
+        collection_name, _sector, docs = documents_from_file(path, blob_name)
+        n = indexer.index_documents(
             collection_name,
             docs,
-            embeddings,
-            client,
-            logger,
-            recreate=recreate,
+            recreate=recreate_first_file and file_idx == 1,
         )
-        logger.info("SUCCESS: %s (%s chunks).", collection_name, len(docs))
-    del by_collection
+        month_chunks += n
+        del docs
+        if file_idx % max(1, INGEST_PROGRESS_EVERY) == 0 or file_idx == len(files):
+            logger.info(
+                "File %s/%s: %s (%s chunks, %s month total, collection %s)",
+                file_idx,
+                len(files),
+                path.name,
+                n,
+                month_chunks,
+                indexer.totals.get(collection_name, 0),
+            )
+        if file_idx % 20 == 0:
+            gc.collect()
     gc.collect()
 
 
@@ -197,15 +232,16 @@ def _ingest_local_by_month(
 ) -> None:
     root = Path(root_dir)
     months = _filter_month_dirs(_discover_month_dirs(root), logger)
+    indexer = _CollectionIndexer(client, embeddings, logger)
+
     if not months:
         logger.warning("No YYYY-MM subfolders under %s; ingesting as single tree.", root)
         _ingest_local_path(
             root_dir,
             local_prefix,
-            embeddings,
-            client,
+            indexer,
             logger,
-            recreate=RECREATE_COLLECTIONS,
+            recreate_first_file=RECREATE_COLLECTIONS,
         )
         return
 
@@ -220,10 +256,9 @@ def _ingest_local_by_month(
         _ingest_local_path(
             str(month_path),
             prefix,
-            embeddings,
-            client,
+            indexer,
             logger,
-            recreate=RECREATE_COLLECTIONS and idx == 0,
+            recreate_first_file=RECREATE_COLLECTIONS and idx == 0,
         )
         logger.info(
             "=== Month %s COMPLETE (%s/%s) ===",
@@ -238,6 +273,7 @@ def main() -> None:
     logger = setup_ingest_logger()
     started = time.monotonic()
     logger.info("Pivony Advisor - Multi-collection ingestion started")
+    logger.info("Process PID: %s", os.getpid())
     logger.info("Ingest build: %s (expect month-by-month logs below)", INGEST_BUILD)
     logger.info("Log file: %s", INGEST_LOG_PATH)
     logger.info(
@@ -283,13 +319,13 @@ def main() -> None:
             if ingest_by_month:
                 _ingest_local_by_month(local_dir, local_prefix, embeddings, client, logger)
             else:
+                indexer = _CollectionIndexer(client, embeddings, logger)
                 _ingest_local_path(
                     local_dir,
                     local_prefix,
-                    embeddings,
-                    client,
+                    indexer,
                     logger,
-                    recreate=RECREATE_COLLECTIONS,
+                    recreate_first_file=RECREATE_COLLECTIONS,
                 )
         else:
             logger.info("Scanning bucket '%s'...", GCS_BUCKET_NAME)
@@ -299,15 +335,17 @@ def main() -> None:
             if not by_collection:
                 logger.warning("No .txt/.md files found.")
                 sys.exit(0)
+            indexer = _CollectionIndexer(client, embeddings, logger)
+            first = True
             for collection_name, docs in by_collection.items():
-                _index_collection_batched(
+                indexer.index_documents(
                     collection_name,
                     docs,
-                    embeddings,
-                    client,
-                    logger,
-                    recreate=RECREATE_COLLECTIONS,
+                    recreate=RECREATE_COLLECTIONS and first,
                 )
+                first = False
+                del docs
+            gc.collect()
     except Exception as exc:
         logger.error("Ingest failed: %s", exc)
         sys.exit(1)
