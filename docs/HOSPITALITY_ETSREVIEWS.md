@@ -31,15 +31,15 @@ mongosh "$MONGODB_URI" --eval 'db.getSiblingDB("production").ETSReviews.findOne(
 
 ```bash
 cp .env.example .env
-# Edit .env — set MONGODB_URI (or PRODUCTION_MONGODB_URI)
+# Edit .env — set PRODUCTION_MONGODB_URI and MONGO_COLLECTION
 ```
 
 Example `.env`:
 
 ```env
-MONGODB_URI=mongodb+srv://USER:PASS@cluster.mongodb.net/?appName=production
+PRODUCTION_MONGODB_URI=mongodb+srv://USER:PASS@cluster.mongodb.net/?appName=production
+MONGO_COLLECTION=ETSReviews
 MONGODB_DB=production
-MONGODB_COLLECTION=ETSReviews
 ETS_DAYS_BACK=365
 ETS_MAX_REVIEWS=5000
 ```

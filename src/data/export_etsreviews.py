@@ -27,11 +27,11 @@ from core.config import BASE_DIR, load_project_env
 load_project_env()
 
 # ---------------------------------------------------------------------------
-# Configuration (.env or shell; Pivony aliases supported)
+# Configuration (.env) — canonical: PRODUCTION_MONGODB_URI, MONGO_COLLECTION
 # ---------------------------------------------------------------------------
 MONGODB_URI = (
-    os.environ.get("MONGODB_URI", "")
-    or os.environ.get("PRODUCTION_MONGODB_URI", "")
+    os.environ.get("PRODUCTION_MONGODB_URI", "")
+    or os.environ.get("MONGODB_URI", "")
     or os.environ.get("MONGODB_CONNECTION_STRING", "")
 )
 MONGODB_DB = (
@@ -40,8 +40,11 @@ MONGODB_DB = (
     or os.environ.get("MONGODB_DATABASE_NAME", "")
     or "production"
 )
-# Pivony prod collection name is ETSReviews (see pivony-external-api / pivony-scripts)
-MONGODB_COLLECTION = os.environ.get("MONGODB_COLLECTION", "ETSReviews")
+MONGODB_COLLECTION = (
+    os.environ.get("MONGO_COLLECTION", "")
+    or os.environ.get("MONGODB_COLLECTION", "")
+    or "ETSReviews"
+)
 
 # Date filter — ETS uses ReviewSubmissionDate (string "dd-mm-yyyy HH:mm:ss")
 DATE_FIELD = os.environ.get("ETS_DATE_FIELD", "ReviewSubmissionDate")
@@ -279,7 +282,7 @@ def _write_raw_batches(by_month: dict[str, list[str]], out_dir: Path) -> int:
 
 def main() -> None:
     if not MONGODB_URI:
-        print("ERROR: Set MONGODB_URI in .env (or PRODUCTION_MONGODB_URI).")
+        print("ERROR: Set PRODUCTION_MONGODB_URI in .env")
         print("Copy .env.example to .env and fill values. See docs/HOSPITALITY_ETSREVIEWS.md")
         sys.exit(1)
 
