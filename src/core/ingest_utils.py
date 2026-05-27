@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import re
+import time
 from collections import defaultdict
 from pathlib import Path
+from typing import Callable
 
 from google.cloud import storage
 from langchain_core.documents import Document
@@ -79,10 +81,15 @@ def load_bucket_documents(
     return dict(by_collection)
 
 
+ProgressCallback = Callable[[str], None]
+
+
 def load_local_documents(
     root_dir: str,
     *,
     path_prefix: str = "hospitality",
+    progress_every: int = 50,
+    on_progress: ProgressCallback | None = None,
 ) -> dict[str, list[Document]]:
     """
     Load .md/.txt from a local directory (same layout as GCS hospitality/YYYY-MM/).
@@ -104,9 +111,14 @@ def load_local_documents(
         for p in root.rglob("*")
         if p.is_file() and p.name.endswith(SUPPORTED_SUFFIXES)
     )
-    print(f"Local ingest: {len(files)} file(s) under {root}")
+    def _emit(message: str) -> None:
+        if on_progress:
+            on_progress(message)
 
-    for path in files:
+    _emit(f"Local ingest: {len(files)} file(s) under {root}")
+    started = time.monotonic()
+
+    for file_idx, path in enumerate(files, start=1):
         rel = path.relative_to(root).as_posix()
         blob_name = f"{path_prefix}/{rel}" if path_prefix else rel
         collection_name, sector = resolve_blob_target(blob_name)
@@ -116,5 +128,17 @@ def load_local_documents(
         by_collection[collection_name].extend(
             enrich_chunk_content(doc, sector) for doc in chunks
         )
+        if progress_every > 0 and (
+            file_idx % progress_every == 0 or file_idx == len(files)
+        ):
+            chunks_so_far = sum(len(v) for v in by_collection.values())
+            elapsed = time.monotonic() - started
+            _emit(
+                f"Chunking progress: {file_idx}/{len(files)} files, "
+                f"{chunks_so_far} chunks, {elapsed:.1f}s — last: {rel}"
+            )
+
+    for name, docs in by_collection.items():
+        _emit(f"Collection {name}: {len(docs)} chunk(s) ready")
 
     return dict(by_collection)

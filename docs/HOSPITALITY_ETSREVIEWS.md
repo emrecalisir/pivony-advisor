@@ -93,7 +93,10 @@ export INGEST_LOCAL_DIR=output/hospitality
 export INGEST_LOCAL_PREFIX=hospitality
 
 python src/data/ingest.py
+tail -f logs/ingest.log
 ```
+
+Progress every `INGEST_PROGRESS_EVERY` files (default 25) during chunking, then every `INGEST_BATCH_SIZE` chunks (default 200) during Qdrant indexing.
 
 Or from GCS after a successful `gsutil rsync`:
 
