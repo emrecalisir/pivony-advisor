@@ -23,6 +23,10 @@ QDRANT_URL = f"http://{QDRANT_HOST}:{QDRANT_PORT}"
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-004")
 LLM_MODEL = os.environ.get("LLM_MODEL", "gemini-2.5-flash")
 LLM_TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0.2"))
+NAVIGATION_LLM_TEMPERATURE = float(os.environ.get("NAVIGATION_LLM_TEMPERATURE", "0.3"))
+USE_VERTEX_CONTEXTUAL_NAVIGATION = os.environ.get(
+    "USE_VERTEX_CONTEXTUAL_NAVIGATION", "true"
+).lower() in ("1", "true", "yes")
 
 PLATFORM_K = int(os.environ.get("PLATFORM_RETRIEVER_K", "3"))
 SECTOR_K = int(os.environ.get("SECTOR_RETRIEVER_K", "5"))

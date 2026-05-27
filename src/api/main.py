@@ -19,10 +19,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
 
-from core.config import CREDS_PATH, DEFAULT_SECTOR, sector_slugify
+from core.config import (
+    CREDS_PATH,
+    DEFAULT_SECTOR,
+    USE_VERTEX_CONTEXTUAL_NAVIGATION,
+    sector_slugify,
+)
 from core.conversation import prepare_conversational_input
-from core.followups import generate_followups
-from core.guidance import generate_contextual_guidance
+from core.contextual_navigation import generate_contextual_navigation
 from core.logging_config import get_advisor_logger, log_conversation, setup_logging
 from core.rag import (
     build_embeddings,
@@ -268,12 +272,15 @@ async def chat_completions(
     try:
         chain = _get_chain(sector, api_system)
         answer = chain.invoke(chat_input)
-        followups = generate_followups(
+        _, _, llm = _components()
+        followups, guidance = generate_contextual_navigation(
             chat_input.get("retrieval_query") or chat_input["question"],
             answer,
+            chat_history=chat_input.get("chat_history"),
             context_hint=api_system,
+            llm=llm,
+            use_vertex=USE_VERTEX_CONTEXTUAL_NAVIGATION,
         )
-        guidance = generate_contextual_guidance(followups)
         log_conversation(
             user_id=user_id,
             user_email=user_email,
@@ -316,8 +323,13 @@ async def advisor_query(
     user_id, user_email = _resolve_user_context(request, http_request)
     try:
         answer = invoke_advisor(request.question, sector_slug=sector)
-        followups = generate_followups(request.question, answer)
-        guidance = generate_contextual_guidance(followups)
+        _, _, llm = _components()
+        followups, guidance = generate_contextual_navigation(
+            request.question,
+            answer,
+            llm=llm,
+            use_vertex=USE_VERTEX_CONTEXTUAL_NAVIGATION,
+        )
         log_conversation(
             user_id=user_id,
             user_email=user_email,
