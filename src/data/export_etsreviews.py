@@ -95,9 +95,8 @@ SOURCE_FIELDS = [
     if f.strip()
 ]
 
-# Export layout: output/hospitality/YYYY-MM/etsreviews[_part_N].md
-EXPORT_MODE = os.environ.get("ETS_EXPORT_MODE", "monthly")  # monthly | raw_files
-REVIEWS_PER_FILE = int(os.environ.get("ETS_REVIEWS_PER_FILE", "500"))
+# Export layout: output/hospitality/YYYY-MM/etsreviews_part_NNN.md (always chunked)
+REVIEWS_PER_FILE = int(os.environ.get("ETS_REVIEWS_PER_FILE", "200"))
 MAX_REVIEWS = int(os.environ.get("ETS_MAX_REVIEWS", "0"))  # 0 = no limit
 CURSOR_BATCH_SIZE = int(os.environ.get("ETS_CURSOR_BATCH_SIZE", "100"))
 SKIP_EXISTING = os.environ.get("ETS_SKIP_EXISTING", "").lower() in ("1", "true", "yes")
@@ -179,13 +178,19 @@ def _parse_date(value: Any) -> datetime | None:
     return None
 
 
-def _review_to_markdown(doc: dict[str, Any], index: int) -> str | None:
+def _review_text(doc: dict[str, Any]) -> str | None:
     text = _first_value(doc, TEXT_FIELDS)
     if not text:
         return None
     text = str(text).strip()
+    return text or None
+
+
+def _write_review_lines(fh, doc: dict[str, Any], index: int) -> bool:
+    """Stream one review to an open append handle (no in-memory block string)."""
+    text = _review_text(doc)
     if not text:
-        return None
+        return False
 
     title = _property_name(doc)
     rating = _first_value(doc, RATING_FIELDS)
@@ -193,20 +198,20 @@ def _review_to_markdown(doc: dict[str, Any], index: int) -> str | None:
     when = _doc_review_date(doc)
     survey_id = doc.get("pk") or doc.get("sk")
 
-    lines = [f"### Review {index}"]
+    fh.write(f"### Review {index}\n")
     if survey_id:
-        lines.append(f"- Survey: {survey_id}")
+        fh.write(f"- Survey: {survey_id}\n")
     if title:
-        lines.append(f"- Property: {title}")
+        fh.write(f"- Property: {title}\n")
     if rating is not None:
-        lines.append(f"- Rating: {rating}")
+        fh.write(f"- Rating: {rating}\n")
     if source:
-        lines.append(f"- Source: {source}")
+        fh.write(f"- Source: {source}\n")
     if when:
-        lines.append(f"- Date: {when.date().isoformat()}")
-    lines.append("")
-    lines.append(text)
-    return "\n".join(lines)
+        fh.write(f"- Date: {when.date().isoformat()}\n")
+    fh.write("\n")
+    fh.write(text)
+    return True
 
 
 def _base_match() -> dict[str, Any]:
@@ -219,7 +224,15 @@ def _base_match() -> dict[str, Any]:
 
 
 def _projection_fields() -> dict[str, int]:
-    projection: dict[str, int] = {"pk": 1, "sk": 1, "CustomAttributes": 1}
+    """Only fields needed for export — omit Analysis / subQuestionAnalysis blobs."""
+    projection: dict[str, int] = {
+        "pk": 1,
+        "sk": 1,
+        "CustomAttributes.vendorName": 1,
+        "CustomAttributes.projectName": 1,
+        "CustomAttributes.channel": 1,
+        "CustomAttributes.clientName": 1,
+    }
     for field in DATE_FIELDS + TEXT_FIELDS + TITLE_FIELDS + RATING_FIELDS + SOURCE_FIELDS:
         projection[field] = 1
     return projection
@@ -288,36 +301,57 @@ def _iter_month_documents(collection, since: datetime, until: datetime):
 
 
 class _MonthFileWriter:
-    """Append reviews to part files; flush every REVIEWS_PER_FILE blocks."""
+    """Keep one append handle per month; rotate part files; no in-RAM batching."""
 
     def __init__(self, out_dir: Path) -> None:
         self.out_dir = out_dir
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        self._part: dict[str, int] = defaultdict(int)
+        self._part: dict[str, int] = defaultdict(lambda: 1)
         self._count: dict[str, int] = defaultdict(int)
+        self._handles: dict[str, Any] = {}
         self.files_written = 0
 
-    def _next_path(self, month_key: str) -> Path:
+    def _close_month(self, month_key: str) -> None:
+        fh = self._handles.pop(month_key, None)
+        if fh is not None:
+            fh.close()
+
+    def _open_part(self, month_key: str) -> Any:
+        self._close_month(month_key)
         month_dir = self.out_dir / month_key
         month_dir.mkdir(parents=True, exist_ok=True)
-        if self._part[month_key] == 0:
-            self._part[month_key] = 1
-        return month_dir / f"etsreviews_part_{self._part[month_key]:03d}.md"
+        path = month_dir / f"etsreviews_part_{self._part[month_key]:03d}.md"
+        new_file = not path.exists()
+        fh = path.open("a", encoding="utf-8")
+        self._handles[month_key] = fh
+        if new_file:
+            fh.write(_month_header(month_key))
+            self.files_written += 1
+            print(f"Opened {path} (append)")
+        return fh
 
-    def append(self, month_key: str, block: str) -> None:
-        if self._count[month_key] >= REVIEWS_PER_FILE:
+    def _ensure_handle(self, month_key: str) -> Any:
+        if self._count[month_key] >= REVIEWS_PER_FILE and month_key in self._handles:
             self._part[month_key] += 1
             self._count[month_key] = 0
+            return self._open_part(month_key)
+        if month_key not in self._handles:
+            return self._open_part(month_key)
+        return self._handles[month_key]
 
-        path = self._next_path(month_key)
-        if not path.exists():
-            path.write_text(_month_header(month_key) + block, encoding="utf-8")
-            self.files_written += 1
-            print(f"Wrote {path}")
-        else:
-            with path.open("a", encoding="utf-8") as fh:
-                fh.write("\n\n" + block)
+    def append_doc(self, month_key: str, doc: dict[str, Any], index: int) -> bool:
+        fh = self._ensure_handle(month_key)
+        if self._count[month_key] > 0:
+            fh.write("\n\n")
+        if not _write_review_lines(fh, doc, index):
+            return False
+        fh.flush()
         self._count[month_key] += 1
+        return True
+
+    def close(self) -> None:
+        for month_key in list(self._handles):
+            self._close_month(month_key)
 
 
 def _month_header(month_key: str) -> str:
@@ -325,70 +359,6 @@ def _month_header(month_key: str) -> str:
         f"# ETS Reviews — {month_key}\n\n"
         "Guest review corpus for hospitality advisor (exported from MongoDB).\n\n"
     )
-
-
-def _write_month_folder(
-    month_key: str,
-    blocks: list[str],
-    out_dir: Path,
-    *,
-    split_parts: bool,
-) -> int:
-    """Write under out_dir/YYYY-MM/ (matches GCS hospitality/2025-05/)."""
-    if not blocks:
-        return 0
-
-    month_dir = out_dir / month_key
-    if SKIP_EXISTING and month_dir.is_dir() and any(month_dir.glob("*.md")):
-        print(f"Skip month {month_key} (folder already has .md files)")
-        return 0
-
-    month_dir.mkdir(parents=True, exist_ok=True)
-    written = 0
-
-    if split_parts and len(blocks) > REVIEWS_PER_FILE:
-        batches = [
-            blocks[i : i + REVIEWS_PER_FILE]
-            for i in range(0, len(blocks), REVIEWS_PER_FILE)
-        ]
-        for part_idx, batch in enumerate(batches, start=1):
-            path = month_dir / f"etsreviews_part_{part_idx:03d}.md"
-            if SKIP_EXISTING and path.exists():
-                print(f"Skip (exists): {path}")
-                continue
-            path.write_text(_month_header(month_key) + "\n\n".join(batch), encoding="utf-8")
-            written += 1
-            print(f"Wrote {path} ({len(batch)} reviews)")
-        return written
-
-    path = month_dir / "etsreviews.md"
-    if SKIP_EXISTING and path.exists():
-        print(f"Skip (exists): {path}")
-        return 0
-    path.write_text(_month_header(month_key) + "\n\n".join(blocks), encoding="utf-8")
-    print(f"Wrote {path} ({len(blocks)} reviews)")
-    return 1
-
-
-def _write_monthly_files(by_month: dict[str, list[str]], out_dir: Path) -> int:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    files = 0
-    for month_key in sorted(by_month.keys()):
-        files += _write_month_folder(
-            month_key, by_month[month_key], out_dir, split_parts=True
-        )
-    return files
-
-
-def _write_raw_batches(by_month: dict[str, list[str]], out_dir: Path) -> int:
-    """Same folder layout as monthly; always splits large months into parts."""
-    out_dir.mkdir(parents=True, exist_ok=True)
-    files = 0
-    for month_key in sorted(by_month.keys()):
-        files += _write_month_folder(
-            month_key, by_month[month_key], out_dir, split_parts=True
-        )
-    return files
 
 
 def _diagnose_missing_mongo_env() -> None:
@@ -446,19 +416,21 @@ def main() -> None:
     skipped = 0
     idx = 0
 
-    for month_key, doc in _iter_month_documents(collection, since, until):
-        if MAX_REVIEWS > 0 and exported >= MAX_REVIEWS:
-            print(f"Reached ETS_MAX_REVIEWS={MAX_REVIEWS}, stopping.")
-            break
-        idx += 1
-        block = _review_to_markdown(doc, idx)
-        if not block:
-            skipped += 1
-            continue
-        writer.append(month_key, block)
-        exported += 1
-        if exported % 1000 == 0:
-            print(f"  … {exported} reviews written")
+    try:
+        for month_key, doc in _iter_month_documents(collection, since, until):
+            if MAX_REVIEWS > 0 and exported >= MAX_REVIEWS:
+                print(f"Reached ETS_MAX_REVIEWS={MAX_REVIEWS}, stopping.")
+                break
+            idx += 1
+            if writer.append_doc(month_key, doc, idx):
+                exported += 1
+            else:
+                skipped += 1
+            del doc
+            if exported % 1000 == 0 and exported > 0:
+                print(f"  … {exported} reviews written")
+    finally:
+        writer.close()
 
     if exported == 0:
         print("WARNING: No documents matched. Check ETS_DATE_FIELD / ETS_EXTRA_FILTER_JSON.")
