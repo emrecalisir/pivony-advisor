@@ -292,10 +292,36 @@ def _write_raw_batches(by_month: dict[str, list[str]], out_dir: Path) -> int:
     return files
 
 
+def _diagnose_missing_mongo_env() -> None:
+    env_file = os.path.join(BASE_DIR, ".env")
+    print("ERROR: PRODUCTION_MONGODB_URI is empty.")
+    print(f"  Expected .env at: {env_file}")
+    print(f"  .env exists: {os.path.isfile(env_file)}")
+    try:
+        import dotenv  # noqa: F401
+
+        print("  python-dotenv: installed")
+    except ImportError:
+        print("  python-dotenv: NOT installed — run: pip install python-dotenv")
+    if os.path.isfile(env_file):
+        keys = []
+        with open(env_file, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                keys.append(line.split("=", 1)[0].strip())
+        print(f"  Keys in .env: {', '.join(keys) or '(none)'}")
+        if "PRODUCTION_MONGODB_URI" not in keys:
+            print("  → Add: PRODUCTION_MONGODB_URI=mongodb+srv://...")
+    else:
+        print("  → Run: cp .env.example .env && nano .env")
+    print("See docs/HOSPITALITY_ETSREVIEWS.md")
+
+
 def main() -> None:
     if not MONGODB_URI:
-        print("ERROR: Set PRODUCTION_MONGODB_URI in .env")
-        print("Copy .env.example to .env and fill values. See docs/HOSPITALITY_ETSREVIEWS.md")
+        _diagnose_missing_mongo_env()
         sys.exit(1)
 
     try:
