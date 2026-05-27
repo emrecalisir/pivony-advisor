@@ -69,20 +69,36 @@ output/hospitality/
 
 Zaten yüklü ayları atlamak için: `export ETS_SKIP_EXISTING=true`
 
-## 5. Upload to GCS
+## 5. Upload to GCS (optional)
 
 ```bash
 export GOOGLE_APPLICATION_CREDENTIALS=config/google_creds.json
+gcloud auth activate-service-account --key-file=config/google_creds.json
+gcloud config set project pivony-ab6d2
+gsutil ls gs://pivony-advisor/
 gsutil -m rsync -r output/hospitality gs://pivony-advisor/hospitality
 ```
 
+If you see `403 Provided scope(s) are not authorized`, the service account in `google_creds.json` needs **Storage Object Admin** on bucket `pivony-advisor` (GCP Console → IAM or bucket permissions). You can skip GCS and ingest locally (step 6).
+
 ## 6. Ingest into Qdrant
 
-On Qdrant VM:
+On Qdrant VM — **local files** (no GCS upload):
 
 ```bash
+export GOOGLE_APPLICATION_CREDENTIALS=config/google_creds.json
 export QDRANT_HOST=127.0.0.1
 export RECREATE_COLLECTIONS=false
+export INGEST_LOCAL_DIR=output/hospitality
+export INGEST_LOCAL_PREFIX=hospitality
+
+python src/data/ingest.py
+```
+
+Or from GCS after a successful `gsutil rsync`:
+
+```bash
+unset INGEST_LOCAL_DIR
 python src/data/ingest.py
 ```
 

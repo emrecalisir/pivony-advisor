@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from pathlib import Path
 
 from google.cloud import storage
 from langchain_core.documents import Document
@@ -70,6 +71,47 @@ def load_bucket_documents(
         collection_name, sector = resolve_blob_target(blob.name)
         text_content = blob.download_as_text(encoding="utf-8")
         sections = split_by_markdown_sections(text_content, blob.name)
+        chunks = char_splitter.split_documents(sections)
+        by_collection[collection_name].extend(
+            enrich_chunk_content(doc, sector) for doc in chunks
+        )
+
+    return dict(by_collection)
+
+
+def load_local_documents(
+    root_dir: str,
+    *,
+    path_prefix: str = "hospitality",
+) -> dict[str, list[Document]]:
+    """
+    Load .md/.txt from a local directory (same layout as GCS hospitality/YYYY-MM/).
+
+    Example: INGEST_LOCAL_DIR=output/hospitality -> blob names hospitality/2025-05/part.md
+    """
+    char_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+        separators=["\n\n", "\n", ". ", " ", ""],
+    )
+    by_collection: dict[str, list[Document]] = defaultdict(list)
+    root = Path(root_dir)
+    if not root.is_dir():
+        raise FileNotFoundError(f"INGEST_LOCAL_DIR not found: {root}")
+
+    files = sorted(
+        p
+        for p in root.rglob("*")
+        if p.is_file() and p.name.endswith(SUPPORTED_SUFFIXES)
+    )
+    print(f"Local ingest: {len(files)} file(s) under {root}")
+
+    for path in files:
+        rel = path.relative_to(root).as_posix()
+        blob_name = f"{path_prefix}/{rel}" if path_prefix else rel
+        collection_name, sector = resolve_blob_target(blob_name)
+        text_content = path.read_text(encoding="utf-8")
+        sections = split_by_markdown_sections(text_content, blob_name)
         chunks = char_splitter.split_documents(sections)
         by_collection[collection_name].extend(
             enrich_chunk_content(doc, sector) for doc in chunks

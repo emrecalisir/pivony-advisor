@@ -36,7 +36,7 @@ from core.config import (
     QDRANT_URL,
     VECTOR_SIZE,
 )
-from core.ingest_utils import load_bucket_documents
+from core.ingest_utils import load_bucket_documents, load_local_documents
 
 if not os.path.exists(CREDS_PATH):
     print(f"ERROR: google_creds.json not found at {CREDS_PATH}")
@@ -53,15 +53,28 @@ RECREATE_COLLECTIONS = os.environ.get("RECREATE_COLLECTIONS", "").lower() in (
 
 def main() -> None:
     print("Pivony Advisor - Multi-collection ingestion started...")
-    print(f"Scanning bucket '{GCS_BUCKET_NAME}'...")
+    local_dir = os.environ.get("INGEST_LOCAL_DIR", "").strip()
+    local_prefix = os.environ.get("INGEST_LOCAL_PREFIX", "hospitality").strip()
 
-    storage_client = storage.Client(project=GCP_PROJECT)
-    try:
-        bucket = storage_client.bucket(GCS_BUCKET_NAME)
-        by_collection = load_bucket_documents(bucket)
-    except Exception as exc:
-        print(f"ERROR: Failed to read GCS bucket: {exc}")
-        sys.exit(1)
+    if local_dir:
+        print(f"Loading local files from '{local_dir}' (prefix={local_prefix or '(none)'})...")
+        try:
+            by_collection = load_local_documents(
+                local_dir,
+                path_prefix=local_prefix,
+            )
+        except Exception as exc:
+            print(f"ERROR: Failed to read local directory: {exc}")
+            sys.exit(1)
+    else:
+        print(f"Scanning bucket '{GCS_BUCKET_NAME}'...")
+        storage_client = storage.Client(project=GCP_PROJECT)
+        try:
+            bucket = storage_client.bucket(GCS_BUCKET_NAME)
+            by_collection = load_bucket_documents(bucket)
+        except Exception as exc:
+            print(f"ERROR: Failed to read GCS bucket: {exc}")
+            sys.exit(1)
 
     if not by_collection:
         print("WARNING: No .txt/.md files found.")
