@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.benchmarks/
+venv/
+.env
+.env.*
+*.log
+.DS_Store
+
+# Secrets / local credentials (never commit)
+config/google_creds.json
+google_creds.json
+credentials.json
+*.pem
+*.key
+
+# Large generated docs for ingest (source is .md)
+docs/*.txt
