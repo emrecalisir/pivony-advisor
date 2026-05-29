@@ -5,7 +5,11 @@
 #   ./scripts/run_ingest_background.sh start
 #   ./scripts/run_ingest_background.sh status
 #   ./scripts/run_ingest_background.sh logs      # tail application log
+#   ./scripts/run_ingest_background.sh progress  # where ingest left off
 #   ./scripts/run_ingest_background.sh stop
+#
+# Resume: each completed part file is recorded in run/ingest_checkpoint.json
+#   INGEST_BOOTSTRAP_CHECKPOINT=true  — one-time seed from logs/ingest.log
 #
 # Logs:
 #   logs/ingest.log         — structured progress (from ingest.py)
@@ -19,6 +23,7 @@ cd "$ROOT"
 PID_FILE="${INGEST_PID_FILE:-run/ingest.pid}"
 STDOUT_LOG="${INGEST_STDOUT_LOG:-logs/ingest_stdout.log}"
 APP_LOG="${INGEST_LOG_PATH:-logs/ingest.log}"
+CHECKPOINT="${INGEST_CHECKPOINT_PATH:-run/ingest_checkpoint.json}"
 PYTHON="${INGEST_PYTHON:-$ROOT/venv/bin/python}"
 INGEST_SCRIPT="${INGEST_SCRIPT:-$ROOT/src/data/ingest.py}"
 
@@ -66,8 +71,9 @@ _cmd_start() {
 
   echo "Ingest started in background."
   echo "  PID:      $(cat "$PID_FILE")"
-  echo "  Progress: $APP_LOG"
-  echo "  Raw log:  $STDOUT_LOG"
+    echo "  Progress:   $APP_LOG"
+    echo "  Raw log:    $STDOUT_LOG"
+    echo "  Checkpoint: $CHECKPOINT"
   echo ""
   echo "  tail -f $APP_LOG"
   echo "  ./scripts/run_ingest_background.sh status"
@@ -97,6 +103,21 @@ _cmd_stop() {
   echo "Stopped (SIGKILL)."
 }
 
+_checkpoint_summary() {
+  if [[ ! -f "$CHECKPOINT" ]]; then
+    echo "  Checkpoint: (none yet)"
+    return
+  fi
+  if command -v jq >/dev/null 2>&1; then
+    local n chunks
+    n="$(jq '.completed_files | length' "$CHECKPOINT" 2>/dev/null || echo "?")"
+    chunks="$(jq '.chunks_indexed' "$CHECKPOINT" 2>/dev/null || echo "?")"
+    echo "  Checkpoint: $n file(s) done, $chunks chunks recorded"
+  else
+    echo "  Checkpoint: $CHECKPOINT ($(wc -l <"$CHECKPOINT" 2>/dev/null || echo 0) lines)"
+  fi
+}
+
 _cmd_status() {
   if _is_running; then
     local pid elapsed
@@ -105,6 +126,7 @@ _cmd_status() {
     echo "RUNNING  PID=$pid  elapsed=$elapsed"
     echo "  $APP_LOG"
     echo "  $STDOUT_LOG"
+    _checkpoint_summary
     if [[ -f "$APP_LOG" ]]; then
       echo ""
       echo "Last 5 lines of $APP_LOG:"
@@ -113,6 +135,7 @@ _cmd_status() {
   else
     echo "NOT RUNNING"
     rm -f "$PID_FILE" 2>/dev/null || true
+    _checkpoint_summary
     if [[ -f "$APP_LOG" ]]; then
       echo ""
       echo "Last 5 lines of $APP_LOG:"
@@ -136,8 +159,29 @@ _cmd_restart() {
   _cmd_start
 }
 
+_cmd_progress() {
+  echo "=== Ingest progress ==="
+  _checkpoint_summary
+  if [[ -f "$CHECKPOINT" ]] && command -v jq >/dev/null 2>&1; then
+    echo ""
+    echo "Last success:"
+    jq -r '"  month=\(.last_month) blob=\(.last_blob) updated=\(.updated_at)"' "$CHECKPOINT" 2>/dev/null || true
+  fi
+  if [[ -f "$APP_LOG" ]]; then
+    echo ""
+    echo "Last month header:"
+    grep "=== Month " "$APP_LOG" 2>/dev/null | tail -1 | sed 's/^/  /' || true
+    echo "Last DONE line:"
+    grep "DONE " "$APP_LOG" 2>/dev/null | tail -1 | sed 's/^/  /' || true
+    echo "Last COMPLETE:"
+    grep "COMPLETE" "$APP_LOG" 2>/dev/null | tail -1 | sed 's/^/  /' || true
+    echo "Last ERROR:"
+    grep "ERROR Ingest failed" "$APP_LOG" 2>/dev/null | tail -1 | sed 's/^/  /' || true
+  fi
+}
+
 usage() {
-  echo "Usage: $0 {start|stop|status|logs|restart}"
+  echo "Usage: $0 {start|stop|status|logs|progress|restart}"
 }
 
 case "${1:-}" in
@@ -145,6 +189,7 @@ case "${1:-}" in
   stop) _cmd_stop ;;
   status) _cmd_status ;;
   logs) _cmd_logs ;;
+  progress) _cmd_progress ;;
   restart) _cmd_restart ;;
   *) usage; exit 1 ;;
 esac

@@ -134,21 +134,46 @@ python src/data/ingest.py
 tail -f logs/ingest.log
 ```
 
-**Resume** (export files already on disk; do not wipe Qdrant):
+**See where you stopped:**
+
+```bash
+./scripts/run_ingest_background.sh progress
+grep "DONE \|=== Month \|COMPLETE\|ERROR" logs/ingest.log | tail -20
+```
+
+Log line format: `DONE 2025-11 file 50/266 etsreviews_part_050.md | ...`
+
+**Resume after error** (do not restart from zero):
+
+Each successfully indexed part file is saved in `run/ingest_checkpoint.json`. After a crash, fix the issue (e.g. `INGEST_BATCH_SIZE=16`) and:
 
 ```bash
 export RECREATE_COLLECTIONS=false
-export INGEST_BY_MONTH=true
-# Optional: skip months already done, start from e.g. 2025-08
+export INGEST_RESUME=true
+export INGEST_BATCH_SIZE=16
+./scripts/run_ingest_background.sh restart
+```
+
+**One-time** (if checkpoint file is empty but `logs/ingest.log` has hours of progress):
+
+```bash
+export INGEST_BOOTSTRAP_CHECKPOINT=true   # only for the first restart
+./scripts/run_ingest_background.sh restart
+# then set INGEST_BOOTSTRAP_CHECKPOINT=false
+```
+
+Optional month filters (checkpoint still skips individual files already done):
+
+```bash
 export INGEST_FROM_MONTH=2025-08
-# Or a single month only:
 # export INGEST_ONLY_MONTH=2025-09
-python src/data/ingest.py
 ```
 
 Progress in `logs/ingest.log`. Large exports auto-use **month-by-month** ingest (`INGEST_BY_MONTH=true`) to avoid OOM on 1M+ chunks.
 
-`INGEST_PROGRESS_EVERY` (default 25) during chunking; `INGEST_BATCH_SIZE` (default 100) during Qdrant indexing.
+`INGEST_BATCH_SIZE` (default **16**). Re-indexing the same file **replaces** vectors (stable point ids), it does not duplicate.
+
+`INGEST_PROGRESS_EVERY` only affects optional extra logs; each file always logs one `DONE <month> file X/Y` line.
 
 Or from GCS after a successful `gsutil rsync`:
 
