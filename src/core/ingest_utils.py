@@ -20,6 +20,7 @@ from core.config import (
 )
 
 HEADER_PATTERN = re.compile(r"^(#{1,4})\s+(.+)$", re.MULTILINE)
+REVIEW_META_LINE = re.compile(r"^- ([A-Za-z0-9_\[\]\.]+): (.+)$")
 
 
 def split_by_markdown_sections(text: str, source: str) -> list[Document]:
@@ -43,17 +44,57 @@ def split_by_markdown_sections(text: str, source: str) -> list[Document]:
     return docs
 
 
-def enrich_chunk_content(doc: Document, sector: str) -> Document:
+def extract_review_metadata_block(section_text: str) -> str:
+    """
+    Header lines under ### Review N (- Key: value) until review body starts.
+    Copied onto every chunk so hotel/date/pivot fields survive text splitting.
+    """
+    meta_lines: list[str] = []
+    for line in section_text.splitlines():
+        stripped = line.strip()
+        if REVIEW_META_LINE.match(stripped):
+            meta_lines.append(stripped)
+            continue
+        if meta_lines:
+            break
+    return "\n".join(meta_lines)
+
+
+def enrich_chunk_content(
+    doc: Document,
+    sector: str,
+    *,
+    review_metadata: str = "",
+) -> Document:
     section = doc.metadata.get("section", "")
     source = doc.metadata.get("source", "")
-    prefix = f"[Sector: {sector} | Source: {source}"
+    header = f"[Sector: {sector} | Source: {source}"
     if section:
-        prefix += f" | Section: {section}"
-    prefix += "]\n\n"
+        header += f" | Section: {section}"
+    header += "]"
+    parts = [header]
+    if review_metadata.strip():
+        parts.append(review_metadata.strip())
+    prefix = "\n".join(parts) + "\n\n"
     return Document(
         page_content=prefix + doc.page_content,
         metadata={**doc.metadata, "sector": sector},
     )
+
+
+def chunk_sections_to_documents(
+    sections: list[Document],
+    char_splitter: RecursiveCharacterTextSplitter,
+    sector: str,
+) -> list[Document]:
+    docs: list[Document] = []
+    for section in sections:
+        review_meta = extract_review_metadata_block(section.page_content)
+        for chunk in char_splitter.split_documents([section]):
+            docs.append(
+                enrich_chunk_content(chunk, sector, review_metadata=review_meta)
+            )
+    return docs
 
 
 def load_bucket_documents(
@@ -73,9 +114,8 @@ def load_bucket_documents(
         collection_name, sector = resolve_blob_target(blob.name)
         text_content = blob.download_as_text(encoding="utf-8")
         sections = split_by_markdown_sections(text_content, blob.name)
-        chunks = char_splitter.split_documents(sections)
         by_collection[collection_name].extend(
-            enrich_chunk_content(doc, sector) for doc in chunks
+            chunk_sections_to_documents(sections, char_splitter, sector)
         )
 
     return dict(by_collection)
@@ -124,9 +164,8 @@ def load_local_documents(
         collection_name, sector = resolve_blob_target(blob_name)
         text_content = path.read_text(encoding="utf-8")
         sections = split_by_markdown_sections(text_content, blob_name)
-        chunks = char_splitter.split_documents(sections)
         by_collection[collection_name].extend(
-            enrich_chunk_content(doc, sector) for doc in chunks
+            chunk_sections_to_documents(sections, char_splitter, sector)
         )
         if progress_every > 0 and (
             file_idx % progress_every == 0 or file_idx == len(files)
@@ -163,6 +202,5 @@ def documents_from_file(path: Path, blob_name: str) -> tuple[str, str, list[Docu
     collection_name, sector = resolve_blob_target(blob_name)
     text_content = path.read_text(encoding="utf-8")
     sections = split_by_markdown_sections(text_content, blob_name)
-    chunks = char_splitter.split_documents(sections)
-    docs = [enrich_chunk_content(doc, sector) for doc in chunks]
+    docs = chunk_sections_to_documents(sections, char_splitter, sector)
     return collection_name, sector, docs

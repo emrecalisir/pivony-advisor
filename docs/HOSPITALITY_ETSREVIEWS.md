@@ -15,11 +15,16 @@ pip install pymongo
 | Collection | `ETSReviews` (not `etsreviews`) |
 | DB | `production` (prod) or `staging` |
 | Review text | `ReviewContent` |
-| Date | `sk` (ingest sonrası; format `dd-mm-yyyy HH:mm:ss`) |
-| Hotel | `CustomAttributes.vendorName` |
-| Text | `ReviewContent` (+ `SubQuestionAnswers` ayrı alan) |
+| Date/time | `sk` + `SubmittedAt` (full `YYYY-MM-DD HH:MM:SS UTC` in export) |
+| Hotel / pivot | All `CustomAttributes` keys (`vendorName`, `projectName`, channel, …) |
+| Text | `ReviewContent` |
+| Sub-questions | `SubQuestionAnswers` (flattened as `- SubQ[...]:` lines) |
 | Rating | `Rating` |
 | Title | `ReviewTitle` (optional) |
+
+Each review block exports **all** `CustomAttributes` fields so pivot dimensions reach Qdrant. Ingest copies the metadata header onto **every chunk** (hotel + time stay searchable after follow-ups like “hangi otelde?”).
+
+**After changing export format:** re-export and re-ingest hospitality (or `RECREATE_COLLECTIONS=true` once).
 
 Partition rows (`pk` = `s#0` … `s#4`) are **excluded** by default; export uses documents with real `ReviewContent`.
 

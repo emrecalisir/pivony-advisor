@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import time
 from collections import defaultdict
@@ -143,6 +144,31 @@ OUTPUT_DIR = Path(
 # Optional Mongo filter JSON, e.g. {"status":"published"}
 EXTRA_FILTER_JSON = os.environ.get("ETS_EXTRA_FILTER_JSON", "")
 
+# Date window: ETS_DATE_FROM / ETS_DATE_TO (YYYY-MM-DD) override ETS_DAYS_BACK when set
+DATE_FROM_RAW = os.environ.get("ETS_DATE_FROM", "").strip()
+DATE_TO_RAW = os.environ.get("ETS_DATE_TO", "").strip()
+
+# Hotel / pivot filters (Mongo match on CustomAttributes)
+HOTEL_NAMES = [
+    n.strip() for n in os.environ.get("ETS_HOTEL_NAMES", "").split(",") if n.strip()
+]
+HOTEL_FIELD = os.environ.get("ETS_HOTEL_FIELD", "vendorName").strip() or "vendorName"
+PIVOT_FILTERS_JSON = os.environ.get("ETS_PIVOT_FILTERS_JSON", "").strip()
+PIVOT_MATCH = os.environ.get("ETS_PIVOT_MATCH", "all").strip().lower()  # all | any
+
+# Export full Mongo document per review (all fields + CustomAttributes + SubQuestionAnswers)
+EXPORT_FULL_MONGO = os.environ.get("ETS_EXPORT_FULL_MONGO", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+EXPORT_INCLUDE_ANALYSIS = os.environ.get("ETS_EXPORT_INCLUDE_ANALYSIS", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+EXPORT_MAX_JSON_CHARS = int(os.environ.get("ETS_EXPORT_MAX_JSON_CHARS", "12000"))
+
 
 def _first_value(doc: dict[str, Any], keys: list[str]) -> Any:
     for key in keys:
@@ -179,6 +205,70 @@ def _review_source(doc: dict[str, Any]) -> str | None:
                 return str(val).strip()
     source = _first_value(doc, SOURCE_FIELDS)
     return str(source).strip() if source else None
+
+
+def _format_scalar_for_export(value: Any, *, max_len: int = 1500) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        try:
+            text = json.dumps(value, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            text = str(value)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text[:max_len] if len(text) > max_len else text
+    return re.sub(r"\s+", " ", str(value)).strip()
+
+
+def _format_subquestion_answers(value: Any) -> list[str]:
+    """Flatten SubQuestionAnswers into export lines."""
+    lines: list[str] = []
+    if value is None:
+        return lines
+    if isinstance(value, dict):
+        for key, ans in value.items():
+            if ans in (None, ""):
+                continue
+            lines.append(f"- SubQ[{key}]: {_format_scalar_for_export(ans, max_len=800)}")
+        return lines
+    if isinstance(value, list):
+        for idx, item in enumerate(value, start=1):
+            if item in (None, ""):
+                continue
+            if isinstance(item, dict):
+                q = item.get("question") or item.get("Question") or item.get("label")
+                a = (
+                    item.get("answer")
+                    or item.get("Answer")
+                    or item.get("value")
+                    or item.get("text")
+                )
+                if q and a:
+                    lines.append(
+                        f"- SubQ[{idx}]: {_format_scalar_for_export(q, max_len=200)} => "
+                        f"{_format_scalar_for_export(a, max_len=800)}"
+                    )
+                else:
+                    lines.append(
+                        f"- SubQ[{idx}]: {_format_scalar_for_export(item, max_len=800)}"
+                    )
+            else:
+                lines.append(f"- SubQ[{idx}]: {_format_scalar_for_export(item, max_len=800)}")
+    return lines
+
+
+def _iter_custom_attribute_lines(doc: dict[str, Any]) -> list[str]:
+    """All CustomAttributes keys (vendorName, pivot fields, etc.)."""
+    attrs = doc.get("CustomAttributes") or {}
+    if not isinstance(attrs, dict):
+        return []
+    lines: list[str] = []
+    for key in sorted(attrs.keys()):
+        val = attrs.get(key)
+        if val in (None, ""):
+            continue
+        lines.append(f"- {key}: {_format_scalar_for_export(val)}")
+    return lines
 
 
 def _coalesce_date_field_expr() -> dict[str, Any]:
@@ -228,46 +318,179 @@ def _write_review_lines(fh, doc: dict[str, Any], index: int) -> bool:
     if not text:
         return False
 
-    title = _property_name(doc)
+    property_name = _property_name(doc)
+    review_title = _first_value(doc, TITLE_FIELDS)
     rating = _first_value(doc, RATING_FIELDS)
     source = _review_source(doc)
     when = _doc_review_date(doc)
-    survey_id = doc.get("pk") or doc.get("sk")
+    survey_id = doc.get("pk")
+    sk_raw = doc.get("sk")
 
     fh.write(f"### Review {index}\n")
     if survey_id:
-        fh.write(f"- Survey: {survey_id}\n")
-    if title:
-        fh.write(f"- Property: {title}\n")
+        fh.write(f"- SurveyId: {survey_id}\n")
+    if sk_raw:
+        fh.write(f"- sk: {sk_raw}\n")
+    if when:
+        fh.write(f"- SubmittedAt: {when.strftime('%Y-%m-%d %H:%M:%S')} UTC\n")
+        fh.write(f"- Date: {when.date().isoformat()}\n")
+    if property_name:
+        fh.write(f"- Property: {property_name}\n")
+    if review_title and str(review_title).strip() != str(property_name or "").strip():
+        fh.write(f"- Title: {review_title}\n")
     if rating is not None:
         fh.write(f"- Rating: {rating}\n")
     if source:
         fh.write(f"- Source: {source}\n")
-    if when:
-        fh.write(f"- Date: {when.date().isoformat()}\n")
+
+    seen_keys: set[str] = {
+        "SurveyId",
+        "sk",
+        "SubmittedAt",
+        "Date",
+        "Property",
+        "Title",
+        "Rating",
+        "Source",
+    }
+    for line in _iter_custom_attribute_lines(doc):
+        key = line.split(":", 1)[0].strip().lstrip("- ").strip()
+        if key in seen_keys:
+            continue
+        fh.write(f"{line}\n")
+        seen_keys.add(key)
+
+    for line in _format_subquestion_answers(doc.get("SubQuestionAnswers")):
+        fh.write(f"{line}\n")
+
+    _write_mongo_json_block(fh, doc)
+
     fh.write("\n")
     fh.write(text)
     return True
 
 
+def _write_mongo_json_block(fh, doc: dict[str, Any]) -> None:
+    """Full Mongo document as JSON so all pivot keys/values are in the RAG corpus."""
+    if not EXPORT_FULL_MONGO:
+        return
+    payload = {k: v for k, v in doc.items() if k != "_id"}
+    if not EXPORT_INCLUDE_ANALYSIS:
+        payload.pop("Analysis", None)
+        payload.pop("subQuestionAnalysis", None)
+    try:
+        text = json.dumps(payload, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        text = str(payload)
+    if len(text) > EXPORT_MAX_JSON_CHARS:
+        text = text[:EXPORT_MAX_JSON_CHARS] + "...(truncated)"
+    fh.write("\n#### Mongo JSON\n```json\n")
+    fh.write(text)
+    fh.write("\n```\n")
+
+
+def _parse_bound_date(raw: str, *, end_of_day: bool) -> datetime | None:
+    if not raw:
+        return None
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y"):
+        try:
+            dt = datetime.strptime(raw.strip(), fmt)
+            if end_of_day:
+                dt = dt.replace(hour=23, minute=59, second=59)
+            return dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    parsed = _parse_date(raw)
+    return parsed
+
+
+def _export_date_window() -> tuple[datetime, datetime]:
+    until = _parse_bound_date(DATE_TO_RAW, end_of_day=True) or datetime.now(timezone.utc)
+    since = _parse_bound_date(DATE_FROM_RAW, end_of_day=False)
+    if since is None:
+        since = until - timedelta(days=DAYS_BACK)
+    if since >= until:
+        raise ValueError(f"Invalid export window: {since} >= {until}")
+    return since, until
+
+
+def _mongo_field_path(field: str) -> str:
+    if "." in field:
+        return field
+    return f"CustomAttributes.{field}"
+
+
+def _collect_pivot_filter_groups() -> dict[str, list[str]]:
+    """Build allow-lists from ETS_HOTEL_NAMES + ETS_PIVOT_FILTERS_JSON (.env)."""
+    grouped_sets: dict[str, set[str]] = defaultdict(set)
+
+    if HOTEL_NAMES:
+        grouped_sets[HOTEL_FIELD].update(HOTEL_NAMES)
+
+    if PIVOT_FILTERS_JSON:
+        data = json.loads(PIVOT_FILTERS_JSON)
+        if not isinstance(data, dict):
+            raise ValueError("ETS_PIVOT_FILTERS_JSON must be a JSON object")
+        for key, values in data.items():
+            if values is None:
+                continue
+            if isinstance(values, str):
+                values = [values]
+            if not isinstance(values, list):
+                continue
+            for value in values:
+                if value is not None and str(value).strip():
+                    grouped_sets[str(key)].add(str(value).strip())
+
+    return {key: sorted(values) for key, values in grouped_sets.items()}
+
+
+def _pivot_filters_clause() -> dict[str, Any] | None:
+    grouped = _collect_pivot_filter_groups()
+    if not grouped:
+        return None
+
+    clauses = [
+        {_mongo_field_path(key): {"$in": values}} for key, values in grouped.items()
+    ]
+    if PIVOT_MATCH == "any":
+        if len(clauses) == 1:
+            return clauses[0]
+        return {"$or": clauses}
+    if len(clauses) == 1:
+        return clauses[0]
+    return {"$and": clauses}
+
+
 def _base_match() -> dict[str, Any]:
     """Full review rows only (not s#0..s#4 partition pointers)."""
     text_clause = [{f: {"$exists": True, "$ne": ""}} for f in TEXT_FIELDS[:3]]
-    match: dict[str, Any] = {"pk": {"$not": {"$regex": r"^s#\d+$"}}}
+    clauses: list[dict[str, Any]] = [{"pk": {"$not": {"$regex": r"^s#\d+$"}}}]
     if text_clause:
-        match["$or"] = text_clause
-    return match
+        clauses.append({"$or": text_clause})
+    pivot = _pivot_filters_clause()
+    if pivot:
+        clauses.append(pivot)
+    if EXTRA_FILTER_JSON.strip():
+        clauses.append(json.loads(EXTRA_FILTER_JSON))
+    if len(clauses) == 1:
+        return clauses[0]
+    return {"$and": clauses}
 
 
-def _projection_fields() -> dict[str, int]:
-    """Only fields needed for export — omit Analysis / subQuestionAnalysis blobs."""
+def _projection_fields() -> dict[str, int] | dict[str, Any]:
+    """Full document when EXPORT_FULL_MONGO; otherwise lean projection."""
+    if EXPORT_FULL_MONGO:
+        exclusion: dict[str, Any] = {}
+        if not EXPORT_INCLUDE_ANALYSIS:
+            exclusion["Analysis"] = 0
+            exclusion["subQuestionAnalysis"] = 0
+        return exclusion if exclusion else {}
     projection: dict[str, int] = {
         "pk": 1,
         "sk": 1,
-        "CustomAttributes.vendorName": 1,
-        "CustomAttributes.projectName": 1,
-        "CustomAttributes.channel": 1,
-        "CustomAttributes.clientName": 1,
+        "CustomAttributes": 1,
+        "SubQuestionAnswers": 1,
     }
     for field in DATE_FIELDS + TEXT_FIELDS + TITLE_FIELDS + RATING_FIELDS + SOURCE_FIELDS:
         projection[field] = 1
@@ -312,8 +535,9 @@ def _build_pipeline(date_start: datetime, date_end: datetime) -> list[dict[str, 
         },
         {"$match": {"_parsedDate": {"$gte": date_start, "$lt": date_end}}},
         {"$sort": {"_parsedDate": -1}},
-        {"$project": projection},
     ]
+    if projection:
+        pipeline.append({"$project": projection})
     return pipeline
 
 
@@ -429,7 +653,37 @@ def _diagnose_missing_mongo_env() -> None:
     _log(logging.INFO, "See docs/HOSPITALITY_ETSREVIEWS.md")
 
 
+def _reload_export_env() -> None:
+    """Re-read filter env after .env load (module-level defaults may be stale)."""
+    global DATE_FROM_RAW, DATE_TO_RAW, HOTEL_NAMES, HOTEL_FIELD
+    global PIVOT_FILTERS_JSON, PIVOT_MATCH, EXPORT_FULL_MONGO
+    global EXPORT_INCLUDE_ANALYSIS, EXPORT_MAX_JSON_CHARS, SKIP_EXISTING
+
+    _config.load_project_env()
+    DATE_FROM_RAW = os.environ.get("ETS_DATE_FROM", "").strip()
+    DATE_TO_RAW = os.environ.get("ETS_DATE_TO", "").strip()
+    HOTEL_NAMES = [
+        n.strip() for n in os.environ.get("ETS_HOTEL_NAMES", "").split(",") if n.strip()
+    ]
+    HOTEL_FIELD = os.environ.get("ETS_HOTEL_FIELD", "vendorName").strip() or "vendorName"
+    PIVOT_FILTERS_JSON = os.environ.get("ETS_PIVOT_FILTERS_JSON", "").strip()
+    PIVOT_MATCH = os.environ.get("ETS_PIVOT_MATCH", "all").strip().lower()
+    EXPORT_FULL_MONGO = os.environ.get("ETS_EXPORT_FULL_MONGO", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    EXPORT_INCLUDE_ANALYSIS = os.environ.get("ETS_EXPORT_INCLUDE_ANALYSIS", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    EXPORT_MAX_JSON_CHARS = int(os.environ.get("ETS_EXPORT_MAX_JSON_CHARS", "12000"))
+    SKIP_EXISTING = os.environ.get("ETS_SKIP_EXISTING", "").lower() in ("1", "true", "yes")
+
+
 def main() -> None:
+    _reload_export_env()
     if not MONGODB_URI:
         _diagnose_missing_mongo_env()
         sys.exit(1)
@@ -442,8 +696,12 @@ def main() -> None:
 
     logger = _setup_export_logger()
     started = time.monotonic()
-    until = datetime.now(timezone.utc)
-    since = until - timedelta(days=DAYS_BACK)
+    try:
+        since, until = _export_date_window()
+    except ValueError as exc:
+        logger.error("%s", exc)
+        sys.exit(1)
+
     logger.info("Log file: %s", EXPORT_LOG_PATH)
     logger.info("Connecting to MongoDB db=%s collection=%s", MONGODB_DB, MONGODB_COLLECTION)
     logger.info(
@@ -454,6 +712,25 @@ def main() -> None:
         CURSOR_BATCH_SIZE,
         REVIEWS_PER_FILE,
         MAX_REVIEWS or "unlimited",
+    )
+    try:
+        pivot_groups = _collect_pivot_filter_groups()
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.error("Invalid pivot filter env: %s", exc)
+        sys.exit(1)
+    if pivot_groups:
+        logger.info(
+            "Pivot filters (match=%s): %s",
+            PIVOT_MATCH,
+            {k: v[:3] + (["..."] if len(v) > 3 else []) for k, v in pivot_groups.items()},
+        )
+    elif HOTEL_NAMES or PIVOT_FILTERS_JSON:
+        logger.warning("Pivot filter env set but no values parsed")
+    logger.info(
+        "Export mode: full_mongo=%s include_analysis=%s max_json_chars=%s",
+        EXPORT_FULL_MONGO,
+        EXPORT_INCLUDE_ANALYSIS,
+        EXPORT_MAX_JSON_CHARS,
     )
 
     client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=15000)
