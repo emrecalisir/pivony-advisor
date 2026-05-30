@@ -59,8 +59,12 @@ USE_VERTEX_CONTEXTUAL_NAVIGATION = os.environ.get(
 ).lower() in ("1", "true", "yes")
 
 PLATFORM_K = int(os.environ.get("PLATFORM_RETRIEVER_K", "3"))
-SECTOR_K = int(os.environ.get("SECTOR_RETRIEVER_K", "5"))
+SECTOR_K = int(os.environ.get("SECTOR_RETRIEVER_K", "8"))
 VECTOR_SIZE = 768
+
+# Agentic RAG: Gemini orchestrates tools (search_qdrant_reviews, get_pivony_metrics)
+USE_AGENT = os.environ.get("ADVISOR_USE_AGENT", "true").lower() in ("1", "true", "yes")
+AGENT_MAX_TOOL_ITERATIONS = int(os.environ.get("AGENT_MAX_TOOL_ITERATIONS", "4"))
 
 # GCS folder prefixes → platform knowledge (shared across all sectors)
 PLATFORM_PREFIXES = frozenset({"master", "general", "platform"})

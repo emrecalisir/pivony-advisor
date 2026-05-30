@@ -19,13 +19,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
 
+from core.agent import run_advisor_agent
 from core.config import (
     CREDS_PATH,
     DEFAULT_SECTOR,
+    USE_AGENT,
     USE_VERTEX_CONTEXTUAL_NAVIGATION,
     sector_slugify,
 )
-from core.conversation import prepare_conversational_input
+from core.conversation import extract_turns, prepare_conversational_input
 from core.contextual_navigation import generate_contextual_navigation
 from core.logging_config import get_advisor_logger, log_conversation, setup_logging
 from core.rag import (
@@ -261,18 +263,29 @@ async def chat_completions(
     api_system = extract_api_system_prompt(request.messages)
 
     logger.info(
-        "chat_completions user_id=%s user_email=%s sector=%s model=%s messages=%s",
+        "chat_completions user_id=%s user_email=%s sector=%s model=%s messages=%s agent=%s",
         user_id or "-",
         user_email or "-",
         sector,
         request.model,
         len(request.messages),
+        USE_AGENT,
     )
 
     try:
-        chain = _get_chain(sector, api_system)
-        answer = chain.invoke(chat_input)
-        _, _, llm = _components()
+        embeddings, client, llm = _components()
+        if USE_AGENT:
+            answer = run_advisor_agent(
+                turns=extract_turns(request.messages),
+                sector_slug=sector,
+                extra_system_prompt=api_system,
+                embeddings=embeddings,
+                client=client,
+                llm=llm,
+            )
+        else:
+            chain = _get_chain(sector, api_system)
+            answer = chain.invoke(chat_input)
         followups, guidance = generate_contextual_navigation(
             chat_input.get("retrieval_query") or chat_input["question"],
             answer,
