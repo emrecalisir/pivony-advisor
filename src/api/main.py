@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
 
-from core.agent import run_advisor_agent
+from core.agent import DEFAULT_ADVISOR_MODE, run_advisor_agent
 from core.config import (
     CREDS_PATH,
     DEFAULT_SECTOR,
@@ -142,6 +142,13 @@ class ChatCompletionRequest(BaseModel):
         default=None,
         description="User email (from pivony-api)",
     )
+    pivony_advisor_mode: str | None = Field(
+        default=None,
+        description=(
+            "Product tier from pivony-api: 'industry_expert' (paid, raw-review RAG) "
+            "or 'advisor' (freemium, metrics-only). Defaults to industry_expert."
+        ),
+    )
 
 
 class ChatCompletionMessage(BaseModel):
@@ -261,15 +268,17 @@ async def chat_completions(
 
     sector = sector_slugify(request.pivony_sector or DEFAULT_SECTOR)
     api_system = extract_api_system_prompt(request.messages)
+    advisor_mode = (request.pivony_advisor_mode or DEFAULT_ADVISOR_MODE).strip().lower()
 
     logger.info(
-        "chat_completions user_id=%s user_email=%s sector=%s model=%s messages=%s agent=%s",
+        "chat_completions user_id=%s user_email=%s sector=%s model=%s messages=%s agent=%s mode=%s",
         user_id or "-",
         user_email or "-",
         sector,
         request.model,
         len(request.messages),
         USE_AGENT,
+        advisor_mode,
     )
 
     try:
@@ -282,6 +291,7 @@ async def chat_completions(
                 embeddings=embeddings,
                 client=client,
                 llm=llm,
+                advisor_mode=advisor_mode,
             )
         else:
             chain = _get_chain(sector, api_system)

@@ -24,6 +24,13 @@ from core.rag import search_reviews
 
 logger = logging.getLogger(__name__)
 
+# Advisor product tiers (forwarded from pivony-api as pivony_advisor_mode).
+#   industry_expert : paid — raw-review RAG (Qdrant) + aggregate metrics
+#   advisor         : freemium — aggregate metrics only (no raw-review indexing)
+MODE_INDUSTRY_EXPERT = "industry_expert"
+MODE_ADVISOR = "advisor"
+DEFAULT_ADVISOR_MODE = MODE_INDUSTRY_EXPERT
+
 
 class SearchReviewsArgs(BaseModel):
     query: str = Field(
@@ -65,6 +72,7 @@ def _build_tools(
     sector_slug: str,
     embeddings: GoogleGenerativeAIEmbeddings,
     client: QdrantClient,
+    advisor_mode: str = DEFAULT_ADVISOR_MODE,
 ) -> list[StructuredTool]:
     slug = sector_slugify(sector_slug or DEFAULT_SECTOR)
 
@@ -93,6 +101,10 @@ def _build_tools(
         ),
         args_schema=MetricsArgs,
     )
+    # Freemium Advisor is grounded only in Pivony's existing analysis outputs
+    # (metrics API); raw-review search is an Industry-Expert (paid) capability.
+    if advisor_mode == MODE_ADVISOR:
+        return [metrics_tool]
     return [search_tool, metrics_tool]
 
 
@@ -117,16 +129,21 @@ def run_advisor_agent(
     embeddings: GoogleGenerativeAIEmbeddings,
     client: QdrantClient,
     llm: ChatGoogleGenerativeAI,
+    advisor_mode: str = DEFAULT_ADVISOR_MODE,
     max_iterations: int | None = None,
 ) -> str:
     """
     Run the tool-calling loop and return the final assistant text.
 
     `turns` is an ordered list of (role, content) user/assistant messages
-    ending with the latest user message.
+    ending with the latest user message. `advisor_mode` selects the product
+    tier ('industry_expert' = raw-review RAG + metrics, 'advisor' = metrics only).
     """
     slug = sector_slugify(sector_slug or DEFAULT_SECTOR)
-    tools = _build_tools(sector_slug=slug, embeddings=embeddings, client=client)
+    mode = advisor_mode or DEFAULT_ADVISOR_MODE
+    tools = _build_tools(
+        sector_slug=slug, embeddings=embeddings, client=client, advisor_mode=mode
+    )
     tool_map = {tool.name: tool for tool in tools}
     llm_with_tools = llm.bind_tools(tools)
 
