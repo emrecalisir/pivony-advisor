@@ -66,6 +66,16 @@ VECTOR_SIZE = 768
 USE_AGENT = os.environ.get("ADVISOR_USE_AGENT", "true").lower() in ("1", "true", "yes")
 AGENT_MAX_TOOL_ITERATIONS = int(os.environ.get("AGENT_MAX_TOOL_ITERATIONS", "4"))
 
+# Faz 3: real freemium-Advisor metrics from pivony-api worker endpoint.
+# Full URL to the advisor-metrics route, e.g.
+#   http://<pivony-api-host>/api/v1/welcome/worker/advisor-metrics  (production)
+#   http://<pivony-api-host>/api/welcome/worker/advisor-metrics     (development)
+PIVONY_API_METRICS_URL = os.environ.get("PIVONY_API_METRICS_URL", "").strip()
+# Shared secret == pivony-api WELCOME_WORKER_SECRET (X-Welcome-Worker-Key header).
+PIVONY_API_WORKER_SECRET = os.environ.get("PIVONY_API_WORKER_SECRET", "").strip()
+PIVONY_API_TIMEOUT_SEC = int(os.environ.get("PIVONY_API_TIMEOUT_SEC", "20"))
+PIVONY_METRICS_DEFAULT_DAYS = int(os.environ.get("PIVONY_METRICS_DEFAULT_DAYS", "90"))
+
 # GCS folder prefixes → platform knowledge (shared across all sectors)
 PLATFORM_PREFIXES = frozenset({"master", "general", "platform"})
 PLATFORM_COLLECTION = "pivony_platform_knowledge"

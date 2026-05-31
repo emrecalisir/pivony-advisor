@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from qdrant_client import QdrantClient
 
 from core.config import AGENT_MAX_TOOL_ITERATIONS, DEFAULT_SECTOR, sector_slugify
+from core.pivony_metrics import fetch_pivony_metrics
 from core.prompts import build_agent_system_prompt
 from core.rag import search_reviews
 
@@ -51,28 +52,13 @@ class MetricsArgs(BaseModel):
     )
 
 
-def _mock_metrics(vendor_name: str | None, period: str | None) -> str:
-    """Placeholder metrics until a real analytics endpoint is wired (Faz 3)."""
-    payload = {
-        "vendorName": vendor_name or "Tüm Oteller",
-        "avg_rating": 4.1,
-        "top_root_causes": [
-            "Oda temizliği",
-            "Check-in bekleme süresi",
-            "Kahvaltı çeşitliliği",
-        ],
-        "period": period or "Son 3 ay",
-        "note": "Mock veri — gerçek metrik entegrasyonu (Faz 3) henüz bağlı değil.",
-    }
-    return json.dumps(payload, ensure_ascii=False)
-
-
 def _build_tools(
     *,
     sector_slug: str,
     embeddings: GoogleGenerativeAIEmbeddings,
     client: QdrantClient,
     advisor_mode: str = DEFAULT_ADVISOR_MODE,
+    user_id: str | None = None,
 ) -> list[StructuredTool]:
     slug = sector_slugify(sector_slug or DEFAULT_SECTOR)
 
@@ -80,7 +66,13 @@ def _build_tools(
         return search_reviews(query, slug, embeddings=embeddings, client=client)
 
     def _metrics(vendor_name: str | None = None, period: str | None = None) -> str:
-        return _mock_metrics(vendor_name, period)
+        data = fetch_pivony_metrics(user_id, vendor_name=vendor_name)
+        if data is None:
+            return json.dumps(
+                {"error": "Metrik servisi şu anda kullanılamıyor; veri çekilemedi."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
 
     search_tool = StructuredTool.from_function(
         func=_search,
@@ -130,6 +122,7 @@ def run_advisor_agent(
     client: QdrantClient,
     llm: ChatGoogleGenerativeAI,
     advisor_mode: str = DEFAULT_ADVISOR_MODE,
+    user_id: str | None = None,
     max_iterations: int | None = None,
 ) -> str:
     """
@@ -138,11 +131,16 @@ def run_advisor_agent(
     `turns` is an ordered list of (role, content) user/assistant messages
     ending with the latest user message. `advisor_mode` selects the product
     tier ('industry_expert' = raw-review RAG + metrics, 'advisor' = metrics only).
+    `user_id` scopes get_pivony_metrics to the caller's organization.
     """
     slug = sector_slugify(sector_slug or DEFAULT_SECTOR)
     mode = advisor_mode or DEFAULT_ADVISOR_MODE
     tools = _build_tools(
-        sector_slug=slug, embeddings=embeddings, client=client, advisor_mode=mode
+        sector_slug=slug,
+        embeddings=embeddings,
+        client=client,
+        advisor_mode=mode,
+        user_id=user_id,
     )
     tool_map = {tool.name: tool for tool in tools}
     llm_with_tools = llm.bind_tools(tools)

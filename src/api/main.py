@@ -292,6 +292,7 @@ async def chat_completions(
                 client=client,
                 llm=llm,
                 advisor_mode=advisor_mode,
+                user_id=user_id,
             )
         else:
             chain = _get_chain(sector, api_system)
