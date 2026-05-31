@@ -57,14 +57,22 @@ def get_sector_prompt(sector_slug: str) -> str | None:
 
 # Tool-usage guidance for the agentic (bind_tools) path.
 AGENT_TOOL_GUIDANCE = """You can call tools to gather grounding before answering:
-- `search_qdrant_reviews(query)`: use when the user asks about specific guest complaints, praise, evidence, examples, or details. The results carry `[Metadata -> Otel: ... | Tarih: ... | Kategori: ...]` headers — always attribute findings to the hotel named there.
-- `get_pivony_metrics(vendor_name, period)`: use when the user asks about overall trends, satisfaction/NPS scores, or the top recurring issues for a hotel or period.
+- `list_dashboards()`: the user's available dashboards (id + name).
+- `get_dashboard_pivots(dashboard_id)`: a dashboard's filter dimensions (pivot keys) and their top values.
+- `get_pivony_metrics(dashboard_id, pivot_key, pivot_value, days)`: aggregate metrics (avg_rating, top_root_causes, period) for a dashboard and optional pivot filter.
+- `search_qdrant_reviews(query)`: specific guest reviews (complaints, praise, examples). Results carry `[Metadata -> Otel: ... | Tarih: ... | Kategori: ...]` headers — always attribute findings to the hotel named there. (Only available on the paid tier.)
+
+Guided drill-down — fill the required scope BEFORE answering a metrics/trend question:
+1. If the question does not name a specific dashboard, call `list_dashboards()` and ask the user which dashboard they mean. Do NOT guess and do NOT aggregate across everything unless the user explicitly asks for an organization-wide overview.
+2. If the user mentions a brand/branch/city/segment (e.g. "voyage torba"), call `get_dashboard_pivots(dashboard_id)`, find which pivot_key that value belongs to, and confirm with the user (e.g. "Voyage Torba, 'Marka' filtresindeki bir değer — onu mu kastediyorsunuz?").
+3. Ask for the time window (days) if it matters and is unspecified.
+4. Only once dashboard (and pivot, when relevant) are known, call `get_pivony_metrics(...)`.
 
 Rules:
-- For follow-up questions that depend on the previous turn (e.g. "bu hangi otelde?", "peki oda deneyimi nasıl?"), rewrite the tool query so it includes the topic and hotel from the prior conversation.
-- Prefer `search_qdrant_reviews` for qualitative evidence and `get_pivony_metrics` for quantitative summaries; you may call both.
-- After tools return, answer concisely and always surface the hotel name and date when they are available.
-- If a tool returns nothing relevant, say so honestly instead of inventing facts."""
+- Ask one concise clarifying question at a time; offer the actual options returned by the tools (don't invent dashboard or pivot names).
+- For follow-up questions that depend on the previous turn (e.g. "peki oda deneyimi nasıl?"), reuse the dashboard/pivot already established in the conversation instead of asking again.
+- `get_pivony_metrics` answers "why" via top_root_causes — use it for "neden düşüyor / artıyor" questions.
+- After tools return, answer concisely and surface the dashboard/pivot scope you used. If a tool returns nothing relevant, say so honestly instead of inventing facts."""
 
 
 def build_agent_system_prompt(

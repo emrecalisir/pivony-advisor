@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from qdrant_client import QdrantClient
 
 from core.config import AGENT_MAX_TOOL_ITERATIONS, DEFAULT_SECTOR, sector_slugify
-from core.pivony_metrics import fetch_pivony_metrics
+from core.pivony_platform import fetch_dashboards, fetch_metrics, fetch_pivots
 from core.prompts import build_agent_system_prompt
 from core.rag import search_reviews
 
@@ -43,12 +43,31 @@ class SearchReviewsArgs(BaseModel):
     )
 
 
-class MetricsArgs(BaseModel):
-    vendor_name: str | None = Field(
-        default=None, description="Hotel name to scope metrics, if the user named one."
+class DashboardPivotsArgs(BaseModel):
+    dashboard_id: int = Field(
+        ...,
+        description="The dashboard ID (from list_dashboards) to inspect filters for.",
     )
-    period: str | None = Field(
-        default=None, description="Time range, e.g. 'son 3 ay' or '2025-01..2025-03'."
+
+
+class MetricsArgs(BaseModel):
+    dashboard_id: int | None = Field(
+        default=None,
+        description=(
+            "Dashboard ID (from list_dashboards) to scope metrics to. Omit only for "
+            "an explicit organization-wide overview."
+        ),
+    )
+    pivot_key: str | None = Field(
+        default=None,
+        description="Pivot/filter key (from get_dashboard_pivots), e.g. 'Marka' or 'Şehir'.",
+    )
+    pivot_value: str | None = Field(
+        default=None,
+        description="Pivot/filter value within pivot_key, e.g. 'Voyage Torba'.",
+    )
+    days: int | None = Field(
+        default=None, description="Look-back window in days, e.g. 30, 90, 180."
     )
 
 
@@ -65,8 +84,37 @@ def _build_tools(
     def _search(query: str) -> str:
         return search_reviews(query, slug, embeddings=embeddings, client=client)
 
-    def _metrics(vendor_name: str | None = None, period: str | None = None) -> str:
-        data = fetch_pivony_metrics(user_id, vendor_name=vendor_name)
+    def _list_dashboards() -> str:
+        data = fetch_dashboards(user_id)
+        if data is None:
+            return json.dumps(
+                {"error": "Dashboard servisi şu anda kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _dashboard_pivots(dashboard_id: int) -> str:
+        data = fetch_pivots(user_id, dashboard_id)
+        if data is None:
+            return json.dumps(
+                {"error": "Pivot servisi şu anda kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _metrics(
+        dashboard_id: int | None = None,
+        pivot_key: str | None = None,
+        pivot_value: str | None = None,
+        days: int | None = None,
+    ) -> str:
+        data = fetch_metrics(
+            user_id,
+            dashboard_id=dashboard_id,
+            pivot_key=pivot_key,
+            pivot_value=pivot_value,
+            days=days,
+        )
         if data is None:
             return json.dumps(
                 {"error": "Metrik servisi şu anda kullanılamıyor; veri çekilemedi."},
@@ -84,20 +132,42 @@ def _build_tools(
         ),
         args_schema=SearchReviewsArgs,
     )
+    list_dashboards_tool = StructuredTool.from_function(
+        func=_list_dashboards,
+        name="list_dashboards",
+        description=(
+            "List the dashboards the user's organization can analyze (id + name). "
+            "Call this first when a metrics question does not yet name a dashboard, "
+            "then ask the user which one they mean."
+        ),
+    )
+    dashboard_pivots_tool = StructuredTool.from_function(
+        func=_dashboard_pivots,
+        name="get_dashboard_pivots",
+        description=(
+            "List a dashboard's filter dimensions (pivot keys) and their top values. "
+            "Use to resolve a user's free-text filter (e.g. 'voyage torba') to a "
+            "(pivot_key, pivot_value) pair before calling get_pivony_metrics."
+        ),
+        args_schema=DashboardPivotsArgs,
+    )
     metrics_tool = StructuredTool.from_function(
         func=_metrics,
         name="get_pivony_metrics",
         description=(
-            "Get aggregate satisfaction metrics (avg_rating/NPS, top_root_causes, period) "
-            "for a hotel or overall. Use for trends, scores, and recurring-issue summaries."
+            "Get aggregate satisfaction metrics (avg_rating, top_root_causes, period) "
+            "scoped to a dashboard and optional pivot filter. Provide dashboard_id "
+            "(and pivot_key/pivot_value when the user named a brand/branch/city). Use "
+            "for trends, scores, and 'why is X happening' recurring-issue summaries."
         ),
         args_schema=MetricsArgs,
     )
-    # Freemium Advisor is grounded only in Pivony's existing analysis outputs
-    # (metrics API); raw-review search is an Industry-Expert (paid) capability.
+    # Discovery + metrics tools ground every Advisor tier in Pivony's existing
+    # analysis outputs. Raw-review search is an Industry-Expert (paid) capability.
+    base_tools = [list_dashboards_tool, dashboard_pivots_tool, metrics_tool]
     if advisor_mode == MODE_ADVISOR:
-        return [metrics_tool]
-    return [search_tool, metrics_tool]
+        return base_tools
+    return [search_tool, *base_tools]
 
 
 def _to_langchain_messages(
