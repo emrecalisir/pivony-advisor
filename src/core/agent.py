@@ -21,10 +21,14 @@ from qdrant_client import QdrantClient
 from core.config import AGENT_MAX_TOOL_ITERATIONS, DEFAULT_SECTOR, sector_slugify
 from core.pivony_platform import (
     fetch_dashboards,
+    fetch_decisions,
+    fetch_hotterms,
     fetch_metrics,
     fetch_pivots,
     fetch_reviews,
     fetch_root_causes,
+    fetch_topic_trends,
+    fetch_trends,
     request_plan_upgrade,
 )
 from core.prompts import build_agent_system_prompt
@@ -77,6 +81,25 @@ class PlanUpgradeArgs(BaseModel):
     message: str | None = Field(
         default=None,
         description="Short note describing what the user wants to do/analyze.",
+    )
+
+
+class ScopedDashboardArgs(BaseModel):
+    dashboard_id: int = Field(
+        ..., description="Dashboard ID (from list_dashboards / get_pivony_metrics)."
+    )
+    pivot_key: str | None = Field(default=None, description="Optional pivot/filter key.")
+    pivot_value: str | None = Field(
+        default=None, description="Optional pivot/filter value within pivot_key."
+    )
+    days: int | None = Field(
+        default=None, description="Look-back window in days, e.g. 7, 30, 90, 180."
+    )
+
+
+class HottermsArgs(ScopedDashboardArgs):
+    limit: int | None = Field(
+        default=None, description="Max number of terms to return (<=50)."
     )
 
 
@@ -183,6 +206,73 @@ def _build_tools(
         if data is None:
             return json.dumps(
                 {"error": "Plan talebi şu anda iletilemedi."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _trends(
+        dashboard_id: int,
+        pivot_key: str | None = None,
+        pivot_value: str | None = None,
+        days: int | None = None,
+    ) -> str:
+        data = fetch_trends(
+            user_id, dashboard_id=dashboard_id,
+            pivot_key=pivot_key, pivot_value=pivot_value, days=days,
+        )
+        if data is None:
+            return json.dumps(
+                {"error": "Trend servisi şu anda kullanılamıyor."}, ensure_ascii=False
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _topic_trends(
+        dashboard_id: int,
+        pivot_key: str | None = None,
+        pivot_value: str | None = None,
+        days: int | None = None,
+    ) -> str:
+        data = fetch_topic_trends(
+            user_id, dashboard_id=dashboard_id,
+            pivot_key=pivot_key, pivot_value=pivot_value, days=days,
+        )
+        if data is None:
+            return json.dumps(
+                {"error": "Topic trend servisi şu anda kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _hotterms(
+        dashboard_id: int,
+        pivot_key: str | None = None,
+        pivot_value: str | None = None,
+        days: int | None = None,
+        limit: int | None = None,
+    ) -> str:
+        data = fetch_hotterms(
+            user_id, dashboard_id=dashboard_id,
+            pivot_key=pivot_key, pivot_value=pivot_value, days=days, limit=limit,
+        )
+        if data is None:
+            return json.dumps(
+                {"error": "Hotterm servisi şu anda kullanılamıyor."}, ensure_ascii=False
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _decisions(
+        dashboard_id: int,
+        pivot_key: str | None = None,
+        pivot_value: str | None = None,
+        days: int | None = None,
+    ) -> str:
+        data = fetch_decisions(
+            user_id, dashboard_id=dashboard_id,
+            pivot_key=pivot_key, pivot_value=pivot_value, days=days,
+        )
+        if data is None:
+            return json.dumps(
+                {"error": "Karar dağılımı servisi şu anda kullanılamıyor."},
                 ensure_ascii=False,
             )
         return json.dumps(data, ensure_ascii=False)
@@ -325,6 +415,47 @@ def _build_tools(
         ),
         args_schema=PlanUpgradeArgs,
     )
+    trends_tool = StructuredTool.from_function(
+        func=_trends,
+        name="get_trends",
+        description=(
+            "Get the over-time KPI series for a dashboard: volume_daily, "
+            "sentiment_daily, plus avg_rating, avg_sentiment and NPS (nps, "
+            "nps_distribution). Use for 'trend', 'over time', 'neden düşüyor/artıyor', "
+            "'NPS kaç' questions. Provide dashboard_id and a days window."
+        ),
+        args_schema=ScopedDashboardArgs,
+    )
+    topic_trends_tool = StructuredTool.from_function(
+        func=_topic_trends,
+        name="get_topic_trends",
+        description=(
+            "Get rising and falling topics: compares each topic's review count for "
+            "the window against the preceding window of equal length. Returns `rising` "
+            "and `falling` lists with current/previous/change. Use for 'hangi konular "
+            "artıyor/azalıyor', 'yükselen şikayetler', 'what changed'."
+        ),
+        args_schema=ScopedDashboardArgs,
+    )
+    hotterms_tool = StructuredTool.from_function(
+        func=_hotterms,
+        name="get_hotterms",
+        description=(
+            "Get trending keywords/phrases (1-4 grams) for a dashboard, keyed by ngram "
+            "size. Use for 'sık geçen kelimeler', 'öne çıkan ifadeler', 'hot terms'."
+        ),
+        args_schema=HottermsArgs,
+    )
+    decisions_tool = StructuredTool.from_function(
+        func=_decisions,
+        name="get_decision_distribution",
+        description=(
+            "Get the decision distribution (publish / opencase / takeaction, each with "
+            "true/false counts) for a dashboard. Use for 'kaç yorum aksiyon/vaka "
+            "gerektiriyor', 'yayınlanabilir mi' type operational questions."
+        ),
+        args_schema=ScopedDashboardArgs,
+    )
     # Discovery + metrics tools ground every Advisor tier in Pivony's existing
     # analysis outputs. list_reviews surfaces the user's own dashboard reviews
     # (capped on freemium). Raw-review semantic search (Qdrant sector RAG) is an
@@ -335,6 +466,10 @@ def _build_tools(
         metrics_tool,
         root_causes_tool,
         list_reviews_tool,
+        trends_tool,
+        topic_trends_tool,
+        hotterms_tool,
+        decisions_tool,
         request_plan_upgrade_tool,
     ]
     if advisor_mode == MODE_ADVISOR:
