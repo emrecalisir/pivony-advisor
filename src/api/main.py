@@ -142,6 +142,13 @@ class ChatCompletionRequest(BaseModel):
         default=None,
         description="User email (from pivony-api)",
     )
+    pivony_page_context: dict | None = Field(
+        default=None,
+        description=(
+            "Structured page scope from pivony-api (dashboard_id, since, until) so "
+            "tools can be pinned to exactly what the user's page is showing."
+        ),
+    )
     pivony_advisor_mode: str | None = Field(
         default=None,
         description=(
@@ -293,6 +300,7 @@ async def chat_completions(
                 llm=llm,
                 advisor_mode=advisor_mode,
                 user_id=user_id,
+                page_context=request.pivony_page_context,
             )
         else:
             chain = _get_chain(sector, api_system)

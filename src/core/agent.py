@@ -188,8 +188,24 @@ def _build_tools(
     client: QdrantClient,
     advisor_mode: str = DEFAULT_ADVISOR_MODE,
     user_id: str | None = None,
+    page_context: dict | None = None,
 ) -> list[StructuredTool]:
     slug = sector_slugify(sector_slug or DEFAULT_SECTOR)
+
+    # Page scope (dashboard + date window the user is actually looking at). Used
+    # as a deterministic default so we don't depend on the LLM copying dates out
+    # of the prose context block.
+    _pc = page_context if isinstance(page_context, dict) else {}
+    _pc_dash = _pc.get("dashboard_id")
+    _pc_since = _pc.get("since") or None
+    _pc_until = _pc.get("until") or None
+
+    def _eff_dates(since: str | None, until: str | None, days: int | None):
+        """Explicit dates/days from the tool call win; otherwise inherit the
+        page's exact since/until so answers match what the user sees."""
+        if since or until or days:
+            return since, until
+        return _pc_since, _pc_until
 
     def _search(query: str) -> str:
         return search_reviews(query, slug, embeddings=embeddings, client=client)
@@ -222,6 +238,7 @@ def _build_tools(
         since: str | None = None,
         until: str | None = None,
     ) -> str:
+        since, until = _eff_dates(since, until, days)
         data = fetch_reviews(
             user_id,
             dashboard_id=dashboard_id,
@@ -257,6 +274,7 @@ def _build_tools(
         since: str | None = None,
         until: str | None = None,
     ) -> str:
+        since, until = _eff_dates(since, until, days)
         data = fetch_trends(
             user_id, dashboard_id=dashboard_id,
             pivot_key=pivot_key, pivot_value=pivot_value, days=days,
@@ -276,6 +294,7 @@ def _build_tools(
         since: str | None = None,
         until: str | None = None,
     ) -> str:
+        since, until = _eff_dates(since, until, days)
         data = fetch_topic_trends(
             user_id, dashboard_id=dashboard_id,
             pivot_key=pivot_key, pivot_value=pivot_value, days=days,
@@ -297,6 +316,7 @@ def _build_tools(
         days: int | None = None,
         limit: int | None = None,
     ) -> str:
+        since, until = _eff_dates(since, until, days)
         data = fetch_hotterms(
             user_id, dashboard_id=dashboard_id,
             pivot_key=pivot_key, pivot_value=pivot_value, days=days,
@@ -316,6 +336,7 @@ def _build_tools(
         since: str | None = None,
         until: str | None = None,
     ) -> str:
+        since, until = _eff_dates(since, until, days)
         data = fetch_decisions(
             user_id, dashboard_id=dashboard_id,
             pivot_key=pivot_key, pivot_value=pivot_value, days=days,
@@ -337,6 +358,7 @@ def _build_tools(
         since: str | None = None,
         until: str | None = None,
     ) -> str:
+        since, until = _eff_dates(since, until, days)
         data = fetch_distribution(
             user_id, dashboard_id=dashboard_id, kind=kind,
             pivot_key=pivot_key, pivot_value=pivot_value, days=days,
@@ -357,6 +379,7 @@ def _build_tools(
         since: str | None = None,
         until: str | None = None,
     ) -> str:
+        since, until = _eff_dates(since, until, days)
         data = fetch_topic_ratings(
             user_id, dashboard_id=dashboard_id,
             pivot_key=pivot_key, pivot_value=pivot_value, days=days,
@@ -377,6 +400,7 @@ def _build_tools(
         since: str | None = None,
         until: str | None = None,
     ) -> str:
+        since, until = _eff_dates(since, until, days)
         data = fetch_emergent_topics(
             user_id, dashboard_id=dashboard_id,
             pivot_key=pivot_key, pivot_value=pivot_value, days=days,
@@ -420,6 +444,11 @@ def _build_tools(
         until: str | None = None,
         org_wide: bool = False,
     ) -> str:
+        # Pin to the page's dashboard + date window when the model didn't specify
+        # them, so the answer matches exactly what the user is looking at.
+        if dashboard_id is None and _pc_dash is not None:
+            dashboard_id = _pc_dash
+        since, until = _eff_dates(since, until, days)
         # Guardrail: never silently aggregate across all dashboards. Force the
         # agent to ask the user which dashboard unless an org-wide overview was
         # explicitly requested.
@@ -652,6 +681,7 @@ def run_advisor_agent(
     llm: ChatGoogleGenerativeAI,
     advisor_mode: str = DEFAULT_ADVISOR_MODE,
     user_id: str | None = None,
+    page_context: dict | None = None,
     max_iterations: int | None = None,
 ) -> str:
     """
@@ -670,6 +700,7 @@ def run_advisor_agent(
         client=client,
         advisor_mode=mode,
         user_id=user_id,
+        page_context=page_context,
     )
     tool_map = {tool.name: tool for tool in tools}
     llm_with_tools = llm.bind_tools(tools)
