@@ -163,10 +163,12 @@ _TOPIC_RULES: tuple[_TopicRule, ...] = (
     ),
 )
 
+# Capability-aligned defaults: data questions the Advisor's tools can actually
+# answer (not UI how-to/onboarding prompts).
 _DEFAULT_FOLLOWUPS: tuple[str, ...] = (
-    "Dashboard nasıl oluşturabilirim?",
-    "Dış veriyi nasıl analiz ederim?",
-    "Raporları nereden indirebilirim?",
+    "Bu dönemde en çok şikayet edilen konular neler?",
+    "Genel müşteri memnuniyeti (duyarlılık) ne durumda?",
+    "Şikayetlerin temel nedenleri neler?",
 )
 
 _REFUSAL_MARKERS: tuple[str, ...] = (
