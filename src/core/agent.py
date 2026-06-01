@@ -282,10 +282,12 @@ def _build_tools(
         name="get_pivony_metrics",
         description=(
             "Get aggregate CX metrics scoped to a dashboard and optional pivot filter: "
-            "sentiment (positive/neutral/negative %), complaint_topics (most negative "
-            "themes, each with a topic_id), review_count, and best-effort avg_rating/"
-            "top_root_causes. Provide dashboard_id (and pivot_key/pivot_value when the "
-            "user named a brand/branch/city). Use for satisfaction/complaints summaries."
+            "sentiment (positive/neutral/negative %), topics (EVERY topic with its TOTAL "
+            "review count regardless of sentiment — use for 'how many X reviews'), "
+            "complaint_topics (only negative themes, each with a topic_id), review_count "
+            "(dashboard total), and best-effort avg_rating/top_root_causes. Provide "
+            "dashboard_id (and pivot_key/pivot_value when the user named a brand/branch/"
+            "city). Use for satisfaction/complaints summaries and topic review counts."
         ),
         args_schema=MetricsArgs,
     )

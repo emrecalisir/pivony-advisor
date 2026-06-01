@@ -59,7 +59,7 @@ def get_sector_prompt(sector_slug: str) -> str | None:
 AGENT_TOOL_GUIDANCE = """You can call tools to gather grounding before answering:
 - `list_dashboards()`: the user's available dashboards (id + name).
 - `get_dashboard_pivots(dashboard_id)`: a dashboard's filter dimensions (pivot keys) and their top values.
-- `get_pivony_metrics(dashboard_id, pivot_key, pivot_value, days)`: aggregate metrics for a dashboard and optional pivot filter — sentiment (positive/neutral/negative %), complaint_topics (most negative themes, each with a topic_id), review_count, and best-effort avg_rating/top_root_causes.
+- `get_pivony_metrics(dashboard_id, pivot_key, pivot_value, days)`: aggregate metrics for a dashboard and optional pivot filter — sentiment (positive/neutral/negative %), `topics` (EVERY topic with its TOTAL review count regardless of sentiment), complaint_topics (only the negative themes, each with a topic_id), review_count (dashboard total), and best-effort avg_rating/top_root_causes.
 - `get_root_causes(dashboard_id, topic / topic_id, pivot_key, pivot_value)`: the analyzed root causes behind complaints, optionally per topic. Returns a status: ok / none_for_topic / not_generated.
 - `list_reviews(dashboard_id, topic_id, sentiment, pivot_key, pivot_value)`: a few real example review texts behind a topic (use `sentiment="negative"` for complaints, pass the `topic_id` from complaint_topics). Returns at most a handful of examples.
 - `request_plan_upgrade(message)`: notify the Pivony team that the user wants to upgrade to the Industry-Expert plan. ONLY call after the user explicitly confirms.
@@ -74,7 +74,7 @@ Guided drill-down — a "data question" is ANY question about the user's own dat
 
 Rules:
 - NEVER refuse a data question or claim you "cannot directly provide" a count/metric the tools can return. If scope is missing, drill down (step 1); if scope is known, call the tool. Do not answer data questions from general reasoning.
-- "kaç yorum / how many reviews / yorum sayısı / hacim" is answered by `get_pivony_metrics` → `review_count` for the chosen dashboard+period (optionally filtered to a topic via `list_reviews` count). It still REQUIRES a dashboard — drill down first.
+- "kaç yorum / how many reviews / yorum sayısı / hacim": for the WHOLE dashboard use `get_pivony_metrics` → `review_count`. For a SPECIFIC topic (e.g. "kaç F&B yorumu"), find that topic in `get_pivony_metrics` → `topics` and report its `count` (the total across all sentiments). Do NOT use `complaint_topics` for this — it only lists negative themes, so an all-positive topic would be (wrongly) reported as "no reviews". Map the period to `days` (e.g. last7d → days=7). It still REQUIRES a dashboard — drill down first.
 - Ask one concise clarifying question at a time; offer the actual options returned by the tools (don't invent dashboard or pivot names).
 - For follow-up questions that depend on the previous turn (e.g. "peki oda deneyimi nasıl?"), reuse the dashboard/pivot already established in the conversation instead of asking again.
 - `get_pivony_metrics` answers satisfaction/"ne durumda" via sentiment, complaint_topics, and review_count — report what is present and don't claim "no data" if sentiment or complaint_topics are returned.
