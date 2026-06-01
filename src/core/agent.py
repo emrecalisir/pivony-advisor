@@ -115,6 +115,14 @@ class MetricsArgs(BaseModel):
     days: int | None = Field(
         default=None, description="Look-back window in days, e.g. 30, 90, 180."
     )
+    org_wide: bool = Field(
+        default=False,
+        description=(
+            "Set True ONLY when the user explicitly asks for an organization-wide "
+            "overview across all dashboards. Otherwise leave False and provide a "
+            "dashboard_id."
+        ),
+    )
 
 
 def _build_tools(
@@ -206,7 +214,26 @@ def _build_tools(
         pivot_key: str | None = None,
         pivot_value: str | None = None,
         days: int | None = None,
+        org_wide: bool = False,
     ) -> str:
+        # Guardrail: never silently aggregate across all dashboards. Force the
+        # agent to ask the user which dashboard unless an org-wide overview was
+        # explicitly requested.
+        if dashboard_id is None and not org_wide:
+            dash = fetch_dashboards(user_id)
+            options = dash.get("dashboards") if isinstance(dash, dict) else None
+            return json.dumps(
+                {
+                    "need_dashboard_selection": True,
+                    "dashboards": options or [],
+                    "instruction": (
+                        "Bir dashboard seçilmedi. Kullanıcıya bu dashboard'lardan "
+                        "hangisini kastettiğini sor; cevabı almadan metrik döndürme. "
+                        "(Tüm organizasyon geneli isterse org_wide=true ile tekrar çağır.)"
+                    ),
+                },
+                ensure_ascii=False,
+            )
         data = fetch_metrics(
             user_id,
             dashboard_id=dashboard_id,
