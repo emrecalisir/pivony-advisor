@@ -78,6 +78,13 @@ class ListReviewsArgs(BaseModel):
     )
     pivot_key: str | None = Field(default=None, description="Optional pivot key.")
     pivot_value: str | None = Field(default=None, description="Optional pivot value.")
+    days: int | None = Field(default=None, description="Look-back window in days.")
+    since: str | None = Field(
+        default=None, description="Exact start date YYYY-MM-DD (page's since when known)."
+    )
+    until: str | None = Field(
+        default=None, description="Exact end date YYYY-MM-DD (page's until when known)."
+    )
 
 
 class PlanUpgradeArgs(BaseModel):
@@ -97,6 +104,14 @@ class ScopedDashboardArgs(BaseModel):
     )
     days: int | None = Field(
         default=None, description="Look-back window in days, e.g. 7, 30, 90, 180."
+    )
+    since: str | None = Field(
+        default=None,
+        description="Exact start date YYYY-MM-DD (use the page's since when known).",
+    )
+    until: str | None = Field(
+        default=None,
+        description="Exact end date YYYY-MM-DD (use the page's until when known).",
     )
 
 
@@ -148,6 +163,14 @@ class MetricsArgs(BaseModel):
     days: int | None = Field(
         default=None, description="Look-back window in days, e.g. 30, 90, 180."
     )
+    since: str | None = Field(
+        default=None,
+        description="Exact start date YYYY-MM-DD (use the page's since when known).",
+    )
+    until: str | None = Field(
+        default=None,
+        description="Exact end date YYYY-MM-DD (use the page's until when known).",
+    )
     org_wide: bool = Field(
         default=False,
         description=(
@@ -195,6 +218,9 @@ def _build_tools(
         sentiment: str | None = None,
         pivot_key: str | None = None,
         pivot_value: str | None = None,
+        days: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
     ) -> str:
         data = fetch_reviews(
             user_id,
@@ -203,6 +229,9 @@ def _build_tools(
             sentiment=sentiment,
             pivot_key=pivot_key,
             pivot_value=pivot_value,
+            days=days,
+            since=since,
+            until=until,
         )
         if data is None:
             return json.dumps(
@@ -225,10 +254,13 @@ def _build_tools(
         pivot_key: str | None = None,
         pivot_value: str | None = None,
         days: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
     ) -> str:
         data = fetch_trends(
             user_id, dashboard_id=dashboard_id,
             pivot_key=pivot_key, pivot_value=pivot_value, days=days,
+            since=since, until=until,
         )
         if data is None:
             return json.dumps(
@@ -241,10 +273,13 @@ def _build_tools(
         pivot_key: str | None = None,
         pivot_value: str | None = None,
         days: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
     ) -> str:
         data = fetch_topic_trends(
             user_id, dashboard_id=dashboard_id,
             pivot_key=pivot_key, pivot_value=pivot_value, days=days,
+            since=since, until=until,
         )
         if data is None:
             return json.dumps(
@@ -257,12 +292,15 @@ def _build_tools(
         dashboard_id: int,
         pivot_key: str | None = None,
         pivot_value: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
         days: int | None = None,
         limit: int | None = None,
     ) -> str:
         data = fetch_hotterms(
             user_id, dashboard_id=dashboard_id,
-            pivot_key=pivot_key, pivot_value=pivot_value, days=days, limit=limit,
+            pivot_key=pivot_key, pivot_value=pivot_value, days=days,
+            since=since, until=until, limit=limit,
         )
         if data is None:
             return json.dumps(
@@ -275,10 +313,13 @@ def _build_tools(
         pivot_key: str | None = None,
         pivot_value: str | None = None,
         days: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
     ) -> str:
         data = fetch_decisions(
             user_id, dashboard_id=dashboard_id,
             pivot_key=pivot_key, pivot_value=pivot_value, days=days,
+            since=since, until=until,
         )
         if data is None:
             return json.dumps(
@@ -293,10 +334,13 @@ def _build_tools(
         pivot_key: str | None = None,
         pivot_value: str | None = None,
         days: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
     ) -> str:
         data = fetch_distribution(
             user_id, dashboard_id=dashboard_id, kind=kind,
             pivot_key=pivot_key, pivot_value=pivot_value, days=days,
+            since=since, until=until,
         )
         if data is None:
             return json.dumps(
@@ -310,10 +354,13 @@ def _build_tools(
         pivot_key: str | None = None,
         pivot_value: str | None = None,
         days: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
     ) -> str:
         data = fetch_topic_ratings(
             user_id, dashboard_id=dashboard_id,
             pivot_key=pivot_key, pivot_value=pivot_value, days=days,
+            since=since, until=until,
         )
         if data is None:
             return json.dumps(
@@ -327,10 +374,13 @@ def _build_tools(
         pivot_key: str | None = None,
         pivot_value: str | None = None,
         days: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
     ) -> str:
         data = fetch_emergent_topics(
             user_id, dashboard_id=dashboard_id,
             pivot_key=pivot_key, pivot_value=pivot_value, days=days,
+            since=since, until=until,
         )
         if data is None:
             return json.dumps(
@@ -366,6 +416,8 @@ def _build_tools(
         pivot_key: str | None = None,
         pivot_value: str | None = None,
         days: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
         org_wide: bool = False,
     ) -> str:
         # Guardrail: never silently aggregate across all dashboards. Force the
@@ -392,6 +444,8 @@ def _build_tools(
             pivot_key=pivot_key,
             pivot_value=pivot_value,
             days=days,
+            since=since,
+            until=until,
         )
         if data is None:
             return json.dumps(
