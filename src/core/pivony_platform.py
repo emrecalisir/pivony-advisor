@@ -138,3 +138,48 @@ def fetch_root_causes(
     if pivot_value and str(pivot_value).strip():
         payload["pivot_value"] = str(pivot_value).strip()
     return _post_worker(f"{_worker_base()}/advisor/root-causes", payload)
+
+
+def fetch_reviews(
+    user_id: Optional[str],
+    dashboard_id: int,
+    topic_id: Optional[int] = None,
+    sentiment: Optional[str] = None,
+    pivot_key: Optional[str] = None,
+    pivot_value: Optional[str] = None,
+    days: Optional[int] = None,
+    limit: Optional[int] = None,
+) -> Optional[dict[str, Any]]:
+    """List example reviews (text) for a dashboard scoped by topic/sentiment/pivot.
+    Returns {dashboard_id, reviews:[{text,rating,vendor,date}], count} or None."""
+    if not user_id:
+        logger.warning("fetch_reviews called without user_id")
+        return None
+    payload: dict[str, Any] = {"user_id": user_id, "dashboard_id": dashboard_id}
+    if topic_id is not None:
+        payload["topic_id"] = topic_id
+    if sentiment and str(sentiment).strip():
+        payload["sentiment"] = str(sentiment).strip().lower()
+    if pivot_key and str(pivot_key).strip():
+        payload["pivot_key"] = str(pivot_key).strip()
+    if pivot_value and str(pivot_value).strip():
+        payload["pivot_value"] = str(pivot_value).strip()
+    if days:
+        payload["days"] = days
+    if limit:
+        payload["limit"] = limit
+    return _post_worker(f"{_worker_base()}/advisor/reviews", payload)
+
+
+def request_plan_upgrade(
+    user_id: Optional[str], message: Optional[str] = None
+) -> Optional[dict[str, Any]]:
+    """Record + email an Industry-Expert plan-upgrade request. Returns
+    {ok, emailed} or None on failure."""
+    if not user_id:
+        logger.warning("request_plan_upgrade called without user_id")
+        return None
+    payload: dict[str, Any] = {"user_id": user_id}
+    if message and str(message).strip():
+        payload["message"] = str(message).strip()
+    return _post_worker(f"{_worker_base()}/advisor/plan-request", payload)

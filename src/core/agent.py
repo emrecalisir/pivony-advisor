@@ -23,7 +23,9 @@ from core.pivony_platform import (
     fetch_dashboards,
     fetch_metrics,
     fetch_pivots,
+    fetch_reviews,
     fetch_root_causes,
+    request_plan_upgrade,
 )
 from core.prompts import build_agent_system_prompt
 from core.rag import search_reviews
@@ -52,6 +54,29 @@ class DashboardPivotsArgs(BaseModel):
     dashboard_id: int = Field(
         ...,
         description="The dashboard ID (from list_dashboards) to inspect filters for.",
+    )
+
+
+class ListReviewsArgs(BaseModel):
+    dashboard_id: int = Field(
+        ..., description="Dashboard ID (from list_dashboards / get_pivony_metrics)."
+    )
+    topic_id: int | None = Field(
+        default=None,
+        description="Topic id from get_pivony_metrics complaint_topics to scope to.",
+    )
+    sentiment: str | None = Field(
+        default=None,
+        description="Filter by sentiment: 'negative', 'neutral', or 'positive'.",
+    )
+    pivot_key: str | None = Field(default=None, description="Optional pivot key.")
+    pivot_value: str | None = Field(default=None, description="Optional pivot value.")
+
+
+class PlanUpgradeArgs(BaseModel):
+    message: str | None = Field(
+        default=None,
+        description="Short note describing what the user wants to do/analyze.",
     )
 
 
@@ -119,6 +144,37 @@ def _build_tools(
         if data is None:
             return json.dumps(
                 {"error": "Pivot servisi şu anda kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _list_reviews(
+        dashboard_id: int,
+        topic_id: int | None = None,
+        sentiment: str | None = None,
+        pivot_key: str | None = None,
+        pivot_value: str | None = None,
+    ) -> str:
+        data = fetch_reviews(
+            user_id,
+            dashboard_id=dashboard_id,
+            topic_id=topic_id,
+            sentiment=sentiment,
+            pivot_key=pivot_key,
+            pivot_value=pivot_value,
+        )
+        if data is None:
+            return json.dumps(
+                {"error": "Yorum servisi şu anda kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _request_plan_upgrade(message: str | None = None) -> str:
+        data = request_plan_upgrade(user_id, message=message)
+        if data is None:
+            return json.dumps(
+                {"error": "Plan talebi şu anda iletilemedi."},
                 ensure_ascii=False,
             )
         return json.dumps(data, ensure_ascii=False)
@@ -219,13 +275,38 @@ def _build_tools(
         ),
         args_schema=RootCausesArgs,
     )
+    list_reviews_tool = StructuredTool.from_function(
+        func=_list_reviews,
+        name="list_reviews",
+        description=(
+            "List a few example review texts for a dashboard, scoped by topic_id, "
+            "sentiment ('negative' for complaints), and optional pivot. Use to show "
+            "real customer voice examples behind a topic. Returns at most a handful "
+            "of reviews (freemium cap)."
+        ),
+        args_schema=ListReviewsArgs,
+    )
+    request_plan_upgrade_tool = StructuredTool.from_function(
+        func=_request_plan_upgrade,
+        name="request_plan_upgrade",
+        description=(
+            "Email the Pivony team that this user wants to upgrade to the "
+            "Industry-Expert plan. ONLY call after the user explicitly confirms they "
+            "want to take action / be contacted about a plan change."
+        ),
+        args_schema=PlanUpgradeArgs,
+    )
     # Discovery + metrics tools ground every Advisor tier in Pivony's existing
-    # analysis outputs. Raw-review search is an Industry-Expert (paid) capability.
+    # analysis outputs. list_reviews surfaces the user's own dashboard reviews
+    # (capped on freemium). Raw-review semantic search (Qdrant sector RAG) is an
+    # Industry-Expert (paid) capability.
     base_tools = [
         list_dashboards_tool,
         dashboard_pivots_tool,
         metrics_tool,
         root_causes_tool,
+        list_reviews_tool,
+        request_plan_upgrade_tool,
     ]
     if advisor_mode == MODE_ADVISOR:
         return base_tools
@@ -277,7 +358,7 @@ def run_advisor_agent(
     tool_map = {tool.name: tool for tool in tools}
     llm_with_tools = llm.bind_tools(tools)
 
-    system_prompt = build_agent_system_prompt(slug, extra_system_prompt)
+    system_prompt = build_agent_system_prompt(slug, extra_system_prompt, advisor_mode=mode)
     messages = _to_langchain_messages(system_prompt, turns)
 
     limit = max_iterations or AGENT_MAX_TOOL_ITERATIONS
