@@ -22,11 +22,14 @@ from core.config import AGENT_MAX_TOOL_ITERATIONS, DEFAULT_SECTOR, sector_slugif
 from core.pivony_platform import (
     fetch_dashboards,
     fetch_decisions,
+    fetch_distribution,
+    fetch_emergent_topics,
     fetch_hotterms,
     fetch_metrics,
     fetch_pivots,
     fetch_reviews,
     fetch_root_causes,
+    fetch_topic_ratings,
     fetch_topic_trends,
     fetch_trends,
     request_plan_upgrade,
@@ -100,6 +103,13 @@ class ScopedDashboardArgs(BaseModel):
 class HottermsArgs(ScopedDashboardArgs):
     limit: int | None = Field(
         default=None, description="Max number of terms to return (<=50)."
+    )
+
+
+class DistributionArgs(ScopedDashboardArgs):
+    kind: str = Field(
+        default="sentiment",
+        description="Which breakdown: 'sentiment', 'intent', or 'platform'.",
     )
 
 
@@ -273,6 +283,58 @@ def _build_tools(
         if data is None:
             return json.dumps(
                 {"error": "Karar dağılımı servisi şu anda kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _distribution(
+        dashboard_id: int,
+        kind: str = "sentiment",
+        pivot_key: str | None = None,
+        pivot_value: str | None = None,
+        days: int | None = None,
+    ) -> str:
+        data = fetch_distribution(
+            user_id, dashboard_id=dashboard_id, kind=kind,
+            pivot_key=pivot_key, pivot_value=pivot_value, days=days,
+        )
+        if data is None:
+            return json.dumps(
+                {"error": "Dağılım servisi şu anda kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _topic_ratings(
+        dashboard_id: int,
+        pivot_key: str | None = None,
+        pivot_value: str | None = None,
+        days: int | None = None,
+    ) -> str:
+        data = fetch_topic_ratings(
+            user_id, dashboard_id=dashboard_id,
+            pivot_key=pivot_key, pivot_value=pivot_value, days=days,
+        )
+        if data is None:
+            return json.dumps(
+                {"error": "Topic puan servisi şu anda kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _emergent_topics(
+        dashboard_id: int,
+        pivot_key: str | None = None,
+        pivot_value: str | None = None,
+        days: int | None = None,
+    ) -> str:
+        data = fetch_emergent_topics(
+            user_id, dashboard_id=dashboard_id,
+            pivot_key=pivot_key, pivot_value=pivot_value, days=days,
+        )
+        if data is None:
+            return json.dumps(
+                {"error": "Emergent topic servisi şu anda kullanılamıyor."},
                 ensure_ascii=False,
             )
         return json.dumps(data, ensure_ascii=False)
@@ -456,6 +518,36 @@ def _build_tools(
         ),
         args_schema=ScopedDashboardArgs,
     )
+    distribution_tool = StructuredTool.from_function(
+        func=_distribution,
+        name="get_distribution",
+        description=(
+            "Get a breakdown for a dashboard by `kind`: 'sentiment' (positive/neutral/"
+            "negative/mixed split), 'intent' (why customers write — request/question/"
+            "complaint…), or 'platform' (channel/source mix). Use for 'dağılım nedir', "
+            "'hangi kanaldan', 'ne amaçla yazıyorlar'."
+        ),
+        args_schema=DistributionArgs,
+    )
+    topic_ratings_tool = StructuredTool.from_function(
+        func=_topic_ratings,
+        name="get_topic_ratings",
+        description=(
+            "Get the average rating per topic for a dashboard (which topics score "
+            "highest/lowest). Use for 'hangi konu en düşük/yüksek puanlı', "
+            "'konu bazında puanlar'."
+        ),
+        args_schema=ScopedDashboardArgs,
+    )
+    emergent_topics_tool = StructuredTool.from_function(
+        func=_emergent_topics,
+        name="get_emergent_topics",
+        description=(
+            "Get emergent / newly surfacing topics for a dashboard. Use for "
+            "'yeni ortaya çıkan konular', 'emerging issues', 'gündeme gelen konular'."
+        ),
+        args_schema=ScopedDashboardArgs,
+    )
     # Discovery + metrics tools ground every Advisor tier in Pivony's existing
     # analysis outputs. list_reviews surfaces the user's own dashboard reviews
     # (capped on freemium). Raw-review semantic search (Qdrant sector RAG) is an
@@ -470,6 +562,9 @@ def _build_tools(
         topic_trends_tool,
         hotterms_tool,
         decisions_tool,
+        distribution_tool,
+        topic_ratings_tool,
+        emergent_topics_tool,
         request_plan_upgrade_tool,
     ]
     if advisor_mode == MODE_ADVISOR:

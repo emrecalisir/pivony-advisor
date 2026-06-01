@@ -65,6 +65,9 @@ AGENT_TOOL_GUIDANCE = """You can call tools to gather grounding before answering
 - `get_topic_trends(dashboard_id, pivot_key, pivot_value, days)`: rising/falling topics vs the preceding equal-length window (`rising`/`falling` with current/previous/change). Use for "hangi konular artıyor/azalıyor", "yükselen şikayetler", "ne değişti".
 - `get_hotterms(dashboard_id, pivot_key, pivot_value, days, limit)`: trending keywords/phrases (1-4 grams). Use for "sık geçen kelimeler / öne çıkan ifadeler".
 - `get_decision_distribution(dashboard_id, pivot_key, pivot_value, days)`: publish / opencase / takeaction true-false counts. Use for operational "kaç yorum aksiyon/vaka gerektiriyor" questions.
+- `get_distribution(dashboard_id, kind, ...)`: a breakdown by `kind` — 'sentiment' (pos/neu/neg/mixed), 'intent' (why customers write), or 'platform' (channel mix). Use for "dağılım", "hangi kanaldan", "ne amaçla yazıyorlar".
+- `get_topic_ratings(dashboard_id, ...)`: average rating per topic — which topics score highest/lowest. Use for "hangi konu en düşük/yüksek puanlı".
+- `get_emergent_topics(dashboard_id, ...)`: newly surfacing topics. Use for "yeni ortaya çıkan / gündeme gelen konular".
 - `list_reviews(dashboard_id, topic_id, sentiment, pivot_key, pivot_value)`: a few real example review texts behind a topic (use `sentiment="negative"` for complaints, pass the `topic_id` from complaint_topics). Returns at most a handful of examples.
 - `request_plan_upgrade(message)`: notify the Pivony team that the user wants to upgrade to the Industry-Expert plan. ONLY call after the user explicitly confirms.
 - `search_qdrant_reviews(query)`: specific guest reviews (complaints, praise, examples). Results carry `[Metadata -> Otel: ... | Tarih: ... | Kategori: ...]` headers — always attribute findings to the hotel named there. (Only available on the paid tier.)

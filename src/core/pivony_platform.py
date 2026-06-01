@@ -265,3 +265,50 @@ def fetch_decisions(
         return None
     payload = _scoped_payload(user_id, dashboard_id, pivot_key, pivot_value, days)
     return _post_worker(f"{_worker_base()}/advisor/decisions", payload)
+
+
+def fetch_distribution(
+    user_id: Optional[str],
+    dashboard_id: int,
+    kind: str = "sentiment",
+    pivot_key: Optional[str] = None,
+    pivot_value: Optional[str] = None,
+    days: Optional[int] = None,
+) -> Optional[dict[str, Any]]:
+    """Distribution breakdown: kind in {sentiment, intent, platform}."""
+    if not user_id:
+        logger.warning("fetch_distribution called without user_id")
+        return None
+    payload = _scoped_payload(user_id, dashboard_id, pivot_key, pivot_value, days)
+    payload["kind"] = (kind or "sentiment").strip().lower()
+    return _post_worker(f"{_worker_base()}/advisor/distribution", payload)
+
+
+def fetch_topic_ratings(
+    user_id: Optional[str],
+    dashboard_id: int,
+    pivot_key: Optional[str] = None,
+    pivot_value: Optional[str] = None,
+    days: Optional[int] = None,
+) -> Optional[dict[str, Any]]:
+    """Average rating per topic (which topics score highest / lowest)."""
+    if not user_id:
+        logger.warning("fetch_topic_ratings called without user_id")
+        return None
+    payload = _scoped_payload(user_id, dashboard_id, pivot_key, pivot_value, days)
+    return _post_worker(f"{_worker_base()}/advisor/topic-ratings", payload)
+
+
+def fetch_emergent_topics(
+    user_id: Optional[str],
+    dashboard_id: int,
+    pivot_key: Optional[str] = None,
+    pivot_value: Optional[str] = None,
+    days: Optional[int] = None,
+) -> Optional[dict[str, Any]]:
+    """Emergent / newly surfacing topics for a dashboard."""
+    if not user_id:
+        logger.warning("fetch_emergent_topics called without user_id")
+        return None
+    payload = _scoped_payload(user_id, dashboard_id, pivot_key, pivot_value, days)
+    return _post_worker(f"{_worker_base()}/advisor/emergent-topics", payload)
