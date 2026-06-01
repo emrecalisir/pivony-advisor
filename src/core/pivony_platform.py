@@ -307,13 +307,16 @@ def fetch_distribution(
     user_id: Optional[str],
     dashboard_id: int,
     kind: str = "sentiment",
+    pivot_column: Optional[str] = None,
     pivot_key: Optional[str] = None,
     pivot_value: Optional[str] = None,
     days: Optional[int] = None,
     since: Optional[str] = None,
     until: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
-    """Distribution breakdown: kind in {sentiment, intent, platform}."""
+    """Distribution breakdown: kind in {sentiment, intent, platform, pivot}.
+    For kind='pivot', pivot_column names the Pivot Analysis column (e.g.
+    'hasChild', 'channel'); omit it to discover the available columns."""
     if not user_id:
         logger.warning("fetch_distribution called without user_id")
         return None
@@ -321,6 +324,8 @@ def fetch_distribution(
         user_id, dashboard_id, pivot_key, pivot_value, days, since=since, until=until
     )
     payload["kind"] = (kind or "sentiment").strip().lower()
+    if pivot_column and str(pivot_column).strip():
+        payload["pivot_column"] = str(pivot_column).strip()
     return _post_worker(f"{_worker_base()}/advisor/distribution", payload)
 
 

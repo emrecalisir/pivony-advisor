@@ -124,7 +124,17 @@ class HottermsArgs(ScopedDashboardArgs):
 class DistributionArgs(ScopedDashboardArgs):
     kind: str = Field(
         default="sentiment",
-        description="Which breakdown: 'sentiment', 'intent', or 'platform'.",
+        description=(
+            "Which breakdown: 'sentiment', 'intent', 'platform' (channel), or "
+            "'pivot' (a Pivot Analysis column such as hasChild / channel)."
+        ),
+    )
+    pivot_column: str | None = Field(
+        default=None,
+        description=(
+            "Only for kind='pivot': the pivot column name (e.g. 'hasChild', "
+            "'channel'). Omit to discover the available columns first."
+        ),
     )
 
 
@@ -352,6 +362,7 @@ def _build_tools(
     def _distribution(
         dashboard_id: int,
         kind: str = "sentiment",
+        pivot_column: str | None = None,
         pivot_key: str | None = None,
         pivot_value: str | None = None,
         days: int | None = None,
@@ -360,7 +371,7 @@ def _build_tools(
     ) -> str:
         since, until = _eff_dates(since, until, days)
         data = fetch_distribution(
-            user_id, dashboard_id=dashboard_id, kind=kind,
+            user_id, dashboard_id=dashboard_id, kind=kind, pivot_column=pivot_column,
             pivot_key=pivot_key, pivot_value=pivot_value, days=days,
             since=since, until=until,
         )
@@ -608,10 +619,14 @@ def _build_tools(
         func=_distribution,
         name="get_distribution",
         description=(
-            "Get a breakdown for a dashboard by `kind`: 'sentiment' (positive/neutral/"
-            "negative/mixed split), 'intent' (why customers write — request/question/"
-            "complaint…), or 'platform' (channel/source mix). Use for 'dağılım nedir', "
-            "'hangi kanaldan', 'ne amaçla yazıyorlar'."
+            "Get a breakdown for a dashboard by `kind`, sourced from the SAME engine "
+            "as the dashboard widgets (matches the page 1:1): 'sentiment' (positive/"
+            "neutral/negative/mixed split — Sentiment Analysis), 'intent' (why "
+            "customers write — Intent Analysis: complaint/request/suggestion…), "
+            "'platform' (channel/source mix), or 'pivot' (a Pivot Analysis column "
+            "such as hasChild or channel — pass pivot_column; omit it first to list "
+            "the available columns). Use for 'intent oranı', 'duygu dağılımı', "
+            "'hangi kanaldan', 'hasChild/çocuklu oranı', 'pivot dağılımı'."
         ),
         args_schema=DistributionArgs,
     )
@@ -620,8 +635,9 @@ def _build_tools(
         name="get_topic_ratings",
         description=(
             "Get the average rating per topic for a dashboard (which topics score "
-            "highest/lowest). Use for 'hangi konu en düşük/yüksek puanlı', "
-            "'konu bazında puanlar'."
+            "highest/lowest), from the SAME 'Topics Rating' widget data on the page "
+            "(matches 1:1). Use for 'X konusunun rating'i nedir', 'hangi konu en "
+            "düşük/yüksek puanlı', 'konu bazında puanlar'."
         ),
         args_schema=ScopedDashboardArgs,
     )
