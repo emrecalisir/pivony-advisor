@@ -113,3 +113,28 @@ def fetch_metrics(
     if pivot_value and str(pivot_value).strip():
         payload["pivot_value"] = str(pivot_value).strip()
     return _post_worker(PIVONY_API_METRICS_URL, payload)
+
+
+def fetch_root_causes(
+    user_id: Optional[str],
+    dashboard_id: int,
+    topic: Optional[str] = None,
+    topic_id: Optional[int] = None,
+    pivot_key: Optional[str] = None,
+    pivot_value: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    """Root causes for a dashboard/topic. Returns {status, root_causes, ...} where
+    status is ok | none_for_topic | not_generated, or None on failure."""
+    if not user_id:
+        logger.warning("fetch_root_causes called without user_id")
+        return None
+    payload: dict[str, Any] = {"user_id": user_id, "dashboard_id": dashboard_id}
+    if topic and str(topic).strip():
+        payload["topic"] = str(topic).strip()
+    if topic_id is not None:
+        payload["topic_id"] = topic_id
+    if pivot_key and str(pivot_key).strip():
+        payload["pivot_key"] = str(pivot_key).strip()
+    if pivot_value and str(pivot_value).strip():
+        payload["pivot_value"] = str(pivot_value).strip()
+    return _post_worker(f"{_worker_base()}/advisor/root-causes", payload)

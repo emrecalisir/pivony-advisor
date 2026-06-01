@@ -19,7 +19,12 @@ from pydantic import BaseModel, Field
 from qdrant_client import QdrantClient
 
 from core.config import AGENT_MAX_TOOL_ITERATIONS, DEFAULT_SECTOR, sector_slugify
-from core.pivony_platform import fetch_dashboards, fetch_metrics, fetch_pivots
+from core.pivony_platform import (
+    fetch_dashboards,
+    fetch_metrics,
+    fetch_pivots,
+    fetch_root_causes,
+)
 from core.prompts import build_agent_system_prompt
 from core.rag import search_reviews
 
@@ -48,6 +53,22 @@ class DashboardPivotsArgs(BaseModel):
         ...,
         description="The dashboard ID (from list_dashboards) to inspect filters for.",
     )
+
+
+class RootCausesArgs(BaseModel):
+    dashboard_id: int = Field(
+        ..., description="Dashboard ID (from list_dashboards / get_pivony_metrics)."
+    )
+    topic: str | None = Field(
+        default=None,
+        description="Topic name to scope root causes to, e.g. 'F&B', 'Oda'.",
+    )
+    topic_id: int | None = Field(
+        default=None,
+        description="Topic id from get_pivony_metrics complaint_topics, if known.",
+    )
+    pivot_key: str | None = Field(default=None, description="Optional pivot key.")
+    pivot_value: str | None = Field(default=None, description="Optional pivot value.")
 
 
 class MetricsArgs(BaseModel):
@@ -98,6 +119,28 @@ def _build_tools(
         if data is None:
             return json.dumps(
                 {"error": "Pivot servisi şu anda kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _root_causes(
+        dashboard_id: int,
+        topic: str | None = None,
+        topic_id: int | None = None,
+        pivot_key: str | None = None,
+        pivot_value: str | None = None,
+    ) -> str:
+        data = fetch_root_causes(
+            user_id,
+            dashboard_id=dashboard_id,
+            topic=topic,
+            topic_id=topic_id,
+            pivot_key=pivot_key,
+            pivot_value=pivot_value,
+        )
+        if data is None:
+            return json.dumps(
+                {"error": "Kök-neden servisi şu anda kullanılamıyor."},
                 ensure_ascii=False,
             )
         return json.dumps(data, ensure_ascii=False)
@@ -157,15 +200,33 @@ def _build_tools(
         description=(
             "Get aggregate CX metrics scoped to a dashboard and optional pivot filter: "
             "sentiment (positive/neutral/negative %), complaint_topics (most negative "
-            "themes), review_count, and best-effort avg_rating/top_root_causes. Provide "
-            "dashboard_id (and pivot_key/pivot_value when the user named a brand/branch/"
-            "city). Use for satisfaction/complaints and 'why is X happening' summaries."
+            "themes, each with a topic_id), review_count, and best-effort avg_rating/"
+            "top_root_causes. Provide dashboard_id (and pivot_key/pivot_value when the "
+            "user named a brand/branch/city). Use for satisfaction/complaints summaries."
         ),
         args_schema=MetricsArgs,
     )
+    root_causes_tool = StructuredTool.from_function(
+        func=_root_causes,
+        name="get_root_causes",
+        description=(
+            "Get the analyzed root causes behind complaints for a dashboard, optionally "
+            "scoped to a topic (pass topic_id from get_pivony_metrics complaint_topics, "
+            "or a topic name). Use for 'ana problem / neden / kök neden' questions. "
+            "Returns status: 'ok' (root_causes listed), 'none_for_topic' (analysis exists "
+            "but none for this topic), or 'not_generated' (root-cause analysis has not "
+            "been run for this dashboard yet — tell the user it must be generated)."
+        ),
+        args_schema=RootCausesArgs,
+    )
     # Discovery + metrics tools ground every Advisor tier in Pivony's existing
     # analysis outputs. Raw-review search is an Industry-Expert (paid) capability.
-    base_tools = [list_dashboards_tool, dashboard_pivots_tool, metrics_tool]
+    base_tools = [
+        list_dashboards_tool,
+        dashboard_pivots_tool,
+        metrics_tool,
+        root_causes_tool,
+    ]
     if advisor_mode == MODE_ADVISOR:
         return base_tools
     return [search_tool, *base_tools]
