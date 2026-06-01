@@ -491,9 +491,12 @@ def _build_tools(
             "sentiment (positive/neutral/negative %), topics (EVERY topic with its TOTAL "
             "review count regardless of sentiment — use for 'how many X reviews'), "
             "complaint_topics (only negative themes, each with a topic_id), review_count "
-            "(dashboard total), and best-effort avg_rating/top_root_causes. Provide "
-            "dashboard_id (and pivot_key/pivot_value when the user named a brand/branch/"
-            "city). Use for satisfaction/complaints summaries and topic review counts."
+            "(dashboard total), avg_rating, nps, positive_sentiment_score, and best-effort "
+            "top_root_causes. sentiment/score/rating/review_count/nps are read straight from "
+            "the dashboard's own search engine so they match the DashboardData page 1:1. "
+            "Provide dashboard_id (and pivot_key/pivot_value when the user named a brand/"
+            "branch/city), plus the page's since/until when known. Use for satisfaction/"
+            "complaints summaries and topic review counts."
         ),
         args_schema=MetricsArgs,
     )
