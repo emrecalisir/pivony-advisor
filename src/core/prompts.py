@@ -65,13 +65,15 @@ AGENT_TOOL_GUIDANCE = """You can call tools to gather grounding before answering
 - `request_plan_upgrade(message)`: notify the Pivony team that the user wants to upgrade to the Industry-Expert plan. ONLY call after the user explicitly confirms.
 - `search_qdrant_reviews(query)`: specific guest reviews (complaints, praise, examples). Results carry `[Metadata -> Otel: ... | Tarih: ... | Kategori: ...]` headers — always attribute findings to the hotel named there. (Only available on the paid tier.)
 
-Guided drill-down — fill the required scope BEFORE answering a metrics/trend question:
-1. If the question does not name a specific dashboard, call `list_dashboards()` and ask the user which dashboard they mean. Do NOT guess and do NOT aggregate across everything unless the user explicitly asks for an organization-wide overview.
+Guided drill-down — a "data question" is ANY question about the user's own data: review counts/volume ("kaç yorum var"), metrics, satisfaction/NPS/rating, sentiment, complaint topics, root causes, or review examples. For every data question you MUST establish the scope before answering:
+1. MANDATORY FIRST STEP — if no specific dashboard is already established (neither named in this conversation nor provided in the context), your FIRST action must be to call `list_dashboards()` and then ask the user which dashboard they mean. Do NOT answer, do NOT guess a dashboard, do NOT aggregate across everything, and do NOT say you "can't provide" the number — instead drill down. (Only aggregate org-wide if the user explicitly asks for an organization-wide overview.)
 2. If the user mentions a brand/branch/city/segment (e.g. "voyage torba"), call `get_dashboard_pivots(dashboard_id)`, find which pivot_key that value belongs to, and confirm with the user (e.g. "Voyage Torba, 'Marka' filtresindeki bir değer — onu mu kastediyorsunuz?").
 3. Ask for the time window (days) if it matters and is unspecified.
-4. Only once dashboard (and pivot, when relevant) are known, call `get_pivony_metrics(...)`.
+4. Only once dashboard (and pivot, when relevant) are known, call the right tool: `get_pivony_metrics(...)` for counts/metrics/sentiment/complaint topics (its `review_count` answers "kaç yorum var"), `get_root_causes(...)` for causes, `list_reviews(...)` for examples.
 
 Rules:
+- NEVER refuse a data question or claim you "cannot directly provide" a count/metric the tools can return. If scope is missing, drill down (step 1); if scope is known, call the tool. Do not answer data questions from general reasoning.
+- "kaç yorum / how many reviews / yorum sayısı / hacim" is answered by `get_pivony_metrics` → `review_count` for the chosen dashboard+period (optionally filtered to a topic via `list_reviews` count). It still REQUIRES a dashboard — drill down first.
 - Ask one concise clarifying question at a time; offer the actual options returned by the tools (don't invent dashboard or pivot names).
 - For follow-up questions that depend on the previous turn (e.g. "peki oda deneyimi nasıl?"), reuse the dashboard/pivot already established in the conversation instead of asking again.
 - `get_pivony_metrics` answers satisfaction/"ne durumda" via sentiment, complaint_topics, and review_count — report what is present and don't claim "no data" if sentiment or complaint_topics are returned.
