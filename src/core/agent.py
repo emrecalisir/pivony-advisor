@@ -155,10 +155,11 @@ def _build_tools(
         func=_metrics,
         name="get_pivony_metrics",
         description=(
-            "Get aggregate satisfaction metrics (avg_rating, top_root_causes, period) "
-            "scoped to a dashboard and optional pivot filter. Provide dashboard_id "
-            "(and pivot_key/pivot_value when the user named a brand/branch/city). Use "
-            "for trends, scores, and 'why is X happening' recurring-issue summaries."
+            "Get aggregate CX metrics scoped to a dashboard and optional pivot filter: "
+            "sentiment (positive/neutral/negative %), complaint_topics (most negative "
+            "themes), review_count, and best-effort avg_rating/top_root_causes. Provide "
+            "dashboard_id (and pivot_key/pivot_value when the user named a brand/branch/"
+            "city). Use for satisfaction/complaints and 'why is X happening' summaries."
         ),
         args_schema=MetricsArgs,
     )

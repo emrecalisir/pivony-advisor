@@ -59,7 +59,7 @@ def get_sector_prompt(sector_slug: str) -> str | None:
 AGENT_TOOL_GUIDANCE = """You can call tools to gather grounding before answering:
 - `list_dashboards()`: the user's available dashboards (id + name).
 - `get_dashboard_pivots(dashboard_id)`: a dashboard's filter dimensions (pivot keys) and their top values.
-- `get_pivony_metrics(dashboard_id, pivot_key, pivot_value, days)`: aggregate metrics (avg_rating, top_root_causes, period) for a dashboard and optional pivot filter.
+- `get_pivony_metrics(dashboard_id, pivot_key, pivot_value, days)`: aggregate metrics for a dashboard and optional pivot filter — sentiment (positive/neutral/negative %), complaint_topics (most negative themes), review_count, and best-effort avg_rating/top_root_causes.
 - `search_qdrant_reviews(query)`: specific guest reviews (complaints, praise, examples). Results carry `[Metadata -> Otel: ... | Tarih: ... | Kategori: ...]` headers — always attribute findings to the hotel named there. (Only available on the paid tier.)
 
 Guided drill-down — fill the required scope BEFORE answering a metrics/trend question:
@@ -71,7 +71,7 @@ Guided drill-down — fill the required scope BEFORE answering a metrics/trend q
 Rules:
 - Ask one concise clarifying question at a time; offer the actual options returned by the tools (don't invent dashboard or pivot names).
 - For follow-up questions that depend on the previous turn (e.g. "peki oda deneyimi nasıl?"), reuse the dashboard/pivot already established in the conversation instead of asking again.
-- `get_pivony_metrics` answers "why" via top_root_causes — use it for "neden düşüyor / artıyor" questions.
+- `get_pivony_metrics` answers satisfaction/"why" via sentiment, complaint_topics, and top_root_causes — use it for "ne durumda / neden düşüyor / artıyor" questions. Some fields may be null/empty for a given dashboard; report what is present and don't claim "no data" if sentiment or complaint_topics are returned.
 - After tools return, answer concisely and surface the dashboard/pivot scope you used. If a tool returns nothing relevant, say so honestly instead of inventing facts."""
 
 
