@@ -180,6 +180,10 @@ class ChatCompletionResponse(BaseModel):
         default="",
         description="Cursor-style contextual next-step guidance prose",
     )
+    pivony_dashboard_picker: dict | None = Field(
+        default=None,
+        description="When set, the UI should render a searchable dashboard picker: {dashboards:[{id,name}], default_dashboard_id}",
+    )
 
 
 def _prepare_chat_input(messages: list[ChatMessage]) -> dict[str, str]:
@@ -220,6 +224,7 @@ def _openai_chat_completion(
     *,
     suggested_followups: list[str] | None = None,
     guidance: str | None = None,
+    dashboard_picker: dict | None = None,
 ) -> ChatCompletionResponse:
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex}",
@@ -230,6 +235,7 @@ def _openai_chat_completion(
         ],
         pivony_suggested_followups=suggested_followups or [],
         pivony_guidance=guidance or "",
+        pivony_dashboard_picker=dashboard_picker,
     )
 
 
@@ -290,8 +296,9 @@ async def chat_completions(
 
     try:
         embeddings, client, llm = _components()
+        dashboard_picker: dict | None = None
         if USE_AGENT:
-            answer = run_advisor_agent(
+            answer, dashboard_picker = run_advisor_agent(
                 turns=extract_turns(request.messages),
                 sector_slug=sector,
                 extra_system_prompt=api_system,
@@ -328,6 +335,7 @@ async def chat_completions(
             answer,
             suggested_followups=followups,
             guidance=guidance,
+            dashboard_picker=dashboard_picker,
         )
     except HTTPException:
         raise

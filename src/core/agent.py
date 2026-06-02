@@ -687,6 +687,36 @@ def _to_langchain_messages(
     return messages
 
 
+def _extract_dashboard_picker(
+    tool_name: str,
+    result: Any,
+    default_dashboard_id: int | None,
+) -> dict | None:
+    """If a tool result implies the user must pick a dashboard, build a UI
+    picker artifact ({dashboards:[{id,name}], default_dashboard_id}). Triggered
+    by `list_dashboards` or any tool returning `need_dashboard_selection`."""
+    try:
+        data = json.loads(result) if isinstance(result, str) else result
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    show = tool_name == "list_dashboards" or bool(data.get("need_dashboard_selection"))
+    if not show:
+        return None
+    raw = data.get("dashboards")
+    if not isinstance(raw, list):
+        return None
+    items = [
+        {"id": d.get("id"), "name": d.get("name")}
+        for d in raw
+        if isinstance(d, dict) and d.get("id") is not None
+    ]
+    if not items:
+        return None
+    return {"dashboards": items, "default_dashboard_id": default_dashboard_id}
+
+
 def run_advisor_agent(
     *,
     turns: list[tuple[str, str]],
@@ -699,14 +729,16 @@ def run_advisor_agent(
     user_id: str | None = None,
     page_context: dict | None = None,
     max_iterations: int | None = None,
-) -> str:
+) -> tuple[str, dict | None]:
     """
-    Run the tool-calling loop and return the final assistant text.
+    Run the tool-calling loop and return (assistant_text, dashboard_picker).
 
     `turns` is an ordered list of (role, content) user/assistant messages
     ending with the latest user message. `advisor_mode` selects the product
     tier ('industry_expert' = raw-review RAG + metrics, 'advisor' = metrics only).
     `user_id` scopes get_pivony_metrics to the caller's organization.
+    `dashboard_picker` is non-None when the turn asks the user to choose a
+    dashboard, so the UI can render a searchable/clickable list instead of prose.
     """
     slug = sector_slugify(sector_slug or DEFAULT_SECTOR)
     mode = advisor_mode or DEFAULT_ADVISOR_MODE
@@ -724,6 +756,11 @@ def run_advisor_agent(
     system_prompt = build_agent_system_prompt(slug, extra_system_prompt, advisor_mode=mode)
     messages = _to_langchain_messages(system_prompt, turns)
 
+    default_dash = (
+        page_context.get("dashboard_id") if isinstance(page_context, dict) else None
+    )
+    picker: dict | None = None
+
     limit = max_iterations or AGENT_MAX_TOOL_ITERATIONS
     for step in range(limit):
         ai_message = llm_with_tools.invoke(messages)
@@ -731,7 +768,7 @@ def run_advisor_agent(
 
         tool_calls = getattr(ai_message, "tool_calls", None) or []
         if not tool_calls:
-            return _message_text(ai_message)
+            return _message_text(ai_message), picker
 
         for call in tool_calls:
             name = call.get("name")
@@ -745,6 +782,8 @@ def run_advisor_agent(
                 except Exception as exc:  # tool failure should not crash the turn
                     logger.warning("Tool %s failed: %s", name, exc)
                     result = f"Araç hatası ({name}): {exc}"
+            if picker is None:
+                picker = _extract_dashboard_picker(name, result, default_dash)
             messages.append(
                 ToolMessage(content=str(result), tool_call_id=call.get("id", name or ""))
             )
@@ -752,7 +791,7 @@ def run_advisor_agent(
 
     # Tool budget exhausted — force a plain (no-tool) final answer.
     final = llm.invoke(messages)
-    return _message_text(final)
+    return _message_text(final), picker
 
 
 def _message_text(message: Any) -> str:
