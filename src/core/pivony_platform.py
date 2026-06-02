@@ -25,6 +25,20 @@ from core.config import (
 
 logger = logging.getLogger(__name__)
 
+# Returned (instead of None) when a worker call exceeds PIVONY_API_TIMEOUT_SEC.
+# It carries a user-facing instruction so the agent asks the user to narrow the
+# scope (shorter date range / single dashboard) rather than emitting a generic
+# "service unavailable" dead-end. Tools json.dumps() this straight to the LLM.
+WORKER_TIMEOUT_RESULT: dict[str, Any] = {
+    "error": "timeout",
+    "message": (
+        "Bu sorgu seçili kapsam için zaman aşımına uğradı. Daha kısa bir tarih "
+        "aralığı (ör. son 7 veya 30 gün) ya da tek bir dashboard seçerseniz "
+        "hemen yanıtlayabilirim."
+    ),
+    "advisor_action": "ask_user_to_narrow_scope",
+}
+
 
 def _worker_base() -> Optional[str]:
     """'.../worker' base derived from the configured advisor-metrics URL."""
@@ -52,6 +66,12 @@ def _post_worker(url: str, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
             },
             timeout=PIVONY_API_TIMEOUT_SEC,
         )
+    except requests.exceptions.Timeout:
+        logger.warning(
+            "pivony platform request timed out (%s) after %ss",
+            url, PIVONY_API_TIMEOUT_SEC,
+        )
+        return dict(WORKER_TIMEOUT_RESULT)
     except requests.exceptions.RequestException as exc:
         logger.error("pivony platform request failed (%s): %s", url, exc)
         return None
