@@ -41,10 +41,12 @@ sudo systemctl restart pivony-advisor.service
 Runs from a separate clone so it can restart without touching prod. Point the **dev API**
 `PIVONY_MODELS_BASE_URL` at `http://127.0.0.1:8012` (not 8011).
 
+First time (creates `venv/`, installs deps, copies `.env` from prod if missing):
+
 ```bash
 cd ~/pivony-advisor-dev
 git pull origin development
-source venv/bin/activate
+bash scripts/bootstrap-dev-venv.sh
 chmod +x scripts/start_advisor.sh
 sudo bash scripts/install-advisor-dev-service.sh
 ```

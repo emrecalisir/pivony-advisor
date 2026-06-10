@@ -10,13 +10,16 @@ fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UNIT_SRC="${ROOT}/deploy/pivony-advisor-dev.service"
 UNIT_DST="/etc/systemd/system/pivony-advisor-dev.service"
+SVC_USER="${SVC_USER:-ubuntu}"
 
 if [[ ! -f "${UNIT_SRC}" ]]; then
   echo "Missing ${UNIT_SRC}" >&2
   exit 1
 fi
 
-chmod +x "${ROOT}/scripts/start_advisor.sh"
+chmod +x "${ROOT}/scripts/start_advisor.sh" "${ROOT}/scripts/bootstrap-dev-venv.sh"
+sudo -u "${SVC_USER}" bash "${ROOT}/scripts/bootstrap-dev-venv.sh"
+
 cp "${UNIT_SRC}" "${UNIT_DST}"
 systemctl daemon-reload
 systemctl enable pivony-advisor-dev.service
