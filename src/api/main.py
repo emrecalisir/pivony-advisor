@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -16,6 +17,7 @@ if _BASE not in sys.path:
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
 
@@ -28,8 +30,8 @@ from core.config import (
     sector_slugify,
 )
 from core.conversation import extract_turns, prepare_conversational_input
+from core.agent_stream import stream_advisor_agent, stream_simple_completion
 from core.contextual_navigation import generate_contextual_navigation
-from core.loading_hints import generate_loading_hints
 from core.logging_config import get_advisor_logger, log_conversation, setup_logging
 from core.rag import (
     build_embeddings,
@@ -265,14 +267,85 @@ async def list_models() -> dict:
     }
 
 
-@app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
+def _sse_payload(data: object) -> str:
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _stream_chat_events(
+    request: ChatCompletionRequest,
+    *,
+    user_id: str | None,
+    user_email: str | None,
+    chat_input: dict[str, str],
+    sector: str,
+    api_system: str | None,
+    advisor_mode: str,
+):
+    embeddings, client, llm = _components()
+    turns = extract_turns(request.messages)
+    answer = ""
+    dashboard_picker: dict | None = None
+
+    if USE_AGENT:
+        stream = stream_advisor_agent(
+            turns=turns,
+            sector_slug=sector,
+            extra_system_prompt=api_system,
+            embeddings=embeddings,
+            client=client,
+            llm=llm,
+            advisor_mode=advisor_mode,
+            user_id=user_id,
+            page_context=request.pivony_page_context,
+        )
+    else:
+        stream = stream_simple_completion(
+            system_prompt=api_system or "",
+            user_messages=turns,
+        )
+
+    for event in stream:
+        if event.get("type") == "done":
+            answer = str(event.get("content") or "")
+            dashboard_picker = event.get("dashboard_picker")
+            continue
+        yield _sse_payload(event)
+
+    followups, guidance = generate_contextual_navigation(
+        chat_input.get("retrieval_query") or chat_input["question"],
+        answer,
+        chat_history=chat_input.get("chat_history"),
+        context_hint=api_system,
+        llm=llm,
+        use_vertex=USE_VERTEX_CONTEXTUAL_NAVIGATION,
+    )
+    log_conversation(
+        user_id=user_id,
+        user_email=user_email,
+        sector=sector,
+        model=request.model,
+        messages=_messages_for_history(request.messages),
+        assistant_response=answer,
+        suggested_followups=followups,
+        guidance=guidance,
+    )
+    yield _sse_payload(
+        {
+            "type": "done",
+            "content": answer,
+            "pivony_suggested_followups": followups,
+            "pivony_guidance": guidance,
+            "pivony_dashboard_picker": dashboard_picker,
+        }
+    )
+    yield "data: [DONE]\n\n"
+
+
+@app.post("/v1/chat/completions")
 async def chat_completions(
     request: ChatCompletionRequest,
     http_request: Request,
-) -> ChatCompletionResponse:
-    if request.stream:
-        raise HTTPException(status_code=400, detail="Streaming is not supported")
-
+):
     user_id, user_email = _resolve_user_context(request, http_request)
 
     try:
@@ -285,7 +358,7 @@ async def chat_completions(
     advisor_mode = (request.pivony_advisor_mode or DEFAULT_ADVISOR_MODE).strip().lower()
 
     logger.info(
-        "chat_completions user_id=%s user_email=%s sector=%s model=%s messages=%s agent=%s mode=%s",
+        "chat_completions user_id=%s user_email=%s sector=%s model=%s messages=%s agent=%s mode=%s stream=%s",
         user_id or "-",
         user_email or "-",
         sector,
@@ -293,7 +366,35 @@ async def chat_completions(
         len(request.messages),
         USE_AGENT,
         advisor_mode,
+        request.stream,
     )
+
+    if request.stream:
+        try:
+            return StreamingResponse(
+                _stream_chat_events(
+                    request,
+                    user_id=user_id,
+                    user_email=user_email,
+                    chat_input=chat_input,
+                    sector=sector,
+                    api_system=api_system,
+                    advisor_mode=advisor_mode,
+                ),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("Streaming chat completion failed: %s", exc)
+            raise HTTPException(
+                status_code=500, detail=f"Chat completion failed: {exc}"
+            ) from exc
 
     try:
         embeddings, client, llm = _components()
@@ -343,27 +444,6 @@ async def chat_completions(
     except Exception as exc:
         logger.exception("Chat completion failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"Chat completion failed: {exc}") from exc
-
-
-@app.get("/v1/advisor/loading-hints")
-async def loading_hints(
-    lang: str = "tr",
-    count: int = 3,
-    sector: str | None = None,
-) -> dict:
-    """Short CX quotes for the UI loading state (LLM-generated, not static copy)."""
-    try:
-        _, _, llm = _components()
-        quotes = generate_loading_hints(
-            lang=lang,
-            sector_slug=sector or DEFAULT_SECTOR,
-            count=count,
-            llm=llm,
-        )
-        return {"quotes": quotes}
-    except Exception as exc:
-        logger.warning("loading-hints failed: %s", exc)
-        return {"quotes": []}
 
 
 @app.get("/health", response_model=HealthResponse)
