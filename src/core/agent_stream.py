@@ -238,7 +238,8 @@ def stream_advisor_agent(
         )
         while True:
             try:
-                yield next(turn_gen)
+                event = next(turn_gen)
+                yield event
             except StopIteration as stop:
                 model_content, function_calls = stop.value
                 break
@@ -284,6 +285,7 @@ def stream_advisor_agent(
 
         for fc in function_calls:
             name = fc.name or ""
+            yield {"type": "status", "phase": "tool", "detail": name}
             args = dict(fc.args or {})
             tool = tool_map.get(name)
             if tool is None:
