@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import asyncio
 import os
 import sys
 import time
@@ -271,7 +272,7 @@ def _sse_payload(data: object) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def _stream_chat_events(
+async def _stream_chat_events(
     request: ChatCompletionRequest,
     *,
     user_id: str | None,
@@ -310,6 +311,7 @@ def _stream_chat_events(
             dashboard_picker = event.get("dashboard_picker")
             continue
         yield _sse_payload(event)
+        await asyncio.sleep(0)
 
     followups, guidance = generate_contextual_navigation(
         chat_input.get("retrieval_query") or chat_input["question"],
@@ -339,6 +341,7 @@ def _stream_chat_events(
         }
     )
     yield "data: [DONE]\n\n"
+    await asyncio.sleep(0)
 
 
 @app.post("/v1/chat/completions")

@@ -153,7 +153,7 @@ def _stream_model_turn(
         if not chunk.candidates:
             continue
         for part in chunk.candidates[0].content.parts or []:
-            if part.thought is True and part.text:
+            if getattr(part, "thought", None) and part.text:
                 yield {"type": "thought", "delta": part.text}
             elif part.text and not part.function_call:
                 content_parts.append(part.text)
@@ -173,18 +173,6 @@ def _stream_model_turn(
         types.Content(role="model", parts=model_parts),
         list(function_calls.values()),
     )
-
-
-def _run_turn(
-    gen: Iterator[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], types.Content, list[types.FunctionCall]]:
-    events: list[dict[str, Any]] = []
-    while True:
-        try:
-            events.append(next(gen))
-        except StopIteration as stop:
-            model_content, function_calls = stop.value
-            return events, model_content, function_calls
 
 
 def stream_advisor_agent(
@@ -241,17 +229,19 @@ def stream_advisor_agent(
     final_text = ""
 
     for step in range(limit):
-        events, model_content, function_calls = _run_turn(
-            _stream_model_turn(
-                client=genai_client,
-                model=LLM_MODEL,
-                contents=contents,
-                config=base_config,
-                emit_content=False,
-            )
+        turn_gen = _stream_model_turn(
+            client=genai_client,
+            model=LLM_MODEL,
+            contents=contents,
+            config=base_config,
+            emit_content=False,
         )
-        for event in events:
-            yield event
+        while True:
+            try:
+                yield next(turn_gen)
+            except StopIteration as stop:
+                model_content, function_calls = stop.value
+                break
 
         if not model_content.parts:
             break
@@ -273,17 +263,19 @@ def stream_advisor_agent(
                 thinking_config=base_config.thinking_config,
                 temperature=LLM_TEMPERATURE,
             )
-            events, model_content, _ = _run_turn(
-                _stream_model_turn(
-                    client=genai_client,
-                    model=LLM_MODEL,
-                    contents=contents,
-                    config=no_tool_config,
-                    emit_content=True,
-                )
+            turn_gen = _stream_model_turn(
+                client=genai_client,
+                model=LLM_MODEL,
+                contents=contents,
+                config=no_tool_config,
+                emit_content=True,
             )
-            for event in events:
-                yield event
+            while True:
+                try:
+                    yield next(turn_gen)
+                except StopIteration as stop:
+                    model_content, _ = stop.value
+                    break
             contents.append(model_content)
             final_text = "".join(
                 p.text for p in model_content.parts if p.text
@@ -354,17 +346,19 @@ def stream_simple_completion(
         temperature=LLM_TEMPERATURE,
     )
 
-    events, model_content, _ = _run_turn(
-        _stream_model_turn(
-            client=genai_client,
-            model=LLM_MODEL,
-            contents=contents,
-            config=config,
-            emit_content=True,
-        )
+    turn_gen = _stream_model_turn(
+        client=genai_client,
+        model=LLM_MODEL,
+        contents=contents,
+        config=config,
+        emit_content=True,
     )
-    for event in events:
-        yield event
+    while True:
+        try:
+            yield next(turn_gen)
+        except StopIteration as stop:
+            model_content, _ = stop.value
+            break
 
     final_text = "".join(p.text for p in model_content.parts if p.text).strip()
     answer = _finalize_agent_reply(final_text or EMPTY_AGENT_REPLY)
