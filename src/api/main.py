@@ -294,7 +294,6 @@ async def _stream_chat_events(
             extra_system_prompt=api_system,
             embeddings=embeddings,
             client=client,
-            llm=llm,
             advisor_mode=advisor_mode,
             user_id=user_id,
             page_context=request.pivony_page_context,
