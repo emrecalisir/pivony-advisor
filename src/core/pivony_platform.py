@@ -80,7 +80,19 @@ def _post_worker(url: str, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
             "pivony platform HTTP %s (%s): %s",
             resp.status_code, url, (resp.text or "")[:300],
         )
-        return None
+        try:
+            err = resp.json()
+            if isinstance(err, dict):
+                err.setdefault("error", "worker_http_error")
+                err["http_status"] = resp.status_code
+                return err
+        except ValueError:
+            pass
+        return {
+            "error": "worker_http_error",
+            "http_status": resp.status_code,
+            "message": (resp.text or "")[:300],
+        }
     try:
         data = resp.json()
     except ValueError:

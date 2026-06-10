@@ -549,7 +549,7 @@ def _build_tools(
     ) -> str:
         # Pin to the page's dashboard + date window when the model didn't specify
         # them, so the answer matches exactly what the user is looking at.
-        if dashboard_id is None and _pc_dash is not None:
+        if _pc_dash is not None:
             dashboard_id = _pc_dash
         since, until = _eff_dates(since, until, days)
         # Guardrail: never silently aggregate across all dashboards. Force the
@@ -584,6 +584,8 @@ def _build_tools(
                 {"error": "Metrik servisi şu anda kullanılamıyor; veri çekilemedi."},
                 ensure_ascii=False,
             )
+        if isinstance(data, dict) and data.get("error"):
+            return json.dumps(data, ensure_ascii=False)
         return json.dumps(data, ensure_ascii=False)
 
     search_tool = StructuredTool.from_function(
