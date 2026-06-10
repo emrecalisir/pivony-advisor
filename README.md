@@ -25,51 +25,37 @@ Log files are gitignored; the `logs/` directory is created automatically on star
 
 ## VM deploy
 
-### Production (`master`, port **8011**)
+### Production (`master`)
+
+Prod host only — `~/pivony-advisor`, port **8011**. Do not run alongside
+`pivony-advisor-dev` on the same machine (same port).
 
 ```bash
 cd ~/pivony-advisor
 git pull origin master
-source venv/bin/activate
+bash scripts/bootstrap-dev-venv.sh   # or existing venv
 sudo cp deploy/pivony-advisor.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl restart pivony-advisor.service
 ```
 
-### Development (`development`, port **8012**)
+### Development (`development`)
 
-Runs from a separate clone so it can restart without touching prod. Point the **dev API**
-`PIVONY_MODELS_BASE_URL` at `http://127.0.0.1:8012` (not 8011).
+Dev clone — `~/pivony-advisor-dev`, port **8011**. Point dev API at
+`PIVONY_MODELS_BASE_URL=http://127.0.0.1:8011`.
 
-First time (creates `venv/`, installs deps, copies `.env` from prod if missing):
+First time:
 
 ```bash
 cd ~/pivony-advisor-dev
 git pull origin development
 bash scripts/bootstrap-dev-venv.sh
-chmod +x scripts/start_advisor.sh
 sudo bash scripts/install-advisor-dev-service.sh
-```
-
-Or manually:
-
-```bash
-sudo cp deploy/pivony-advisor-dev.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl restart pivony-advisor-dev.service
-```
-
-**If it still tries port 8011**, the old unit is still installed — check:
-
-```bash
-grep -E 'ADVISOR_PORT|ExecStart|8011' /etc/systemd/system/pivony-advisor-dev.service
-# Must show ADVISOR_PORT=8012 and start_advisor.sh (not --port 8011)
 ```
 
 Check:
 
 ```bash
 curl -s http://127.0.0.1:8011/v1/models | head
-curl -s http://127.0.0.1:8012/v1/models | head
-sudo ss -tlnp | grep -E '8011|8012'
+sudo ss -tlnp | grep 8011
 ```

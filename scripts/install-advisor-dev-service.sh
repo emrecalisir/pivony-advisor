@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install/reinstall the development systemd unit (port 8012).
+# Install/reinstall the development systemd unit (port 8011).
 set -euo pipefail
 
 if [[ "$(id -u)" -ne 0 ]]; then
@@ -31,4 +31,4 @@ grep -E '^ExecStart=|^Environment=ADVISOR_PORT' "${UNIT_DST}" || true
 echo ""
 systemctl status pivony-advisor-dev.service --no-pager -l | head -20
 echo ""
-ss -tlnp | grep -E ':8011|:8012' || true
+ss -tlnp | grep ':8011' || true
