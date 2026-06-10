@@ -9,7 +9,7 @@ WorkingDirectory=/home/ubuntu/pivony-advisor
 Environment=PYTHONPATH=/home/ubuntu/pivony-advisor/src
 Environment=QDRANT_HOST=127.0.0.1
 Environment=QDRANT_PORT=6333
-Environment=ADVISOR_PORT=8011
+Environment=ADVISOR_PORT=8000
 ExecStart=/home/ubuntu/pivony-advisor/scripts/start_advisor.sh
 Restart=on-failure
 RestartSec=5
