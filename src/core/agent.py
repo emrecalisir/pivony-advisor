@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from qdrant_client import QdrantClient
 
 from core.config import AGENT_MAX_TOOL_ITERATIONS, DEFAULT_SECTOR, sector_slugify
+from core.compute import compare_pivot_ratings
 from core.pivony_platform import (
     fetch_dashboards,
     fetch_decisions,
@@ -36,6 +37,7 @@ from core.pivony_platform import (
 )
 from core.prompts import build_agent_system_prompt
 from core.rag import search_reviews
+from core.tier_gating import industry_expert_gate
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +137,34 @@ class DistributionArgs(ScopedDashboardArgs):
             "Only for kind='pivot': the pivot column name (e.g. 'hasChild', "
             "'channel'). Omit to discover the available columns first."
         ),
+    )
+
+
+class ComparePivotRatingsArgs(BaseModel):
+    dashboard_id: int = Field(
+        ..., description="Dashboard ID (from list_dashboards / get_pivony_metrics)."
+    )
+    pivot_key: str = Field(
+        ...,
+        description=(
+            "Pivot dimension whose values to rank (from get_dashboard_pivots), "
+            "e.g. 'Marka', 'Otel', 'Şube'."
+        ),
+    )
+    days: int | None = Field(
+        default=None, description="Look-back window in days, e.g. 30 for last month."
+    )
+    since: str | None = Field(
+        default=None,
+        description="Exact start date YYYY-MM-DD for the current comparison window.",
+    )
+    until: str | None = Field(
+        default=None,
+        description="Exact end date YYYY-MM-DD for the current comparison window.",
+    )
+    limit: int | None = Field(
+        default=None,
+        description="Max pivot values to compare in parallel (default 20).",
     )
 
 
@@ -267,6 +297,37 @@ def _build_tools(
             )
         return json.dumps(data, ensure_ascii=False)
 
+    def _compare_pivot_ratings(
+        dashboard_id: int,
+        pivot_key: str,
+        days: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        limit: int | None = None,
+    ) -> str:
+        if advisor_mode == MODE_ADVISOR:
+            return json.dumps(
+                industry_expert_gate(
+                    "compare_pivot_ratings",
+                    detail=(
+                        "Birden fazla otel/segment arasında rating değişimini "
+                        "karşılaştırma ve sıralama."
+                    ),
+                ),
+                ensure_ascii=False,
+            )
+        since, until = _eff_dates(since, until, days)
+        data = compare_pivot_ratings(
+            user_id,
+            dashboard_id,
+            pivot_key,
+            days=days,
+            since=since,
+            until=until,
+            limit=limit,
+        )
+        return json.dumps(data, ensure_ascii=False)
+
     def _request_plan_upgrade(message: str | None = None) -> str:
         data = request_plan_upgrade(user_id, message=message)
         if data is None:
@@ -294,6 +355,37 @@ def _build_tools(
             return json.dumps(
                 {"error": "Trend servisi şu anda kullanılamıyor."}, ensure_ascii=False
             )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _compare_pivot_ratings(
+        dashboard_id: int,
+        pivot_key: str,
+        days: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        limit: int | None = None,
+    ) -> str:
+        if advisor_mode == MODE_ADVISOR:
+            return json.dumps(
+                industry_expert_gate(
+                    "compare_pivot_ratings",
+                    detail=(
+                        "Birden fazla otel/segment arasında rating değişimini "
+                        "karşılaştırma ve sıralama."
+                    ),
+                ),
+                ensure_ascii=False,
+            )
+        since, until = _eff_dates(since, until, days)
+        data = compare_pivot_ratings(
+            user_id,
+            dashboard_id,
+            pivot_key,
+            days=days,
+            since=since,
+            until=until,
+            limit=limit,
+        )
         return json.dumps(data, ensure_ascii=False)
 
     def _topic_trends(
@@ -578,12 +670,26 @@ def _build_tools(
         func=_trends,
         name="get_trends",
         description=(
-            "Get the over-time KPI series for a dashboard: volume_daily, "
-            "sentiment_daily, plus avg_rating, avg_sentiment and NPS (nps, "
-            "nps_distribution). Use for 'trend', 'over time', 'neden düşüyor/artıyor', "
-            "'NPS kaç' questions. Provide dashboard_id and a days window."
+            "Get the over-time KPI series for ONE scoped pivot value on a dashboard: "
+            "volume_daily, sentiment_daily, plus avg_rating, avg_sentiment and NPS. "
+            "Use for a single hotel/branch/segment trend (e.g. 'Voyage Torba rating "
+            "trendi'). For ranking or comparing MANY pivot values (e.g. 'en çok düşen "
+            "otel'), use compare_pivot_ratings instead."
         ),
         args_schema=ScopedDashboardArgs,
+    )
+    compare_pivot_ratings_tool = StructuredTool.from_function(
+        func=_compare_pivot_ratings,
+        name="compare_pivot_ratings",
+        description=(
+            "Rank pivot values (hotels, branches, brands) by avg_rating change between "
+            "two equal time windows on one dashboard. Use for 'en çok düşen otel', "
+            "'hangi otel en kötü performans', 'otelleri karşılaştır', 'rating "
+            "sıralaması'. Requires dashboard_id and pivot_key from get_dashboard_pivots. "
+            "On freemium (Advisor) plans the tool returns an Industry-Expert upgrade "
+            "prompt — relay user_message to the user."
+        ),
+        args_schema=ComparePivotRatingsArgs,
     )
     topic_trends_tool = StructuredTool.from_function(
         func=_topic_trends,
@@ -661,6 +767,7 @@ def _build_tools(
         root_causes_tool,
         list_reviews_tool,
         trends_tool,
+        compare_pivot_ratings_tool,
         topic_trends_tool,
         hotterms_tool,
         decisions_tool,
@@ -685,6 +792,17 @@ def _to_langchain_messages(
         elif role == "assistant":
             messages.append(AIMessage(content=content))
     return messages
+
+
+EMPTY_AGENT_REPLY = (
+    "Üzgünüm, yanıt oluşturulamadı. Lütfen sorunuzu daha dar bir kapsamla "
+    "(tek dashboard veya tek otel) tekrar deneyin."
+)
+
+
+def _finalize_agent_reply(text: str) -> str:
+    cleaned = (text or "").strip()
+    return cleaned if cleaned else EMPTY_AGENT_REPLY
 
 
 def _extract_dashboard_picker(
@@ -768,7 +886,7 @@ def run_advisor_agent(
 
         tool_calls = getattr(ai_message, "tool_calls", None) or []
         if not tool_calls:
-            return _message_text(ai_message), picker
+            return _finalize_agent_reply(_message_text(ai_message)), picker
 
         for call in tool_calls:
             name = call.get("name")
@@ -791,7 +909,7 @@ def run_advisor_agent(
 
     # Tool budget exhausted — force a plain (no-tool) final answer.
     final = llm.invoke(messages)
-    return _message_text(final), picker
+    return _finalize_agent_reply(_message_text(final)), picker
 
 
 def _message_text(message: Any) -> str:

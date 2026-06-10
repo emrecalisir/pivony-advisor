@@ -64,7 +64,9 @@ VECTOR_SIZE = 768
 
 # Agentic RAG: Gemini orchestrates tools (search_qdrant_reviews, get_pivony_metrics)
 USE_AGENT = os.environ.get("ADVISOR_USE_AGENT", "true").lower() in ("1", "true", "yes")
-AGENT_MAX_TOOL_ITERATIONS = int(os.environ.get("AGENT_MAX_TOOL_ITERATIONS", "4"))
+AGENT_MAX_TOOL_ITERATIONS = int(os.environ.get("AGENT_MAX_TOOL_ITERATIONS", "6"))
+ADVISOR_COMPARE_MAX_PIVOTS = int(os.environ.get("ADVISOR_COMPARE_MAX_PIVOTS", "20"))
+ADVISOR_COMPARE_MAX_WORKERS = int(os.environ.get("ADVISOR_COMPARE_MAX_WORKERS", "8"))
 
 # Faz 3: real freemium-Advisor metrics from pivony-api worker endpoint.
 # Full URL to the advisor-metrics route, e.g.

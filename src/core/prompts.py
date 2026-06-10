@@ -61,7 +61,8 @@ AGENT_TOOL_GUIDANCE = """You can call tools to gather grounding before answering
 - `get_dashboard_pivots(dashboard_id)`: a dashboard's filter dimensions (pivot keys) and their top values.
 - `get_pivony_metrics(dashboard_id, pivot_key, pivot_value, days, since, until)`: aggregate metrics for a dashboard and optional pivot filter — `sentiment` (REVIEW-level breakdown matching the dashboard's own Sentiment Analysis widget: positive_pct/neutral_pct/negative_pct/mixed_pct, plus `positive_sentiment_score` which is exactly the dashboard's "Positive Sentiment Score" gauge and equals positive_pct), `topics` (EVERY topic with its TOTAL review count regardless of sentiment), complaint_topics (only the negative themes, each with a topic_id), review_count (dashboard total), avg_rating, nps, and best-effort top_root_causes. sentiment, positive_sentiment_score, review_count, avg_rating and nps are read straight from the dashboard's own search engine, so they match the DashboardData page 1:1.
 - `get_root_causes(dashboard_id, topic / topic_id, pivot_key, pivot_value)`: the analyzed root causes behind complaints, optionally per topic. Returns a status: ok / none_for_topic / not_generated.
-- `get_trends(dashboard_id, pivot_key, pivot_value, days)`: over-time KPI series — volume_daily, sentiment_daily, avg_rating, avg_sentiment, and NPS (nps, nps_distribution). Use for "trend", "zaman içinde", "neden düşüyor/artıyor", and "NPS kaç" questions.
+- `get_trends(dashboard_id, pivot_key, pivot_value, days)`: over-time KPI series for ONE scoped pivot value — volume_daily, sentiment_daily, avg_rating, avg_sentiment, and NPS (nps, nps_distribution). Use for a single hotel/branch trend (e.g. "Voyage Torba rating trendi").
+- `compare_pivot_ratings(dashboard_id, pivot_key, days)`: rank MANY pivot values (hotels/branches) by avg_rating change between two equal windows — answers "en çok düşen otel", "hangi otel en kötü", "otelleri karşılaştır". Requires pivot_key from get_dashboard_pivots. **Industry-Expert only** for the actual computation; on freemium the tool returns an upgrade prompt (relay user_message).
 - `get_topic_trends(dashboard_id, pivot_key, pivot_value, days)`: rising/falling topics vs the preceding equal-length window (`rising`/`falling` with current/previous/change). Use for "hangi konular artıyor/azalıyor", "yükselen şikayetler", "ne değişti".
 - `get_hotterms(dashboard_id, pivot_key, pivot_value, days, limit)`: trending keywords/phrases (1-4 grams). Use for "sık geçen kelimeler / öne çıkan ifadeler".
 - `get_decision_distribution(dashboard_id, pivot_key, pivot_value, days)`: publish / opencase / takeaction true-false counts. Use for operational "kaç yorum aksiyon/vaka gerektiriyor" questions.
@@ -100,12 +101,17 @@ Rules:
 ADVISOR_TIER_GUIDANCE = """Plan tier — you are serving an **Advisor (freemium)** user:
 - You MAY list a few (at most ~10) example reviews with `list_reviews` — these are the user's own data, already visible in their dashboard.
 - You MAY report metrics, sentiment, complaint topics and analyzed root causes from the tools.
-- You may NOT perform ad-hoc analysis, summarization, synthesis, theme extraction, or "analyze/interpret these reviews for me" over the listed raw reviews — that is an Industry-Expert (paid) capability. Do NOT do it yourself even though you technically could.
-- When the user asks for such analysis (e.g. "bu yorumları özetle", "bunlardan ne çıkarabiliriz", "derinlemesine analiz et", or wants a broader/deeper listing), respond: bu özellik için **Industry-Expert** planına sahip olmanız gerekiyor; plan değişikliği için aksiyon almak ister misiniz? Then STOP and wait — do NOT produce the analysis.
+- You MAY use `get_trends` for ONE hotel/branch/segment at a time (single pivot_value).
+- **Industry-Expert-only** (freemium MUST NOT attempt these yourself — call the tool and relay the upgrade message):
+  1. **Comparative / ranking analytics across many hotels or segments** — e.g. "en çok düşen otel", "hangi otel en kötü", "otelleri karşılaştır", "rating sıralaması", "benchmark". Call `get_dashboard_pivots` to find pivot_key, then `compare_pivot_ratings`. The tool returns `requires_industry_expert` + `user_message` — relay user_message verbatim and ask if they want a plan change. Do NOT loop get_trends over every hotel yourself.
+  2. **Ad-hoc analysis over raw reviews** — summarization, synthesis, theme extraction, "bu yorumları özetle", "derinlemesine analiz et", or broader/deeper listing beyond ~10 examples.
+  3. **Semantic review search** (`search_qdrant_reviews`) — not available on this tier.
+- Standard upgrade wording (also returned by gated tools): "Bu tür karşılaştırmalı analizler Industry-Expert planında sunulmaktadır. Industry-Expert planına sahip olarak istediğiniz cevapları alabilirsiniz. Plan değişikliği için aksiyon almak ister misiniz?"
+- When the user asks for an Industry-Expert-only capability, respond with that upgrade message (or relay the tool's user_message). Then STOP — do NOT produce the analysis.
 - Only if the user clearly confirms (e.g. "evet", "isterim", "iletin") call `request_plan_upgrade(message=...)` with a short note of what they wanted, and tell them their request has been forwarded to the Pivony team (hello@pivony.com). If they decline, continue normally."""
 
 INDUSTRY_EXPERT_TIER_GUIDANCE = """Plan tier — you are serving an **Industry-Expert (paid)** user:
-- All capabilities are available: deeper/broader review listing, ad-hoc analysis, summarization and synthesis over raw reviews, plus sector-expert semantic search (`search_qdrant_reviews`). Use them freely. Do NOT show upsell messages or call `request_plan_upgrade`."""
+- All capabilities are available: `compare_pivot_ratings` for cross-hotel ranking, deeper/broader review listing, ad-hoc analysis, summarization and synthesis over raw reviews, plus sector-expert semantic search (`search_qdrant_reviews`). Use them freely. Do NOT show upsell messages or call `request_plan_upgrade`."""
 
 
 def build_agent_system_prompt(
