@@ -15,11 +15,14 @@ from qdrant_client import QdrantClient
 from core.agent import (
     EMPTY_AGENT_REPLY,
     _build_tools,
+    _build_dashboard_picker,
     _extract_dashboard_picker,
     _finalize_agent_reply,
     _message_text,
+    _should_prefetch_dashboard_picker,
     _to_langchain_messages,
 )
+from core.pivony_platform import fetch_dashboards
 from core.config import (
     AGENT_MAX_TOOL_ITERATIONS,
     DEFAULT_SECTOR,
@@ -228,6 +231,13 @@ def stream_advisor_agent(
     limit = max_iterations or AGENT_MAX_TOOL_ITERATIONS
     final_text = ""
 
+    if _should_prefetch_dashboard_picker(page_context, turns) and user_id:
+        prefetch = fetch_dashboards(user_id)
+        if isinstance(prefetch, dict):
+            picker = _build_dashboard_picker(prefetch, default_dash, tool_name=None)
+            if picker:
+                yield {"type": "dashboard_picker", "picker": picker}
+
     for step in range(limit):
         turn_gen = _stream_model_turn(
             client=genai_client,
@@ -296,8 +306,10 @@ def stream_advisor_agent(
                 except Exception as exc:
                     logger.warning("Tool %s failed: %s", name, exc)
                     result = f"Araç hatası ({name}): {exc}"
-            if picker is None:
-                picker = _extract_dashboard_picker(name, result, default_dash)
+            built = _extract_dashboard_picker(name, result, default_dash)
+            if built:
+                picker = built
+                yield {"type": "dashboard_picker", "picker": picker}
             contents.append(
                 types.Content(
                     role="user",

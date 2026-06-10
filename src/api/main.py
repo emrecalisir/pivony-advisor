@@ -310,6 +310,13 @@ async def _stream_chat_events(
             answer = str(event.get("content") or "")
             dashboard_picker = event.get("dashboard_picker")
             continue
+        if event.get("type") == "dashboard_picker":
+            picker_payload = event.get("picker")
+            if isinstance(picker_payload, dict):
+                dashboard_picker = picker_payload
+            yield _sse_payload(event)
+            await asyncio.sleep(0)
+            continue
         yield _sse_payload(event)
         await asyncio.sleep(0)
 

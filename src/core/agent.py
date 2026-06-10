@@ -805,34 +805,115 @@ def _finalize_agent_reply(text: str) -> str:
     return cleaned if cleaned else EMPTY_AGENT_REPLY
 
 
+def _build_dashboard_picker(
+    data: dict,
+    default_dashboard_id: int | None,
+    *,
+    tool_name: str | None = None,
+) -> dict | None:
+    """Build UI picker artifact from list_dashboards / worker payload."""
+    if tool_name == "list_dashboards" or data.get("need_dashboard_selection"):
+        pass
+    elif tool_name is not None:
+        return None
+    raw = data.get("dashboards")
+    if not isinstance(raw, list):
+        return None
+    items = []
+    for d in raw:
+        if not isinstance(d, dict) or d.get("id") is None:
+            continue
+        entry = {"id": d.get("id"), "name": d.get("name")}
+        if d.get("group_id") is not None:
+            entry["group_id"] = d.get("group_id")
+        items.append(entry)
+    if not items:
+        return None
+    groups = []
+    raw_groups = data.get("groups")
+    if isinstance(raw_groups, list):
+        for g in raw_groups:
+            if isinstance(g, dict) and g.get("id") is not None:
+                groups.append(
+                    {
+                        "id": g.get("id"),
+                        "name": g.get("name"),
+                        "color": g.get("color"),
+                    }
+                )
+    return {
+        "dashboards": items,
+        "groups": groups,
+        "default_dashboard_id": default_dashboard_id,
+    }
+
+
+def _should_prefetch_dashboard_picker(
+    page_context: dict | None,
+    turns: list[tuple[str, str]],
+) -> bool:
+    """Data question without an established dashboard — show picker proactively."""
+    if isinstance(page_context, dict) and page_context.get("dashboard_id"):
+        return False
+    last_user = ""
+    for role, content in reversed(turns):
+        if role == "user":
+            last_user = (content or "").strip()
+            break
+    if not last_user:
+        return False
+    q = last_user.lower()
+    analytics_kw = (
+        "nps",
+        "rating",
+        "puan",
+        "şikayet",
+        "sikayet",
+        "yorum",
+        "duyarlılık",
+        "duyarlilik",
+        "trend",
+        "dashboard",
+        "otel",
+        "konu",
+        "segment",
+        "memnuniyet",
+        "sentiment",
+        "review",
+    )
+    if any(kw in q for kw in analytics_kw):
+        return True
+    greeting_markers = (
+        "merhaba",
+        "naber",
+        "selam",
+        "hey",
+        "hi",
+        "hello",
+        "günaydın",
+        "gunaydin",
+        "iyi günler",
+        "teşekkür",
+        "tesekkur",
+    )
+    if any(m in q for m in greeting_markers) and len(q.split()) <= 5:
+        return False
+    return len(q.split()) >= 3
+
+
 def _extract_dashboard_picker(
     tool_name: str,
     result: Any,
     default_dashboard_id: int | None,
 ) -> dict | None:
-    """If a tool result implies the user must pick a dashboard, build a UI
-    picker artifact ({dashboards:[{id,name}], default_dashboard_id}). Triggered
-    by `list_dashboards` or any tool returning `need_dashboard_selection`."""
+    """If a tool result implies the user must pick a dashboard, build a UI picker."""
     try:
         data = json.loads(result) if isinstance(result, str) else result
     except (ValueError, TypeError):
         return None
     if not isinstance(data, dict):
         return None
-    show = tool_name == "list_dashboards" or bool(data.get("need_dashboard_selection"))
-    if not show:
-        return None
-    raw = data.get("dashboards")
-    if not isinstance(raw, list):
-        return None
-    items = [
-        {"id": d.get("id"), "name": d.get("name")}
-        for d in raw
-        if isinstance(d, dict) and d.get("id") is not None
-    ]
-    if not items:
-        return None
-    return {"dashboards": items, "default_dashboard_id": default_dashboard_id}
+    return _build_dashboard_picker(data, default_dashboard_id, tool_name=tool_name)
 
 
 def run_advisor_agent(
@@ -878,6 +959,11 @@ def run_advisor_agent(
         page_context.get("dashboard_id") if isinstance(page_context, dict) else None
     )
     picker: dict | None = None
+
+    if _should_prefetch_dashboard_picker(page_context, turns) and user_id:
+        prefetch = fetch_dashboards(user_id)
+        if isinstance(prefetch, dict):
+            picker = _build_dashboard_picker(prefetch, default_dash, tool_name=None)
 
     limit = max_iterations or AGENT_MAX_TOOL_ITERATIONS
     for step in range(limit):
