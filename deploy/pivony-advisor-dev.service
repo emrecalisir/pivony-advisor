@@ -1,0 +1,18 @@
+[Unit]
+Description=Pivony Advisor RAG API (development)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/pivony-advisor-dev
+Environment=PYTHONPATH=/home/ubuntu/pivony-advisor-dev/src
+Environment=QDRANT_HOST=127.0.0.1
+Environment=QDRANT_PORT=6333
+# Dev instance — must NOT share prod port 8011.
+ExecStart=/home/ubuntu/pivony-advisor-dev/venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8012
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

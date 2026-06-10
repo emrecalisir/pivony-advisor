@@ -25,9 +25,36 @@ Log files are gitignored; the `logs/` directory is created automatically on star
 
 ## VM deploy
 
+### Production (`master`, port **8011**)
+
 ```bash
 cd ~/pivony-advisor
 git pull origin master
 source venv/bin/activate
+sudo cp deploy/pivony-advisor.service /etc/systemd/system/
+sudo systemctl daemon-reload
 sudo systemctl restart pivony-advisor.service
+```
+
+### Development (`development`, port **8012**)
+
+Runs from a separate clone so it can restart without touching prod. Point the **dev API**
+`PIVONY_MODELS_BASE_URL` at `http://127.0.0.1:8012` (not 8011).
+
+```bash
+cd ~/pivony-advisor-dev
+git pull origin development
+source venv/bin/activate
+sudo cp deploy/pivony-advisor-dev.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable pivony-advisor-dev.service
+sudo systemctl restart pivony-advisor-dev.service
+```
+
+Check:
+
+```bash
+curl -s http://127.0.0.1:8011/v1/models | head
+curl -s http://127.0.0.1:8012/v1/models | head
+sudo ss -tlnp | grep -E '8011|8012'
 ```
