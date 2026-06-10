@@ -29,6 +29,7 @@ from core.config import (
 )
 from core.conversation import extract_turns, prepare_conversational_input
 from core.contextual_navigation import generate_contextual_navigation
+from core.loading_hints import generate_loading_hints
 from core.logging_config import get_advisor_logger, log_conversation, setup_logging
 from core.rag import (
     build_embeddings,
@@ -342,6 +343,27 @@ async def chat_completions(
     except Exception as exc:
         logger.exception("Chat completion failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"Chat completion failed: {exc}") from exc
+
+
+@app.get("/v1/advisor/loading-hints")
+async def loading_hints(
+    lang: str = "tr",
+    count: int = 3,
+    sector: str | None = None,
+) -> dict:
+    """Short CX quotes for the UI loading state (LLM-generated, not static copy)."""
+    try:
+        _, _, llm = _components()
+        quotes = generate_loading_hints(
+            lang=lang,
+            sector_slug=sector or DEFAULT_SECTOR,
+            count=count,
+            llm=llm,
+        )
+        return {"quotes": quotes}
+    except Exception as exc:
+        logger.warning("loading-hints failed: %s", exc)
+        return {"quotes": []}
 
 
 @app.get("/health", response_model=HealthResponse)
