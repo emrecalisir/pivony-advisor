@@ -45,10 +45,23 @@ Runs from a separate clone so it can restart without touching prod. Point the **
 cd ~/pivony-advisor-dev
 git pull origin development
 source venv/bin/activate
+chmod +x scripts/start_advisor.sh
+sudo bash scripts/install-advisor-dev-service.sh
+```
+
+Or manually:
+
+```bash
 sudo cp deploy/pivony-advisor-dev.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable pivony-advisor-dev.service
 sudo systemctl restart pivony-advisor-dev.service
+```
+
+**If it still tries port 8011**, the old unit is still installed — check:
+
+```bash
+grep -E 'ADVISOR_PORT|ExecStart|8011' /etc/systemd/system/pivony-advisor-dev.service
+# Must show ADVISOR_PORT=8012 and start_advisor.sh (not --port 8011)
 ```
 
 Check:

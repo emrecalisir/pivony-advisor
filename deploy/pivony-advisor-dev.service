@@ -9,8 +9,8 @@ WorkingDirectory=/home/ubuntu/pivony-advisor-dev
 Environment=PYTHONPATH=/home/ubuntu/pivony-advisor-dev/src
 Environment=QDRANT_HOST=127.0.0.1
 Environment=QDRANT_PORT=6333
-# Dev instance — must NOT share prod port 8011.
-ExecStart=/home/ubuntu/pivony-advisor-dev/venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8012
+Environment=ADVISOR_PORT=8012
+ExecStart=/home/ubuntu/pivony-advisor-dev/scripts/start_advisor.sh
 Restart=on-failure
 RestartSec=5
 
