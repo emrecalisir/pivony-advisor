@@ -865,6 +865,28 @@ def _should_prefetch_dashboard_picker(
     if not last_user:
         return False
     q = last_user.lower()
+    non_data_markers = (
+        "iletil",
+        "ilete",
+        "gelmedi",
+        "gelmed",
+        "tekrar ilet",
+        "ekip",
+        "upgrade",
+        "plan yükselt",
+        "plan yukselt",
+        "fiyat",
+        "iletişim",
+        "iletisim",
+        "destek",
+        "support",
+        "hello@",
+        "ulaş",
+        "ulas",
+        "ulaşam",
+    )
+    if any(m in q for m in non_data_markers):
+        return False
     analytics_kw = (
         "nps",
         "rating",
@@ -876,31 +898,23 @@ def _should_prefetch_dashboard_picker(
         "duyarlilik",
         "trend",
         "dashboard",
+        "gösterge",
+        "gosterge",
         "otel",
         "konu",
         "segment",
         "memnuniyet",
         "sentiment",
         "review",
+        "kaç",
+        "hacim",
+        "analiz",
+        "metrik",
+        "kpi",
+        "skor",
+        "score",
     )
-    if any(kw in q for kw in analytics_kw):
-        return True
-    greeting_markers = (
-        "merhaba",
-        "naber",
-        "selam",
-        "hey",
-        "hi",
-        "hello",
-        "günaydın",
-        "gunaydin",
-        "iyi günler",
-        "teşekkür",
-        "tesekkur",
-    )
-    if any(m in q for m in greeting_markers) and len(q.split()) <= 5:
-        return False
-    return len(q.split()) >= 3
+    return any(kw in q for kw in analytics_kw)
 
 
 def _extract_dashboard_picker(
