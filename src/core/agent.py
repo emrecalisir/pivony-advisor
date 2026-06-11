@@ -850,73 +850,6 @@ def _build_dashboard_picker(
     }
 
 
-def _should_prefetch_dashboard_picker(
-    page_context: dict | None,
-    turns: list[tuple[str, str]],
-) -> bool:
-    """Data question without an established dashboard — show picker proactively."""
-    if isinstance(page_context, dict) and page_context.get("dashboard_id"):
-        return False
-    last_user = ""
-    for role, content in reversed(turns):
-        if role == "user":
-            last_user = (content or "").strip()
-            break
-    if not last_user:
-        return False
-    q = last_user.lower()
-    non_data_markers = (
-        "iletil",
-        "ilete",
-        "gelmedi",
-        "gelmed",
-        "tekrar ilet",
-        "ekip",
-        "upgrade",
-        "plan yükselt",
-        "plan yukselt",
-        "fiyat",
-        "iletişim",
-        "iletisim",
-        "destek",
-        "support",
-        "hello@",
-        "ulaş",
-        "ulas",
-        "ulaşam",
-    )
-    if any(m in q for m in non_data_markers):
-        return False
-    analytics_kw = (
-        "nps",
-        "rating",
-        "puan",
-        "şikayet",
-        "sikayet",
-        "yorum",
-        "duyarlılık",
-        "duyarlilik",
-        "trend",
-        "dashboard",
-        "gösterge",
-        "gosterge",
-        "otel",
-        "konu",
-        "segment",
-        "memnuniyet",
-        "sentiment",
-        "review",
-        "kaç",
-        "hacim",
-        "analiz",
-        "metrik",
-        "kpi",
-        "skor",
-        "score",
-    )
-    return any(kw in q for kw in analytics_kw)
-
-
 def _extract_dashboard_picker(
     tool_name: str,
     result: Any,
@@ -975,11 +908,6 @@ def run_advisor_agent(
         page_context.get("dashboard_id") if isinstance(page_context, dict) else None
     )
     picker: dict | None = None
-
-    if _should_prefetch_dashboard_picker(page_context, turns) and user_id:
-        prefetch = fetch_dashboards(user_id)
-        if isinstance(prefetch, dict):
-            picker = _build_dashboard_picker(prefetch, default_dash, tool_name=None)
 
     limit = max_iterations or AGENT_MAX_TOOL_ITERATIONS
     for step in range(limit):
