@@ -185,6 +185,7 @@ def fetch_reviews(
     user_id: Optional[str],
     dashboard_id: int,
     topic_id: Optional[int] = None,
+    topic: Optional[str] = None,
     sentiment: Optional[str] = None,
     pivot_key: Optional[str] = None,
     pivot_value: Optional[str] = None,
@@ -201,6 +202,8 @@ def fetch_reviews(
     payload: dict[str, Any] = {"user_id": user_id, "dashboard_id": dashboard_id}
     if topic_id is not None:
         payload["topic_id"] = topic_id
+    if topic and str(topic).strip():
+        payload["topic"] = str(topic).strip()
     if sentiment and str(sentiment).strip():
         payload["sentiment"] = str(sentiment).strip().lower()
     if pivot_key and str(pivot_key).strip():

@@ -88,6 +88,13 @@ class ListReviewsArgs(BaseModel):
         default=None,
         description="Topic id from get_pivony_metrics complaint_topics to scope to.",
     )
+    topic: str | None = Field(
+        default=None,
+        description=(
+            "Topic name to scope reviews to (e.g. 'Acente') when topic_id is unknown — "
+            "resolved server-side on the locked dashboard."
+        ),
+    )
     sentiment: str | None = Field(
         default=None,
         description="Filter by sentiment: 'negative', 'neutral', or 'positive'.",
@@ -329,6 +336,7 @@ def _build_tools(
     def _list_reviews(
         dashboard_id: int,
         topic_id: int | None = None,
+        topic: str | None = None,
         sentiment: str | None = None,
         pivot_key: str | None = None,
         pivot_value: str | None = None,
@@ -344,6 +352,7 @@ def _build_tools(
             user_id,
             dashboard_id=resolved,
             topic_id=topic_id,
+            topic=topic,
             sentiment=sentiment,
             pivot_key=pivot_key,
             pivot_value=pivot_value,
@@ -705,10 +714,10 @@ def _build_tools(
         func=_list_reviews,
         name="list_reviews",
         description=(
-            "List a few example review texts for a dashboard, scoped by topic_id, "
-            "sentiment ('negative' for complaints), and optional pivot. Use to show "
-            "real customer voice examples behind a topic. Returns at most a handful "
-            "of reviews (freemium cap)."
+            "List a few example review texts for a dashboard, scoped by topic_id or "
+            "topic name, sentiment ('negative' for complaints), and optional pivot. "
+            "Use to show real customer voice examples behind a topic. Returns at most "
+            "a handful of reviews (freemium cap)."
         ),
         args_schema=ListReviewsArgs,
     )

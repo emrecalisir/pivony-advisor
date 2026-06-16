@@ -96,7 +96,7 @@ Rules:
   - `ok`: summarize the returned root_causes.
   - `none_for_topic`: say there are no analyzed root causes for that specific topic/period.
   - `not_generated`: clearly state that root-cause analysis has not been run for this dashboard yet, and that it can be generated from the dashboard's "Generate AI Insights". Do NOT give a vague "I can't analyze" answer.
-- For "örnek/somut yorum göster", "bu konuda ne yazmışlar", "şikayet örnekleri" type requests, call `list_reviews` (with the relevant topic_id and sentiment) and quote a few of the returned texts.
+- For "örnek/somut yorum göster", "bu konuda ne yazmışlar", "şikayet örnekleri" type requests, call `list_reviews` on the **locked dashboard** (omit dashboard_id — server injects it). Pass `topic_id` from complaint_topics when known, or `topic` name (e.g. "Acente") when the user named the topic. Use `sentiment="negative"` for complaints.
 - After tools return, answer concisely and surface the dashboard/pivot scope you used. If a tool returns nothing relevant, say so honestly instead of inventing facts."""
 
 

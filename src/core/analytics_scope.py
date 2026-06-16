@@ -91,7 +91,7 @@ def infer_established_analytics_scope(
     substantive assistant answer (org-wide fallback).
     """
     from_context = _scope_from_page_context(page_context)
-    if from_context and (from_context.dashboard_id is not None or from_context.org_wide):
+    if from_context and from_context.dashboard_id is not None:
         return from_context
 
     if not turns:
