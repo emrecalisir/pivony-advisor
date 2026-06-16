@@ -22,7 +22,11 @@ from core.agent import (
     _to_langchain_messages,
 )
 from core.agent_state import hard_context_prompt_block, resolve_hard_agent_state
-from core.llm_resilience import PROCESSING_USER_MESSAGE, collect_stream_turn
+from core.llm_resilience import (
+    LlmTurnFailed,
+    PROCESSING_USER_MESSAGE,
+    collect_stream_turn,
+)
 from core.tool_routing import (
     blocked_tool_result,
     filter_tools_for_state,
@@ -251,6 +255,40 @@ def stream_advisor_agent(
     limit = max_iterations or AGENT_MAX_TOOL_ITERATIONS
     final_text = ""
 
+    try:
+        yield from _run_agent_stream_loop(
+            genai_client=genai_client,
+            base_config=base_config,
+            contents=contents,
+            tool_map=tool_map,
+            _hard=_hard,
+            default_dash=default_dash,
+            user_id=user_id,
+            limit=limit,
+            picker=picker,
+            tools_called=tools_called,
+            final_text=final_text,
+        )
+    except LlmTurnFailed as exc:
+        logger.warning("Agent stream aborted: %s", exc.user_message)
+        yield {"type": "content", "delta": exc.user_message}
+        yield {"type": "done", "content": exc.user_message, "dashboard_picker": None}
+
+
+def _run_agent_stream_loop(
+    *,
+    genai_client: genai.Client,
+    base_config: types.GenerateContentConfig,
+    contents: list[types.Content],
+    tool_map: dict[str, Any],
+    _hard: Any,
+    default_dash: int | None,
+    user_id: str | None,
+    limit: int,
+    picker: dict | None,
+    tools_called: set[str],
+    final_text: str,
+) -> Iterator[dict[str, Any]]:
     for step in range(limit):
         events, model_content, function_calls = collect_stream_turn(
             lambda: _stream_model_turn(
@@ -391,19 +429,23 @@ def stream_simple_completion(
         temperature=LLM_TEMPERATURE,
     )
 
-    turn_gen = _stream_model_turn(
-        client=genai_client,
-        model=LLM_MODEL,
-        contents=contents,
-        config=config,
-        emit_content=True,
-    )
-    while True:
-        try:
-            yield next(turn_gen)
-        except StopIteration as stop:
-            model_content, _ = stop.value
-            break
+    try:
+        turn_events, model_content, _ = collect_stream_turn(
+            lambda: _stream_model_turn(
+                client=genai_client,
+                model=LLM_MODEL,
+                contents=contents,
+                config=config,
+                emit_content=True,
+            )
+        )
+    except LlmTurnFailed as exc:
+        yield {"type": "content", "delta": exc.user_message}
+        yield {"type": "done", "content": exc.user_message, "dashboard_picker": None}
+        return
+
+    for event in turn_events:
+        yield event
 
     final_text = "".join(p.text for p in model_content.parts if p.text).strip()
     answer = _finalize_agent_reply(final_text or EMPTY_AGENT_REPLY)
