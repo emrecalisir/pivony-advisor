@@ -36,6 +36,7 @@ hard_context_prompt_block = _agent_state.hard_context_prompt_block
 HardAgentState = _agent_state.HardAgentState
 should_expose_list_dashboards = _tool_routing.should_expose_list_dashboards
 sanitize_tool_calls = _tool_routing.sanitize_tool_calls
+pin_tool_args_for_state = _tool_routing.pin_tool_args_for_state
 
 
 def test_locked_dashboard_from_page_context():
@@ -46,6 +47,25 @@ def test_locked_dashboard_from_page_context():
     assert state.dashboard_id == 6208
     assert state.dashboard_locked is True
     assert should_expose_list_dashboards(state) is False
+
+
+def test_selected_days_range_maps_to_hard_state_days():
+    state = resolve_hard_agent_state(
+        [("user", "NPS trendi")],
+        {"selectedDaysRange": 7, "since": "2026-06-09", "until": "2026-06-16"},
+    )
+    assert state.days == 7
+    assert state.since == "2026-06-09"
+
+
+def test_dashboard_selection_from_picker():
+    state = resolve_hard_agent_state(
+        [("user", "NPS trendi")],
+        {"dashboard_selection": {"id": 6208, "name": "SURVEY"}},
+    )
+    assert state.dashboard_id == 6208
+    assert state.dashboard_locked is True
+    assert state.source == "dashboard_selection"
 
 
 def test_analytics_scope_dashboard_is_locked():
@@ -69,3 +89,27 @@ def test_sanitize_drops_list_dashboards_when_scope_set():
     sanitized = sanitize_tool_calls(calls, state)
     assert len(sanitized) == 1
     assert sanitized[0]["name"] == "get_pivony_metrics"
+
+
+def test_pin_tool_args_strips_model_guessed_dashboard_id():
+    state = HardAgentState(source="none")
+    args = pin_tool_args_for_state(
+        "get_trends",
+        {"dashboard_id": 6208, "days": 7},
+        state,
+    )
+    assert "dashboard_id" not in args
+
+
+def test_pin_tool_args_injects_user_selected_dashboard_id():
+    state = HardAgentState(
+        dashboard_id=6208,
+        dashboard_locked=True,
+        source="dashboard_selection",
+    )
+    args = pin_tool_args_for_state(
+        "get_trends",
+        {"dashboard_id": 9999, "days": 7},
+        state,
+    )
+    assert args["dashboard_id"] == 6208

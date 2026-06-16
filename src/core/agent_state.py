@@ -71,12 +71,16 @@ def resolve_hard_agent_state(
 
     Priority:
       1. page_context.dashboard_id (UI pin — locked)
-      2. page_context.dashboard_selection / default_dashboard_id
+      2. page_context.dashboard_selection (picker / explicit user choice)
       3. page_context.analytics_scope
-      4. inferred established scope from prior turns
+      4. inferred established scope from prior turns (dates/org-wide only;
+         dashboard_id never inferred from model output)
     """
     pc = page_context if isinstance(page_context, dict) else {}
     since_pc, until_pc = _dates_from_page(pc)
+    days_pc = _int_or_none(pc.get("days"))
+    if days_pc is None:
+        days_pc = _int_or_none(pc.get("selectedDaysRange"))
 
     raw_scope = pc.get("analytics_scope")
     if isinstance(raw_scope, dict):
@@ -89,7 +93,7 @@ def resolve_hard_agent_state(
                 dashboard_id=scope_dash,
                 since=str(scope_since).strip() if scope_since else since_pc,
                 until=str(scope_until).strip() if scope_until else until_pc,
-                days=scope_days,
+                days=scope_days if scope_days is not None else days_pc,
                 dashboard_locked=True,
                 source="analytics_scope",
             )
@@ -108,6 +112,7 @@ def resolve_hard_agent_state(
             dashboard_id=locked_dash,
             since=since_pc,
             until=until_pc,
+            days=days_pc,
             dashboard_locked=True,
             source="page_dashboard_id",
         )
@@ -120,19 +125,10 @@ def resolve_hard_agent_state(
                 dashboard_id=sel_id,
                 since=since_pc,
                 until=until_pc,
+                days=days_pc,
                 dashboard_locked=True,
                 source="dashboard_selection",
             )
-
-    default_dash = _int_or_none(pc.get("default_dashboard_id"))
-    if default_dash is not None:
-        return HardAgentState(
-            dashboard_id=default_dash,
-            since=since_pc,
-            until=until_pc,
-            dashboard_locked=True,
-            source="default_dashboard_id",
-        )
 
     established = infer_established_analytics_scope(turns, page_context)
     if established is not None:
@@ -146,7 +142,7 @@ def resolve_hard_agent_state(
             source="established",
         )
 
-    return HardAgentState(since=since_pc, until=until_pc, source="none")
+    return HardAgentState(since=since_pc, until=until_pc, days=days_pc, source="none")
 
 
 def hard_context_prompt_block(state: HardAgentState) -> str:
@@ -164,7 +160,7 @@ def hard_context_prompt_block(state: HardAgentState) -> str:
         parts.append(
             "Do NOT call list_dashboards. Do NOT ask the user to pick a dashboard again. "
             "Proceed directly with get_pivony_metrics and other analysis tools "
-            "(dashboard_id is injected server-side)."
+            "(dashboard_id is injected server-side from the user's selection)."
         )
         return " ".join(parts)
     if base:

@@ -16,6 +16,22 @@ logger = logging.getLogger(__name__)
 LIST_DASHBOARDS = "list_dashboards"
 METRICS = "get_pivony_metrics"
 _DASHBOARD_LISTING_TOOLS = frozenset({LIST_DASHBOARDS})
+_DASHBOARD_ARG_TOOLS = frozenset(
+    {
+        METRICS,
+        "get_dashboard_pivots",
+        "get_trends",
+        "compare_pivot_ratings",
+        "get_topic_trends",
+        "get_hotterms",
+        "get_decision_distribution",
+        "get_distribution",
+        "get_topic_ratings",
+        "get_emergent_topics",
+        "get_root_causes",
+        "list_reviews",
+    }
+)
 
 
 def should_expose_list_dashboards(state: HardAgentState) -> bool:
@@ -98,9 +114,36 @@ def sanitize_function_calls(
     return []
 
 
-def validated_tool_invoke(tool: StructuredTool, raw_args: dict[str, Any]) -> str:
+def pin_tool_args_for_state(
+    tool_name: str,
+    args: dict[str, Any],
+    state: HardAgentState,
+) -> dict[str, Any]:
+    """
+    Authoritative dashboard scope: inject the user-selected id, or strip any
+    dashboard_id the model guessed from list_dashboards output.
+    """
+    if tool_name not in _DASHBOARD_ARG_TOOLS:
+        return dict(args or {})
+    out = dict(args or {})
+    if state.has_dashboard and state.dashboard_id is not None:
+        out["dashboard_id"] = state.dashboard_id
+    else:
+        out.pop("dashboard_id", None)
+        if tool_name == METRICS and not state.org_wide:
+            out.pop("org_wide", None)
+    return out
+
+
+def validated_tool_invoke(
+    tool: StructuredTool,
+    raw_args: dict[str, Any],
+    state: HardAgentState | None = None,
+) -> str:
     """Validate tool args with Pydantic before invoke; return JSON error on bad schema."""
     args = dict(raw_args or {})
+    if state is not None:
+        args = pin_tool_args_for_state(tool.name, args, state)
     schema = getattr(tool, "args_schema", None)
     if schema is not None:
         try:

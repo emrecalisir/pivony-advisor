@@ -33,6 +33,7 @@ from core.tool_routing import (
     validated_tool_invoke,
 )
 from core.compute import compare_pivot_ratings
+from core.metrics_normalize import normalize_metrics_response
 from core.pivony_platform import (
     fetch_dashboards,
     fetch_decisions,
@@ -247,27 +248,59 @@ def _build_tools(
 ) -> list[StructuredTool]:
     slug = sector_slugify(sector_slug or DEFAULT_SECTOR)
     _hard = hard_state or resolve_hard_agent_state(turns or [], page_context)
-    _established: EstablishedAnalyticsScope | None = _hard.as_established()
 
     # Page scope (dashboard + date window the user is actually looking at). Used
     # as a deterministic default so we don't depend on the LLM copying dates out
     # of the prose context block.
     _pc = page_context if isinstance(page_context, dict) else {}
-    _pc_dash = _hard.dashboard_id if _hard.has_dashboard else _pc.get("dashboard_id")
     _pc_since = _hard.since or _pc.get("since") or None
     _pc_until = _hard.until or _pc.get("until") or None
+    _pc_days = _hard.days or _pc.get("days") or _pc.get("selectedDaysRange")
 
-    def _resolve_dash_id(dashboard_id: int | None) -> int | None:
+    def _authorized_dashboard_id(dashboard_id: int | None = None) -> int | None:
+        """Only use a dashboard id when scope is locked server-side — never trust
+        the model to pick one from list_dashboards output."""
         if _hard.dashboard_id is not None:
             return _hard.dashboard_id
-        return dashboard_id
+        return None
+
+    def _dashboard_selection_required() -> str:
+        dash = fetch_dashboards(user_id)
+        options = dash.get("dashboards") if isinstance(dash, dict) else None
+        return json.dumps(
+            {
+                "need_dashboard_selection": True,
+                "dashboards": options or [],
+                "instruction": (
+                    "Kullanıcı henüz bir dashboard seçmedi. list_dashboards "
+                    "çıktısından dashboard_id tahmin ETME — yalnızca kullanıcının "
+                    "picker'dan seçtiği dashboard geçerlidir."
+                ),
+            },
+            ensure_ascii=False,
+        )
+
+    def _require_locked_dashboard(_llm_dashboard_id: int | None = None) -> int | str:
+        authorized = _authorized_dashboard_id(_llm_dashboard_id)
+        if authorized is not None:
+            return authorized
+        return _dashboard_selection_required()
 
     def _eff_dates(since: str | None, until: str | None, days: int | None):
         """Explicit dates/days from the tool call win; otherwise inherit the
         page's exact since/until so answers match what the user sees."""
-        if since or until or days:
-            return since, until
-        return _pc_since, _pc_until
+        if since or until:
+            return since, until, days
+        if days:
+            return since, until, days
+        if _pc_since or _pc_until:
+            return _pc_since, _pc_until, days
+        if _pc_days:
+            try:
+                return since, until, int(_pc_days)
+            except (TypeError, ValueError):
+                pass
+        return _pc_since, _pc_until, days
 
     def _search(query: str) -> str:
         return search_reviews(query, slug, embeddings=embeddings, client=client)
@@ -282,8 +315,10 @@ def _build_tools(
         return json.dumps(data, ensure_ascii=False)
 
     def _dashboard_pivots(dashboard_id: int) -> str:
-        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
-        data = fetch_pivots(user_id, dashboard_id)
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
+        data = fetch_pivots(user_id, resolved)
         if data is None:
             return json.dumps(
                 {"error": "Pivot servisi şu anda kullanılamıyor."},
@@ -301,11 +336,13 @@ def _build_tools(
         since: str | None = None,
         until: str | None = None,
     ) -> str:
-        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
-        since, until = _eff_dates(since, until, days)
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
+        since, until, days = _eff_dates(since, until, days)
         data = fetch_reviews(
             user_id,
-            dashboard_id=dashboard_id,
+            dashboard_id=resolved,
             topic_id=topic_id,
             sentiment=sentiment,
             pivot_key=pivot_key,
@@ -338,10 +375,12 @@ def _build_tools(
         since: str | None = None,
         until: str | None = None,
     ) -> str:
-        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
-        since, until = _eff_dates(since, until, days)
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
+        since, until, days = _eff_dates(since, until, days)
         data = fetch_trends(
-            user_id, dashboard_id=dashboard_id,
+            user_id, dashboard_id=resolved,
             pivot_key=pivot_key, pivot_value=pivot_value, days=days,
             since=since, until=until,
         )
@@ -359,7 +398,9 @@ def _build_tools(
         until: str | None = None,
         limit: int | None = None,
     ) -> str:
-        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
         if advisor_mode == MODE_ADVISOR:
             return json.dumps(
                 industry_expert_gate(
@@ -371,10 +412,10 @@ def _build_tools(
                 ),
                 ensure_ascii=False,
             )
-        since, until = _eff_dates(since, until, days)
+        since, until, days = _eff_dates(since, until, days)
         data = compare_pivot_ratings(
             user_id,
-            dashboard_id,
+            resolved,
             pivot_key,
             days=days,
             since=since,
@@ -391,10 +432,12 @@ def _build_tools(
         since: str | None = None,
         until: str | None = None,
     ) -> str:
-        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
-        since, until = _eff_dates(since, until, days)
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
+        since, until, days = _eff_dates(since, until, days)
         data = fetch_topic_trends(
-            user_id, dashboard_id=dashboard_id,
+            user_id, dashboard_id=resolved,
             pivot_key=pivot_key, pivot_value=pivot_value, days=days,
             since=since, until=until,
         )
@@ -414,10 +457,12 @@ def _build_tools(
         days: int | None = None,
         limit: int | None = None,
     ) -> str:
-        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
-        since, until = _eff_dates(since, until, days)
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
+        since, until, days = _eff_dates(since, until, days)
         data = fetch_hotterms(
-            user_id, dashboard_id=dashboard_id,
+            user_id, dashboard_id=resolved,
             pivot_key=pivot_key, pivot_value=pivot_value, days=days,
             since=since, until=until, limit=limit,
         )
@@ -435,10 +480,12 @@ def _build_tools(
         since: str | None = None,
         until: str | None = None,
     ) -> str:
-        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
-        since, until = _eff_dates(since, until, days)
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
+        since, until, days = _eff_dates(since, until, days)
         data = fetch_decisions(
-            user_id, dashboard_id=dashboard_id,
+            user_id, dashboard_id=resolved,
             pivot_key=pivot_key, pivot_value=pivot_value, days=days,
             since=since, until=until,
         )
@@ -459,10 +506,12 @@ def _build_tools(
         since: str | None = None,
         until: str | None = None,
     ) -> str:
-        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
-        since, until = _eff_dates(since, until, days)
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
+        since, until, days = _eff_dates(since, until, days)
         data = fetch_distribution(
-            user_id, dashboard_id=dashboard_id, kind=kind, pivot_column=pivot_column,
+            user_id, dashboard_id=resolved, kind=kind, pivot_column=pivot_column,
             pivot_key=pivot_key, pivot_value=pivot_value, days=days,
             since=since, until=until,
         )
@@ -481,10 +530,12 @@ def _build_tools(
         since: str | None = None,
         until: str | None = None,
     ) -> str:
-        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
-        since, until = _eff_dates(since, until, days)
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
+        since, until, days = _eff_dates(since, until, days)
         data = fetch_topic_ratings(
-            user_id, dashboard_id=dashboard_id,
+            user_id, dashboard_id=resolved,
             pivot_key=pivot_key, pivot_value=pivot_value, days=days,
             since=since, until=until,
         )
@@ -503,10 +554,12 @@ def _build_tools(
         since: str | None = None,
         until: str | None = None,
     ) -> str:
-        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
-        since, until = _eff_dates(since, until, days)
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
+        since, until, days = _eff_dates(since, until, days)
         data = fetch_emergent_topics(
-            user_id, dashboard_id=dashboard_id,
+            user_id, dashboard_id=resolved,
             pivot_key=pivot_key, pivot_value=pivot_value, days=days,
             since=since, until=until,
         )
@@ -524,10 +577,12 @@ def _build_tools(
         pivot_key: str | None = None,
         pivot_value: str | None = None,
     ) -> str:
-        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
         data = fetch_root_causes(
             user_id,
-            dashboard_id=dashboard_id,
+            dashboard_id=resolved,
             topic=topic,
             topic_id=topic_id,
             pivot_key=pivot_key,
@@ -551,38 +606,21 @@ def _build_tools(
     ) -> str:
         # Pin to the page's dashboard + date window when the model didn't specify
         # them, so the answer matches exactly what the user is looking at.
-        if _pc_dash is not None:
-            dashboard_id = _pc_dash
-        since, until = _eff_dates(since, until, days)
-        if dashboard_id is None and not org_wide and _established is not None:
-            if _established.dashboard_id is not None:
-                dashboard_id = _established.dashboard_id
-            elif _established.org_wide:
-                org_wide = True
-                if days is None and _established.days is not None:
-                    days = _established.days
-                if not since and _established.since:
-                    since = _established.since
-                if not until and _established.until:
-                    until = _established.until
-        # Guardrail: never silently aggregate across all dashboards. Force the
-        # agent to ask the user which dashboard unless an org-wide overview was
-        # explicitly requested.
+        dashboard_id = _authorized_dashboard_id(dashboard_id)
+        since, until, days = _eff_dates(since, until, days)
+        if dashboard_id is None and not org_wide and _hard.org_wide:
+            org_wide = True
+            if days is None and _hard.days is not None:
+                days = _hard.days
+            if not since and _hard.since:
+                since = _hard.since
+            if not until and _hard.until:
+                until = _hard.until
+        # Never honor model org_wide unless scope was explicitly established server-side.
+        if org_wide and not _hard.org_wide:
+            org_wide = False
         if dashboard_id is None and not org_wide:
-            dash = fetch_dashboards(user_id)
-            options = dash.get("dashboards") if isinstance(dash, dict) else None
-            return json.dumps(
-                {
-                    "need_dashboard_selection": True,
-                    "dashboards": options or [],
-                    "instruction": (
-                        "Bir dashboard seçilmedi. Kullanıcıya bu dashboard'lardan "
-                        "hangisini kastettiğini sor; cevabı almadan metrik döndürme. "
-                        "(Tüm organizasyon geneli isterse org_wide=true ile tekrar çağır.)"
-                    ),
-                },
-                ensure_ascii=False,
-            )
+            return _dashboard_selection_required()
         data = fetch_metrics(
             user_id,
             dashboard_id=dashboard_id,
@@ -599,7 +637,10 @@ def _build_tools(
             )
         if isinstance(data, dict) and data.get("error"):
             return json.dumps(data, ensure_ascii=False)
-        return json.dumps(data, ensure_ascii=False)
+        return json.dumps(
+            normalize_metrics_response(data),
+            ensure_ascii=False,
+        )
 
     search_tool = StructuredTool.from_function(
         func=_search,
@@ -1042,7 +1083,7 @@ def run_advisor_agent(
                 result = f"Bilinmeyen araç: {name}"
             else:
                 try:
-                    result = validated_tool_invoke(tool, args)
+                    result = validated_tool_invoke(tool, args, _hard)
                 except Exception as exc:  # tool failure should not crash the turn
                     logger.warning("Tool %s failed: %s", name, exc)
                     result = f"Araç hatası ({name}): {exc}"

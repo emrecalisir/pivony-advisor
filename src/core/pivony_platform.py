@@ -153,6 +153,9 @@ def fetch_metrics(
     return _post_worker(PIVONY_API_METRICS_URL, payload)
 
 
+from core.metrics_normalize import normalize_metrics_response
+
+
 def fetch_root_causes(
     user_id: Optional[str],
     dashboard_id: int,

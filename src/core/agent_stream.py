@@ -322,7 +322,7 @@ def stream_advisor_agent(
                 result = f"Bilinmeyen araç: {name}"
             else:
                 try:
-                    result = validated_tool_invoke(tool, args)
+                    result = validated_tool_invoke(tool, args, _hard)
                 except Exception as exc:
                     logger.warning("Tool %s failed: %s", name, exc)
                     result = f"Araç hatası ({name}): {exc}"

@@ -70,13 +70,6 @@ def _scope_from_page_context(page_context: dict | None) -> EstablishedAnalyticsS
         except (TypeError, ValueError):
             pass
 
-    default_dash = page_context.get("default_dashboard_id")
-    if default_dash is not None:
-        try:
-            return EstablishedAnalyticsScope(dashboard_id=int(default_dash))
-        except (TypeError, ValueError):
-            pass
-
     selection = page_context.get("dashboard_selection")
     if isinstance(selection, dict) and selection.get("id") is not None:
         try:
