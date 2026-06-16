@@ -21,6 +21,7 @@ from core.agent import (
     _resolve_dashboard_picker_fallback,
     _to_langchain_messages,
 )
+from core.analytics_scope import infer_established_analytics_scope, scope_prompt_block
 from core.config import (
     AGENT_MAX_TOOL_ITERATIONS,
     DEFAULT_SECTOR,
@@ -202,13 +203,18 @@ def stream_advisor_agent(
         advisor_mode=advisor_mode,
         user_id=user_id,
         page_context=page_context,
+        turns=turns,
     )
     tool_map = {tool.name: tool for tool in tools}
     genai_client = _get_genai_client()
 
+    _established = infer_established_analytics_scope(turns, page_context)
+    scope_hint = scope_prompt_block(_established)
     system_prompt = build_agent_system_prompt(
         slug, extra_system_prompt, advisor_mode=advisor_mode
     )
+    if scope_hint:
+        system_prompt = f"{system_prompt}\n\n{scope_hint}"
     lc_messages = _to_langchain_messages(system_prompt, turns)
     contents = _langchain_to_genai_contents(lc_messages[1:])
 
@@ -329,6 +335,7 @@ def stream_advisor_agent(
             default_dashboard_id=default_dash,
             assistant_text=final_text,
             tools_called=tools_called,
+            established_scope=_established,
         )
         if picker:
             yield {"type": "dashboard_picker", "picker": picker}

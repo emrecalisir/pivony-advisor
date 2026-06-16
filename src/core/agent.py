@@ -20,6 +20,11 @@ from pydantic import BaseModel, Field
 from qdrant_client import QdrantClient
 
 from core.config import AGENT_MAX_TOOL_ITERATIONS, DEFAULT_SECTOR, sector_slugify
+from core.analytics_scope import (
+    EstablishedAnalyticsScope,
+    infer_established_analytics_scope,
+    scope_prompt_block,
+)
 from core.compute import compare_pivot_ratings
 from core.pivony_platform import (
     fetch_dashboards,
@@ -230,8 +235,12 @@ def _build_tools(
     advisor_mode: str = DEFAULT_ADVISOR_MODE,
     user_id: str | None = None,
     page_context: dict | None = None,
+    turns: list[tuple[str, str]] | None = None,
 ) -> list[StructuredTool]:
     slug = sector_slugify(sector_slug or DEFAULT_SECTOR)
+    _established: EstablishedAnalyticsScope | None = infer_established_analytics_scope(
+        turns or [], page_context
+    )
 
     # Page scope (dashboard + date window the user is actually looking at). Used
     # as a deterministic default so we don't depend on the LLM copying dates out
@@ -553,6 +562,17 @@ def _build_tools(
         if _pc_dash is not None:
             dashboard_id = _pc_dash
         since, until = _eff_dates(since, until, days)
+        if dashboard_id is None and not org_wide and _established is not None:
+            if _established.dashboard_id is not None:
+                dashboard_id = _established.dashboard_id
+            elif _established.org_wide:
+                org_wide = True
+                if days is None and _established.days is not None:
+                    days = _established.days
+                if not since and _established.since:
+                    since = _established.since
+                if not until and _established.until:
+                    until = _established.until
         # Guardrail: never silently aggregate across all dashboards. Force the
         # agent to ask the user which dashboard unless an org-wide overview was
         # explicitly requested.
@@ -913,11 +933,16 @@ def _resolve_dashboard_picker_fallback(
     default_dashboard_id: int | None,
     assistant_text: str,
     tools_called: set[str],
+    established_scope: EstablishedAnalyticsScope | None = None,
 ) -> dict | None:
     """
     Attach picker when the model asks to choose a dashboard in prose without
     calling list_dashboards(), or when a metrics tool ran without a dashboard.
     """
+    if established_scope and (
+        established_scope.org_wide or established_scope.dashboard_id is not None
+    ):
+        return None
     if not user_id or default_dashboard_id is not None:
         return None
     if "list_dashboards" in tools_called:
@@ -968,11 +993,16 @@ def run_advisor_agent(
         advisor_mode=mode,
         user_id=user_id,
         page_context=page_context,
+        turns=turns,
     )
     tool_map = {tool.name: tool for tool in tools}
     llm_with_tools = llm.bind_tools(tools)
 
+    _established = infer_established_analytics_scope(turns, page_context)
+    scope_hint = scope_prompt_block(_established)
     system_prompt = build_agent_system_prompt(slug, extra_system_prompt, advisor_mode=mode)
+    if scope_hint:
+        system_prompt = f"{system_prompt}\n\n{scope_hint}"
     messages = _to_langchain_messages(system_prompt, turns)
 
     default_dash = (
@@ -994,6 +1024,7 @@ def run_advisor_agent(
                     default_dashboard_id=default_dash,
                     assistant_text=_message_text(ai_message),
                     tools_called=tools_called,
+                    established_scope=_established,
                 )
             return _finalize_agent_reply(_message_text(ai_message)), picker
 
@@ -1027,6 +1058,7 @@ def run_advisor_agent(
             default_dashboard_id=default_dash,
             assistant_text=final_text,
             tools_called=tools_called,
+            established_scope=_established,
         )
     return _finalize_agent_reply(final_text), picker
 

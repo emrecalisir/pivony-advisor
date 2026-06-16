@@ -109,6 +109,7 @@ Rules:
 - Phrase them as direct questions about the user's DATA, e.g. "Bu dönemde en çok şikayet edilen konular neler?" or "NPS son dönemde nasıl bir trend izliyor?".
 - If the user message is ONLY a greeting, thanks, or small talk (e.g. "merhaba", "naber", "nasılsın") and the assistant reply contains NO metrics or data yet, suggest 2–3 GENERAL starter questions (sentiment overview, top complaints, NPS trend). Do NOT mention specific segments, pivots, travel types, or filters from UI context — the user has not asked about data yet.
 - NEVER suggest product how-to / setup / navigation questions — creating dashboards, integrations (Zendesk, CSV), adding widgets, downloading/scheduling reports, or anything phrased as "nasıl görebilirim / nasıl oluştururum / nereden indiririm". The Advisor answers data, not UI navigation.
+- Follow-up questions MUST stay within the same analytics scope as the assistant's previous answer. If the prior answer used organization-wide data (no specific dashboard named), suggest only questions answerable at that same org-wide scope — do NOT suggest dashboard-specific drill-downs that would require picking a dashboard unless the user already chose one.
 - Do not repeat the user's exact question and do not invent metrics outside the capabilities above.
 - Write one short closing paragraph (guidance) that naturally offers those directions. Use **bold** markdown only for metric/topic names inside guidance.
 - If the Advisor could not answer (no data), suggest trying a different dashboard or a wider date range instead."""
