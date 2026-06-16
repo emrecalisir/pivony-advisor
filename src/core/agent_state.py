@@ -21,6 +21,17 @@ def _int_or_none(value: Any) -> int | None:
         return None
 
 
+def _dashboard_from_picker_context(pc: dict) -> int | None:
+    """Latest explicit dashboard pick from UI (current turn or session history)."""
+    for key in ("dashboard_selection", "last_dashboard_selection"):
+        selection = pc.get(key)
+        if isinstance(selection, dict):
+            sel_id = _int_or_none(selection.get("id"))
+            if sel_id is not None:
+                return sel_id
+    return None
+
+
 @dataclass(frozen=True)
 class HardAgentState:
     """Resolved analytics scope for tool routing and prompt injection."""
@@ -98,6 +109,16 @@ def resolve_hard_agent_state(
                 source="analytics_scope",
             )
         if raw_scope.get("org_wide"):
+            picker_dash = _dashboard_from_picker_context(pc)
+            if picker_dash is not None:
+                return HardAgentState(
+                    dashboard_id=picker_dash,
+                    since=str(scope_since).strip() if scope_since else since_pc,
+                    until=str(scope_until).strip() if scope_until else until_pc,
+                    days=scope_days or days_pc or 7,
+                    dashboard_locked=True,
+                    source="last_dashboard_selection",
+                )
             return HardAgentState(
                 org_wide=True,
                 since=str(scope_since).strip() if scope_since else since_pc,

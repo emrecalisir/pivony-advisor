@@ -80,6 +80,21 @@ def test_analytics_scope_dashboard_is_locked():
     assert "6208" in block
 
 
+def test_org_wide_analytics_scope_defers_to_last_dashboard_selection():
+    state = resolve_hard_agent_state(
+        [("user", "örnek yorumlar")],
+        {
+            "analytics_scope": {"org_wide": True, "days": 7},
+            "last_dashboard_selection": {"id": 6208, "name": "SURVEY"},
+        },
+    )
+    assert state.dashboard_id == 6208
+    assert state.dashboard_locked is True
+    assert state.org_wide is False
+    assert state.source == "last_dashboard_selection"
+    assert should_expose_list_dashboards(state) is False
+
+
 def test_sanitize_drops_list_dashboards_when_scope_set():
     state = HardAgentState(dashboard_id=6208, dashboard_locked=True, source="test")
     calls = [

@@ -1,0 +1,7 @@
+# CrewAI quality loop (optional — pip install -r requirements-quality-loop.txt)
+crewai>=0.80.0
+crewai-tools>=0.20.0
+litellm>=1.55.0
+requests>=2.31.0
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0

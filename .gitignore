@@ -20,3 +20,6 @@ credentials.json
 
 # Large generated docs for ingest (source is .md)
 docs/*.txt
+
+# CrewAI quality loop artifacts
+quality_loop/outputs/
