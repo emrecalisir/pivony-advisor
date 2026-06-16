@@ -897,6 +897,16 @@ def _assistant_text_has_substantive_data(text: str) -> bool:
     return False
 
 
+def _assistant_asks_for_dashboard_choice(text: str) -> bool:
+    """True when the reply is a dashboard-selection prompt, not a generic greeting."""
+    lower = (text or "").strip().lower()
+    if not lower or len(lower) > _DASHBOARD_PICKER_FALLBACK_MAX_TEXT_LEN:
+        return False
+    if "dashboard" in lower or "gösterge" in lower or "gosterge" in lower:
+        return True
+    return "?" in lower and "hangi" in lower
+
+
 def _resolve_dashboard_picker_fallback(
     *,
     user_id: str | None,
@@ -916,7 +926,7 @@ def _resolve_dashboard_picker_fallback(
     if not text or _assistant_text_has_substantive_data(text):
         return None
     needs_picker = bool(tools_called & _DASHBOARD_SCOPE_TOOLS)
-    if not needs_picker and len(text) <= _DASHBOARD_PICKER_FALLBACK_MAX_TEXT_LEN and "?" in text:
+    if not needs_picker and _assistant_asks_for_dashboard_choice(text):
         needs_picker = True
     if not needs_picker:
         return None
