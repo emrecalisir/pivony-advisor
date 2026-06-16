@@ -20,10 +20,17 @@ from pydantic import BaseModel, Field
 from qdrant_client import QdrantClient
 
 from core.config import AGENT_MAX_TOOL_ITERATIONS, DEFAULT_SECTOR, sector_slugify
-from core.analytics_scope import (
-    EstablishedAnalyticsScope,
-    infer_established_analytics_scope,
-    scope_prompt_block,
+from core.analytics_scope import EstablishedAnalyticsScope
+from core.agent_state import (
+    HardAgentState,
+    hard_context_prompt_block,
+    resolve_hard_agent_state,
+)
+from core.tool_routing import (
+    blocked_tool_result,
+    filter_tools_for_state,
+    sanitize_tool_calls,
+    validated_tool_invoke,
 )
 from core.compute import compare_pivot_ratings
 from core.pivony_platform import (
@@ -236,19 +243,24 @@ def _build_tools(
     user_id: str | None = None,
     page_context: dict | None = None,
     turns: list[tuple[str, str]] | None = None,
+    hard_state: HardAgentState | None = None,
 ) -> list[StructuredTool]:
     slug = sector_slugify(sector_slug or DEFAULT_SECTOR)
-    _established: EstablishedAnalyticsScope | None = infer_established_analytics_scope(
-        turns or [], page_context
-    )
+    _hard = hard_state or resolve_hard_agent_state(turns or [], page_context)
+    _established: EstablishedAnalyticsScope | None = _hard.as_established()
 
     # Page scope (dashboard + date window the user is actually looking at). Used
     # as a deterministic default so we don't depend on the LLM copying dates out
     # of the prose context block.
     _pc = page_context if isinstance(page_context, dict) else {}
-    _pc_dash = _pc.get("dashboard_id")
-    _pc_since = _pc.get("since") or None
-    _pc_until = _pc.get("until") or None
+    _pc_dash = _hard.dashboard_id if _hard.has_dashboard else _pc.get("dashboard_id")
+    _pc_since = _hard.since or _pc.get("since") or None
+    _pc_until = _hard.until or _pc.get("until") or None
+
+    def _resolve_dash_id(dashboard_id: int | None) -> int | None:
+        if _hard.dashboard_id is not None:
+            return _hard.dashboard_id
+        return dashboard_id
 
     def _eff_dates(since: str | None, until: str | None, days: int | None):
         """Explicit dates/days from the tool call win; otherwise inherit the
@@ -270,6 +282,7 @@ def _build_tools(
         return json.dumps(data, ensure_ascii=False)
 
     def _dashboard_pivots(dashboard_id: int) -> str:
+        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
         data = fetch_pivots(user_id, dashboard_id)
         if data is None:
             return json.dumps(
@@ -288,6 +301,7 @@ def _build_tools(
         since: str | None = None,
         until: str | None = None,
     ) -> str:
+        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
         since, until = _eff_dates(since, until, days)
         data = fetch_reviews(
             user_id,
@@ -307,37 +321,6 @@ def _build_tools(
             )
         return json.dumps(data, ensure_ascii=False)
 
-    def _compare_pivot_ratings(
-        dashboard_id: int,
-        pivot_key: str,
-        days: int | None = None,
-        since: str | None = None,
-        until: str | None = None,
-        limit: int | None = None,
-    ) -> str:
-        if advisor_mode == MODE_ADVISOR:
-            return json.dumps(
-                industry_expert_gate(
-                    "compare_pivot_ratings",
-                    detail=(
-                        "Birden fazla otel/segment arasında rating değişimini "
-                        "karşılaştırma ve sıralama."
-                    ),
-                ),
-                ensure_ascii=False,
-            )
-        since, until = _eff_dates(since, until, days)
-        data = compare_pivot_ratings(
-            user_id,
-            dashboard_id,
-            pivot_key,
-            days=days,
-            since=since,
-            until=until,
-            limit=limit,
-        )
-        return json.dumps(data, ensure_ascii=False)
-
     def _request_plan_upgrade(message: str | None = None) -> str:
         data = request_plan_upgrade(user_id, message=message)
         if data is None:
@@ -355,6 +338,7 @@ def _build_tools(
         since: str | None = None,
         until: str | None = None,
     ) -> str:
+        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
         since, until = _eff_dates(since, until, days)
         data = fetch_trends(
             user_id, dashboard_id=dashboard_id,
@@ -375,6 +359,7 @@ def _build_tools(
         until: str | None = None,
         limit: int | None = None,
     ) -> str:
+        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
         if advisor_mode == MODE_ADVISOR:
             return json.dumps(
                 industry_expert_gate(
@@ -406,6 +391,7 @@ def _build_tools(
         since: str | None = None,
         until: str | None = None,
     ) -> str:
+        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
         since, until = _eff_dates(since, until, days)
         data = fetch_topic_trends(
             user_id, dashboard_id=dashboard_id,
@@ -428,6 +414,7 @@ def _build_tools(
         days: int | None = None,
         limit: int | None = None,
     ) -> str:
+        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
         since, until = _eff_dates(since, until, days)
         data = fetch_hotterms(
             user_id, dashboard_id=dashboard_id,
@@ -448,6 +435,7 @@ def _build_tools(
         since: str | None = None,
         until: str | None = None,
     ) -> str:
+        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
         since, until = _eff_dates(since, until, days)
         data = fetch_decisions(
             user_id, dashboard_id=dashboard_id,
@@ -471,6 +459,7 @@ def _build_tools(
         since: str | None = None,
         until: str | None = None,
     ) -> str:
+        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
         since, until = _eff_dates(since, until, days)
         data = fetch_distribution(
             user_id, dashboard_id=dashboard_id, kind=kind, pivot_column=pivot_column,
@@ -492,6 +481,7 @@ def _build_tools(
         since: str | None = None,
         until: str | None = None,
     ) -> str:
+        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
         since, until = _eff_dates(since, until, days)
         data = fetch_topic_ratings(
             user_id, dashboard_id=dashboard_id,
@@ -513,6 +503,7 @@ def _build_tools(
         since: str | None = None,
         until: str | None = None,
     ) -> str:
+        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
         since, until = _eff_dates(since, until, days)
         data = fetch_emergent_topics(
             user_id, dashboard_id=dashboard_id,
@@ -533,6 +524,7 @@ def _build_tools(
         pivot_key: str | None = None,
         pivot_value: str | None = None,
     ) -> str:
+        dashboard_id = _resolve_dash_id(dashboard_id) or dashboard_id
         data = fetch_root_causes(
             user_id,
             dashboard_id=dashboard_id,
@@ -986,28 +978,36 @@ def run_advisor_agent(
     """
     slug = sector_slugify(sector_slug or DEFAULT_SECTOR)
     mode = advisor_mode or DEFAULT_ADVISOR_MODE
-    tools = _build_tools(
-        sector_slug=slug,
-        embeddings=embeddings,
-        client=client,
-        advisor_mode=mode,
-        user_id=user_id,
-        page_context=page_context,
-        turns=turns,
+    _hard = resolve_hard_agent_state(turns, page_context)
+    tools = filter_tools_for_state(
+        _build_tools(
+            sector_slug=slug,
+            embeddings=embeddings,
+            client=client,
+            advisor_mode=mode,
+            user_id=user_id,
+            page_context=page_context,
+            turns=turns,
+            hard_state=_hard,
+        ),
+        _hard,
     )
     tool_map = {tool.name: tool for tool in tools}
     llm_with_tools = llm.bind_tools(tools)
 
-    _established = infer_established_analytics_scope(turns, page_context)
-    scope_hint = scope_prompt_block(_established)
+    scope_hint = hard_context_prompt_block(_hard)
     system_prompt = build_agent_system_prompt(slug, extra_system_prompt, advisor_mode=mode)
     if scope_hint:
         system_prompt = f"{system_prompt}\n\n{scope_hint}"
     messages = _to_langchain_messages(system_prompt, turns)
 
-    default_dash = (
-        page_context.get("dashboard_id") if isinstance(page_context, dict) else None
-    )
+    default_dash = _hard.dashboard_id
+    if default_dash is None and isinstance(page_context, dict):
+        raw = page_context.get("dashboard_id")
+        try:
+            default_dash = int(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            default_dash = None
     picker: dict | None = None
     tools_called: set[str] = set()
 
@@ -1024,21 +1024,25 @@ def run_advisor_agent(
                     default_dashboard_id=default_dash,
                     assistant_text=_message_text(ai_message),
                     tools_called=tools_called,
-                    established_scope=_established,
+                    established_scope=_hard.as_established(),
                 )
             return _finalize_agent_reply(_message_text(ai_message)), picker
 
+        tool_calls = sanitize_tool_calls(tool_calls, _hard)
         for call in tool_calls:
             name = call.get("name")
             if name:
                 tools_called.add(name)
             args = call.get("args") or {}
             tool = tool_map.get(name)
-            if tool is None:
+            blocked = blocked_tool_result(name or "", _hard) if name else None
+            if blocked:
+                result = blocked
+            elif tool is None:
                 result = f"Bilinmeyen araç: {name}"
             else:
                 try:
-                    result = tool.invoke(args)
+                    result = validated_tool_invoke(tool, args)
                 except Exception as exc:  # tool failure should not crash the turn
                     logger.warning("Tool %s failed: %s", name, exc)
                     result = f"Araç hatası ({name}): {exc}"
@@ -1058,7 +1062,7 @@ def run_advisor_agent(
             default_dashboard_id=default_dash,
             assistant_text=final_text,
             tools_called=tools_called,
-            established_scope=_established,
+            established_scope=_hard.as_established(),
         )
     return _finalize_agent_reply(final_text), picker
 

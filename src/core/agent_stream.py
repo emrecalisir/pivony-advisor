@@ -21,7 +21,14 @@ from core.agent import (
     _resolve_dashboard_picker_fallback,
     _to_langchain_messages,
 )
-from core.analytics_scope import infer_established_analytics_scope, scope_prompt_block
+from core.agent_state import hard_context_prompt_block, resolve_hard_agent_state
+from core.llm_resilience import PROCESSING_USER_MESSAGE, collect_stream_turn
+from core.tool_routing import (
+    blocked_tool_result,
+    filter_tools_for_state,
+    sanitize_function_calls,
+    validated_tool_invoke,
+)
 from core.config import (
     AGENT_MAX_TOOL_ITERATIONS,
     DEFAULT_SECTOR,
@@ -196,20 +203,24 @@ def stream_advisor_agent(
       - {"type": "done", "content": str, "dashboard_picker": dict | None}
     """
     slug = sector_slugify(sector_slug or DEFAULT_SECTOR)
-    tools = _build_tools(
-        sector_slug=slug,
-        embeddings=embeddings,
-        client=client,
-        advisor_mode=advisor_mode,
-        user_id=user_id,
-        page_context=page_context,
-        turns=turns,
+    _hard = resolve_hard_agent_state(turns, page_context)
+    tools = filter_tools_for_state(
+        _build_tools(
+            sector_slug=slug,
+            embeddings=embeddings,
+            client=client,
+            advisor_mode=advisor_mode,
+            user_id=user_id,
+            page_context=page_context,
+            turns=turns,
+            hard_state=_hard,
+        ),
+        _hard,
     )
     tool_map = {tool.name: tool for tool in tools}
     genai_client = _get_genai_client()
 
-    _established = infer_established_analytics_scope(turns, page_context)
-    scope_hint = scope_prompt_block(_established)
+    scope_hint = hard_context_prompt_block(_hard)
     system_prompt = build_agent_system_prompt(
         slug, extra_system_prompt, advisor_mode=advisor_mode
     )
@@ -228,29 +239,36 @@ def stream_advisor_agent(
         temperature=LLM_TEMPERATURE,
     )
 
-    default_dash = (
-        page_context.get("dashboard_id") if isinstance(page_context, dict) else None
-    )
+    default_dash = _hard.dashboard_id
+    if default_dash is None and isinstance(page_context, dict):
+        raw = page_context.get("dashboard_id")
+        try:
+            default_dash = int(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            default_dash = None
     picker: dict | None = None
     tools_called: set[str] = set()
     limit = max_iterations or AGENT_MAX_TOOL_ITERATIONS
     final_text = ""
 
     for step in range(limit):
-        turn_gen = _stream_model_turn(
-            client=genai_client,
-            model=LLM_MODEL,
-            contents=contents,
-            config=base_config,
-            emit_content=False,
+        events, model_content, function_calls = collect_stream_turn(
+            lambda: _stream_model_turn(
+                client=genai_client,
+                model=LLM_MODEL,
+                contents=contents,
+                config=base_config,
+                emit_content=False,
+            )
         )
-        while True:
-            try:
-                event = next(turn_gen)
-                yield event
-            except StopIteration as stop:
-                model_content, function_calls = stop.value
-                break
+        for event in events:
+            yield event
+
+        if not model_content.parts and not function_calls:
+            logger.error("Agent stream: empty model turn after retries at step %s", step + 1)
+            yield {"type": "content", "delta": PROCESSING_USER_MESSAGE}
+            final_text = PROCESSING_USER_MESSAGE
+            break
 
         if not model_content.parts:
             break
@@ -272,25 +290,24 @@ def stream_advisor_agent(
                 thinking_config=base_config.thinking_config,
                 temperature=LLM_TEMPERATURE,
             )
-            turn_gen = _stream_model_turn(
-                client=genai_client,
-                model=LLM_MODEL,
-                contents=contents,
-                config=no_tool_config,
-                emit_content=True,
+            retry_events, model_content, _ = collect_stream_turn(
+                lambda: _stream_model_turn(
+                    client=genai_client,
+                    model=LLM_MODEL,
+                    contents=contents,
+                    config=no_tool_config,
+                    emit_content=True,
+                )
             )
-            while True:
-                try:
-                    yield next(turn_gen)
-                except StopIteration as stop:
-                    model_content, _ = stop.value
-                    break
+            for event in retry_events:
+                yield event
             contents.append(model_content)
             final_text = "".join(
                 p.text for p in model_content.parts if p.text
             ).strip()
             break
 
+        function_calls = sanitize_function_calls(function_calls, _hard)
         for fc in function_calls:
             name = fc.name or ""
             if name:
@@ -298,11 +315,14 @@ def stream_advisor_agent(
             yield {"type": "status", "phase": "tool", "detail": name}
             args = dict(fc.args or {})
             tool = tool_map.get(name)
-            if tool is None:
+            blocked = blocked_tool_result(name, _hard) if name else None
+            if blocked:
+                result = blocked
+            elif tool is None:
                 result = f"Bilinmeyen araç: {name}"
             else:
                 try:
-                    result = tool.invoke(args)
+                    result = validated_tool_invoke(tool, args)
                 except Exception as exc:
                     logger.warning("Tool %s failed: %s", name, exc)
                     result = f"Araç hatası ({name}): {exc}"
@@ -335,7 +355,7 @@ def stream_advisor_agent(
             default_dashboard_id=default_dash,
             assistant_text=final_text,
             tools_called=tools_called,
-            established_scope=_established,
+            established_scope=_hard.as_established(),
         )
         if picker:
             yield {"type": "dashboard_picker", "picker": picker}
