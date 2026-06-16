@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from langchain_core.messages import (
@@ -865,6 +866,66 @@ def _extract_dashboard_picker(
     return _build_dashboard_picker(data, default_dashboard_id, tool_name=tool_name)
 
 
+_DASHBOARD_SCOPE_TOOLS = frozenset(
+    {
+        "get_pivony_metrics",
+        "get_root_causes",
+        "get_trends",
+        "compare_pivot_ratings",
+        "get_topic_trends",
+        "get_hotterms",
+        "get_decision_distribution",
+        "get_distribution",
+        "get_topic_ratings",
+        "get_emergent_topics",
+        "list_reviews",
+        "get_dashboard_pivots",
+    }
+)
+_DASHBOARD_PICKER_FALLBACK_MAX_TEXT_LEN = 80
+
+
+def _assistant_text_has_substantive_data(text: str) -> bool:
+    if not text:
+        return False
+    if re.search(r"\d", text):
+        return True
+    if "%" in text:
+        return True
+    if re.search(r"^\s*\d+\.", text, re.MULTILINE):
+        return True
+    return False
+
+
+def _resolve_dashboard_picker_fallback(
+    *,
+    user_id: str | None,
+    default_dashboard_id: int | None,
+    assistant_text: str,
+    tools_called: set[str],
+) -> dict | None:
+    """
+    Attach picker when the model asks to choose a dashboard in prose without
+    calling list_dashboards(), or when a metrics tool ran without a dashboard.
+    """
+    if not user_id or default_dashboard_id is not None:
+        return None
+    if "list_dashboards" in tools_called:
+        return None
+    text = (assistant_text or "").strip()
+    if not text or _assistant_text_has_substantive_data(text):
+        return None
+    needs_picker = bool(tools_called & _DASHBOARD_SCOPE_TOOLS)
+    if not needs_picker and len(text) <= _DASHBOARD_PICKER_FALLBACK_MAX_TEXT_LEN and "?" in text:
+        needs_picker = True
+    if not needs_picker:
+        return None
+    data = fetch_dashboards(user_id)
+    if not isinstance(data, dict):
+        return None
+    return _build_dashboard_picker(data, default_dashboard_id, tool_name="list_dashboards")
+
+
 def run_advisor_agent(
     *,
     turns: list[tuple[str, str]],
@@ -908,6 +969,7 @@ def run_advisor_agent(
         page_context.get("dashboard_id") if isinstance(page_context, dict) else None
     )
     picker: dict | None = None
+    tools_called: set[str] = set()
 
     limit = max_iterations or AGENT_MAX_TOOL_ITERATIONS
     for step in range(limit):
@@ -916,10 +978,19 @@ def run_advisor_agent(
 
         tool_calls = getattr(ai_message, "tool_calls", None) or []
         if not tool_calls:
+            if picker is None:
+                picker = _resolve_dashboard_picker_fallback(
+                    user_id=user_id,
+                    default_dashboard_id=default_dash,
+                    assistant_text=_message_text(ai_message),
+                    tools_called=tools_called,
+                )
             return _finalize_agent_reply(_message_text(ai_message)), picker
 
         for call in tool_calls:
             name = call.get("name")
+            if name:
+                tools_called.add(name)
             args = call.get("args") or {}
             tool = tool_map.get(name)
             if tool is None:
@@ -939,7 +1010,15 @@ def run_advisor_agent(
 
     # Tool budget exhausted — force a plain (no-tool) final answer.
     final = llm.invoke(messages)
-    return _finalize_agent_reply(_message_text(final)), picker
+    final_text = _message_text(final)
+    if picker is None:
+        picker = _resolve_dashboard_picker_fallback(
+            user_id=user_id,
+            default_dashboard_id=default_dash,
+            assistant_text=final_text,
+            tools_called=tools_called,
+        )
+    return _finalize_agent_reply(final_text), picker
 
 
 def _message_text(message: Any) -> str:

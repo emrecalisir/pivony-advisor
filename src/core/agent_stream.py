@@ -18,6 +18,7 @@ from core.agent import (
     _extract_dashboard_picker,
     _finalize_agent_reply,
     _message_text,
+    _resolve_dashboard_picker_fallback,
     _to_langchain_messages,
 )
 from core.config import (
@@ -225,6 +226,7 @@ def stream_advisor_agent(
         page_context.get("dashboard_id") if isinstance(page_context, dict) else None
     )
     picker: dict | None = None
+    tools_called: set[str] = set()
     limit = max_iterations or AGENT_MAX_TOOL_ITERATIONS
     final_text = ""
 
@@ -285,6 +287,8 @@ def stream_advisor_agent(
 
         for fc in function_calls:
             name = fc.name or ""
+            if name:
+                tools_called.add(name)
             yield {"type": "status", "phase": "tool", "detail": name}
             args = dict(fc.args or {})
             tool = tool_map.get(name)
@@ -318,6 +322,16 @@ def stream_advisor_agent(
             step + 1,
             len(function_calls),
         )
+
+    if picker is None:
+        picker = _resolve_dashboard_picker_fallback(
+            user_id=user_id,
+            default_dashboard_id=default_dash,
+            assistant_text=final_text,
+            tools_called=tools_called,
+        )
+        if picker:
+            yield {"type": "dashboard_picker", "picker": picker}
 
     answer = _finalize_agent_reply(final_text or EMPTY_AGENT_REPLY)
     yield {"type": "done", "content": answer, "dashboard_picker": picker}
