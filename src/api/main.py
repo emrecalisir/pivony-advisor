@@ -319,14 +319,17 @@ async def _stream_chat_events(
         yield _sse_payload(event)
         await asyncio.sleep(0)
 
-    followups, guidance = generate_contextual_navigation(
-        chat_input.get("retrieval_query") or chat_input["question"],
-        answer,
-        chat_history=chat_input.get("chat_history"),
-        context_hint=api_system,
-        llm=llm,
-        use_vertex=USE_VERTEX_CONTEXTUAL_NAVIGATION,
-    )
+    if dashboard_picker:
+        followups, guidance = [], ""
+    else:
+        followups, guidance = generate_contextual_navigation(
+            chat_input.get("retrieval_query") or chat_input["question"],
+            answer,
+            chat_history=chat_input.get("chat_history"),
+            context_hint=api_system,
+            llm=llm,
+            use_vertex=USE_VERTEX_CONTEXTUAL_NAVIGATION,
+        )
     log_conversation(
         user_id=user_id,
         user_email=user_email,
@@ -423,14 +426,17 @@ async def chat_completions(
         else:
             chain = _get_chain(sector, api_system)
             answer = chain.invoke(chat_input)
-        followups, guidance = generate_contextual_navigation(
-            chat_input.get("retrieval_query") or chat_input["question"],
-            answer,
-            chat_history=chat_input.get("chat_history"),
-            context_hint=api_system,
-            llm=llm,
-            use_vertex=USE_VERTEX_CONTEXTUAL_NAVIGATION,
-        )
+        if dashboard_picker:
+            followups, guidance = [], ""
+        else:
+            followups, guidance = generate_contextual_navigation(
+                chat_input.get("retrieval_query") or chat_input["question"],
+                answer,
+                chat_history=chat_input.get("chat_history"),
+                context_hint=api_system,
+                llm=llm,
+                use_vertex=USE_VERTEX_CONTEXTUAL_NAVIGATION,
+            )
         log_conversation(
             user_id=user_id,
             user_email=user_email,
