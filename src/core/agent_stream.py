@@ -38,7 +38,7 @@ from core.config import (
     DEFAULT_SECTOR,
     GCP_LOCATION,
     GCP_PROJECT,
-    LLM_MODEL,
+    ADVISOR_LLM_MODEL,
     LLM_TEMPERATURE,
     sector_slugify,
 )
@@ -293,7 +293,7 @@ def _run_agent_stream_loop(
         events, model_content, function_calls = collect_stream_turn(
             lambda: _stream_model_turn(
                 client=genai_client,
-                model=LLM_MODEL,
+                model=ADVISOR_LLM_MODEL,
                 contents=contents,
                 config=base_config,
                 emit_content=False,
@@ -331,7 +331,7 @@ def _run_agent_stream_loop(
             retry_events, model_content, _ = collect_stream_turn(
                 lambda: _stream_model_turn(
                     client=genai_client,
-                    model=LLM_MODEL,
+                    model=ADVISOR_LLM_MODEL,
                     contents=contents,
                     config=no_tool_config,
                     emit_content=True,
@@ -433,7 +433,7 @@ def stream_simple_completion(
         turn_events, model_content, _ = collect_stream_turn(
             lambda: _stream_model_turn(
                 client=genai_client,
-                model=LLM_MODEL,
+                model=ADVISOR_LLM_MODEL,
                 contents=contents,
                 config=config,
                 emit_content=True,

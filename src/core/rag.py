@@ -18,7 +18,7 @@ from core.config import (
     EMBEDDING_MODEL,
     GCP_LOCATION,
     GCP_PROJECT,
-    LLM_MODEL,
+    ADVISOR_LLM_MODEL,
     LLM_TEMPERATURE,
     PLATFORM_COLLECTION,
     PLATFORM_K,
@@ -126,7 +126,7 @@ def build_embeddings() -> GoogleGenerativeAIEmbeddings:
 
 def build_llm() -> ChatGoogleGenerativeAI:
     return ChatGoogleGenerativeAI(
-        model=LLM_MODEL,
+        model=ADVISOR_LLM_MODEL,
         project=GCP_PROJECT,
         location=GCP_LOCATION,
         vertexai=True,

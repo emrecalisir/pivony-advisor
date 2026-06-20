@@ -51,7 +51,11 @@ QDRANT_TIMEOUT_SEC = int(os.environ.get("QDRANT_TIMEOUT_SEC", "30"))
 QDRANT_URL = f"http://{QDRANT_HOST}:{QDRANT_PORT}"
 
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-004")
-LLM_MODEL = os.environ.get("LLM_MODEL", "gemini-2.5-flash")
+ADVISOR_LLM_MODEL = (
+    os.environ.get("ADVISOR_LLM_MODEL") or os.environ.get("LLM_MODEL") or "gemini-2.5-flash"
+).strip()
+# Deprecated alias for imports that still reference LLM_MODEL.
+LLM_MODEL = ADVISOR_LLM_MODEL
 LLM_TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0.2"))
 NAVIGATION_LLM_TEMPERATURE = float(os.environ.get("NAVIGATION_LLM_TEMPERATURE", "0.3"))
 USE_VERTEX_CONTEXTUAL_NAVIGATION = os.environ.get(
