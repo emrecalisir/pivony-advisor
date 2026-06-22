@@ -10,6 +10,11 @@ from langchain_core.tools import StructuredTool
 from pydantic import ValidationError
 
 from core.agent_state import HardAgentState
+from core.pivot_resolve import (
+    apply_pivot_to_tool_args,
+    looks_like_pivot_scoped_search,
+    semantic_search_pivot_redirect,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -139,11 +144,24 @@ def validated_tool_invoke(
     tool: StructuredTool,
     raw_args: dict[str, Any],
     state: HardAgentState | None = None,
+    user_id: str | None = None,
 ) -> str:
     """Validate tool args with Pydantic before invoke; return JSON error on bad schema."""
     args = dict(raw_args or {})
     if state is not None:
         args = pin_tool_args_for_state(tool.name, args, state)
+    if tool.name == "search_qdrant_reviews":
+        query = args.get("query") or ""
+        if looks_like_pivot_scoped_search(str(query)):
+            return semantic_search_pivot_redirect()
+    if user_id and state is not None and state.has_dashboard:
+        args = apply_pivot_to_tool_args(
+            tool.name,
+            args,
+            user_id=user_id,
+            dashboard_id=state.dashboard_id,
+        )
+        args.pop("_pivot_resolution", None)
     schema = getattr(tool, "args_schema", None)
     if schema is not None:
         try:

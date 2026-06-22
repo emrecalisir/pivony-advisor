@@ -49,6 +49,7 @@ from core.pivony_platform import (
     fetch_trends,
     request_plan_upgrade,
 )
+from core.pivot_resolve import looks_like_pivot_scoped_search, semantic_search_pivot_redirect
 from core.prompts import build_agent_system_prompt
 from core.rag import search_reviews
 from core.tier_gating import industry_expert_gate
@@ -77,6 +78,20 @@ class DashboardPivotsArgs(BaseModel):
     dashboard_id: int = Field(
         ...,
         description="The dashboard ID (from list_dashboards) to inspect filters for.",
+    )
+    query: str | None = Field(
+        default=None,
+        description=(
+            "Fuzzy lookup for a hotel/brand/segment name (e.g. 'voyage torba'). "
+            "Searches ALL pivot values, not just the top-25 list."
+        ),
+    )
+    pivot_key: str | None = Field(
+        default=None,
+        description=(
+            "Optional pivot key scope for query (e.g. 'vendorName'). "
+            "Aliases like vendor_name are normalized automatically."
+        ),
     )
 
 
@@ -310,6 +325,8 @@ def _build_tools(
         return _pc_since, _pc_until, days
 
     def _search(query: str) -> str:
+        if looks_like_pivot_scoped_search(query):
+            return semantic_search_pivot_redirect()
         return search_reviews(query, slug, embeddings=embeddings, client=client)
 
     def _list_dashboards() -> str:
@@ -321,11 +338,20 @@ def _build_tools(
             )
         return json.dumps(data, ensure_ascii=False)
 
-    def _dashboard_pivots(dashboard_id: int) -> str:
+    def _dashboard_pivots(
+        dashboard_id: int,
+        query: str | None = None,
+        pivot_key: str | None = None,
+    ) -> str:
         resolved = _require_locked_dashboard(dashboard_id)
         if isinstance(resolved, str):
             return resolved
-        data = fetch_pivots(user_id, resolved)
+        data = fetch_pivots(
+            user_id,
+            resolved,
+            query=query,
+            pivot_key=pivot_key,
+        )
         if data is None:
             return json.dumps(
                 {"error": "Pivot servisi şu anda kullanılamıyor."},
@@ -655,7 +681,9 @@ def _build_tools(
         func=_search,
         name="search_qdrant_reviews",
         description=(
-            "Search guest reviews for specific complaints, praise, evidence, or details. "
+            "Search guest reviews for specific complaints, praise, evidence, or details "
+            "when NO hotel/vendor pivot filter applies. Do NOT use for hotel+topic "
+            "questions — use list_reviews with pivot_key/pivot_value instead. "
             "Returns review snippets prefixed with [Metadata -> Otel: ... | Tarih: ... | "
             "Kategori: ...]. Use for qualitative, example-based questions."
         ),
@@ -675,8 +703,10 @@ def _build_tools(
         name="get_dashboard_pivots",
         description=(
             "List a dashboard's filter dimensions (pivot keys) and their top values. "
-            "Use to resolve a user's free-text filter (e.g. 'voyage torba') to a "
-            "(pivot_key, pivot_value) pair before calling get_pivony_metrics."
+            "Pass query=<hotel name> to fuzzy-resolve a free-text filter (e.g. "
+            "'voyage torba') to a (pivot_key, pivot_value) pair — essential because "
+            "the top-25 list may omit low-volume hotels. ETS dashboards use "
+            "pivot_key='vendorName' for hotel names."
         ),
         args_schema=DashboardPivotsArgs,
     )
@@ -1092,7 +1122,7 @@ def run_advisor_agent(
                 result = f"Bilinmeyen araç: {name}"
             else:
                 try:
-                    result = validated_tool_invoke(tool, args, _hard)
+                    result = validated_tool_invoke(tool, args, _hard, user_id=user_id)
                 except Exception as exc:  # tool failure should not crash the turn
                     logger.warning("Tool %s failed: %s", name, exc)
                     result = f"Araç hatası ({name}): {exc}"

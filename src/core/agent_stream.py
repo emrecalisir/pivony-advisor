@@ -416,7 +416,7 @@ def _run_agent_stream_loop(
                 result = f"Bilinmeyen araç: {name}"
             else:
                 try:
-                    result = validated_tool_invoke(tool, args, _hard)
+                    result = validated_tool_invoke(tool, args, _hard, user_id=user_id)
                 except Exception as exc:
                     logger.warning("Tool %s failed: %s", name, exc)
                     result = f"Araç hatası ({name}): {exc}"

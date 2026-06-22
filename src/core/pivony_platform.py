@@ -110,16 +110,25 @@ def fetch_dashboards(user_id: Optional[str]) -> Optional[dict[str, Any]]:
 
 
 def fetch_pivots(
-    user_id: Optional[str], dashboard_id: int
+    user_id: Optional[str],
+    dashboard_id: int,
+    *,
+    query: Optional[str] = None,
+    pivot_key: Optional[str] = None,
+    max_values: Optional[int] = None,
 ) -> Optional[dict[str, Any]]:
-    """Pivot keys + top values for one dashboard: {dashboard_id, pivots:{key:[...]}}."""
+    """Pivot keys + top values; optional fuzzy query across full pivotColDist."""
     if not user_id:
         logger.warning("fetch_pivots called without user_id")
         return None
-    return _post_worker(
-        f"{_worker_base()}/advisor/pivots",
-        {"user_id": user_id, "dashboard_id": dashboard_id},
-    )
+    payload: dict[str, Any] = {"user_id": user_id, "dashboard_id": dashboard_id}
+    if query and str(query).strip():
+        payload["query"] = str(query).strip()
+    if pivot_key and str(pivot_key).strip():
+        payload["pivot_key"] = str(pivot_key).strip()
+    if max_values is not None:
+        payload["max_values"] = max_values
+    return _post_worker(f"{_worker_base()}/advisor/pivots", payload)
 
 
 def fetch_metrics(
