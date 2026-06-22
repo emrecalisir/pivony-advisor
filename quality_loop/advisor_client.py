@@ -165,13 +165,21 @@ def chat_stream(
                 if delta:
                     reasoning_parts.append(str(delta))
             elif etype == "status":
-                tool = event.get("tool") or event.get("name") or ""
-                if tool and (not tool_actions or tool_actions[-1] != tool):
-                    tool_actions.append(str(tool))
+                if event.get("phase") == "retry":
+                    msg = str(event.get("message") or "").strip()
+                    if msg:
+                        content_parts = [msg]
+                else:
+                    tool = event.get("tool") or event.get("name") or event.get("detail") or ""
+                    if tool and (not tool_actions or tool_actions[-1] != tool):
+                        tool_actions.append(str(tool))
             elif etype == "content":
                 delta = event.get("delta") or ""
                 if delta:
-                    content_parts.append(str(delta))
+                    if event.get("replace"):
+                        content_parts = [str(delta)]
+                    else:
+                        content_parts.append(str(delta))
             elif etype == "dashboard_picker":
                 picker = event.get("picker")
                 if isinstance(picker, dict):

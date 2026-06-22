@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from google import genai
@@ -26,6 +26,7 @@ from core.llm_resilience import (
     LlmTurnFailed,
     PROCESSING_USER_MESSAGE,
     collect_stream_turn,
+    make_rate_limit_retry_status,
 )
 from core.tool_routing import (
     blocked_tool_result,
@@ -188,6 +189,58 @@ def _stream_model_turn(
     )
 
 
+def _collect_turn_with_rate_limit_status(
+    turn_factory: Callable[[], Iterator[dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], Any, list[Any]]:
+    """Run collect_stream_turn; emit at most one retry status SSE event on 429 backoff."""
+    status_events: list[dict[str, Any]] = []
+
+    def on_rate_limit_retry(attempt: int, max_attempts: int, _wait: float) -> None:
+        if status_events:
+            return
+        status_events.append(make_rate_limit_retry_status(attempt, max_attempts))
+
+    events, model_content, function_calls = collect_stream_turn(
+        turn_factory,
+        on_rate_limit_retry=on_rate_limit_retry,
+    )
+    return status_events, events, model_content, function_calls
+
+
+def _yield_llm_failure(exc: LlmTurnFailed) -> Iterator[dict[str, Any]]:
+    """Single replaceable error bubble after automatic retries are exhausted."""
+    yield {
+        "type": "content",
+        "delta": exc.user_message,
+        "replace": True,
+    }
+    yield {
+        "type": "done",
+        "content": exc.user_message,
+        "dashboard_picker": None,
+    }
+
+
+def _yield_turn_events(
+    status_events: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+) -> Iterator[dict[str, Any]]:
+    """Emit retry status once, then model events (replace waiting text on first content)."""
+    replace_pending = bool(status_events)
+    for event in status_events:
+        yield event
+    for event in events:
+        if (
+            replace_pending
+            and event.get("type") == "content"
+            and event.get("delta")
+        ):
+            yield {**event, "replace": True}
+            replace_pending = False
+        else:
+            yield event
+
+
 def stream_advisor_agent(
     *,
     turns: list[tuple[str, str]],
@@ -271,8 +324,7 @@ def stream_advisor_agent(
         )
     except LlmTurnFailed as exc:
         logger.warning("Agent stream aborted: %s", exc.user_message)
-        yield {"type": "content", "delta": exc.user_message}
-        yield {"type": "done", "content": exc.user_message, "dashboard_picker": None}
+        yield from _yield_llm_failure(exc)
 
 
 def _run_agent_stream_loop(
@@ -290,16 +342,18 @@ def _run_agent_stream_loop(
     final_text: str,
 ) -> Iterator[dict[str, Any]]:
     for step in range(limit):
-        events, model_content, function_calls = collect_stream_turn(
-            lambda: _stream_model_turn(
-                client=genai_client,
-                model=ADVISOR_LLM_MODEL,
-                contents=contents,
-                config=base_config,
-                emit_content=False,
+        status_events, events, model_content, function_calls = (
+            _collect_turn_with_rate_limit_status(
+                lambda: _stream_model_turn(
+                    client=genai_client,
+                    model=ADVISOR_LLM_MODEL,
+                    contents=contents,
+                    config=base_config,
+                    emit_content=False,
+                )
             )
         )
-        for event in events:
+        for event in _yield_turn_events(status_events, events):
             yield event
 
         if not model_content.parts and not function_calls:
@@ -328,16 +382,18 @@ def _run_agent_stream_loop(
                 thinking_config=base_config.thinking_config,
                 temperature=LLM_TEMPERATURE,
             )
-            retry_events, model_content, _ = collect_stream_turn(
-                lambda: _stream_model_turn(
-                    client=genai_client,
-                    model=ADVISOR_LLM_MODEL,
-                    contents=contents,
-                    config=no_tool_config,
-                    emit_content=True,
+            retry_status, retry_events, model_content, _ = (
+                _collect_turn_with_rate_limit_status(
+                    lambda: _stream_model_turn(
+                        client=genai_client,
+                        model=ADVISOR_LLM_MODEL,
+                        contents=contents,
+                        config=no_tool_config,
+                        emit_content=True,
+                    )
                 )
             )
-            for event in retry_events:
+            for event in _yield_turn_events(retry_status, retry_events):
                 yield event
             contents.append(model_content)
             final_text = "".join(
@@ -430,21 +486,22 @@ def stream_simple_completion(
     )
 
     try:
-        turn_events, model_content, _ = collect_stream_turn(
-            lambda: _stream_model_turn(
-                client=genai_client,
-                model=ADVISOR_LLM_MODEL,
-                contents=contents,
-                config=config,
-                emit_content=True,
+        status_events, turn_events, model_content, _ = (
+            _collect_turn_with_rate_limit_status(
+                lambda: _stream_model_turn(
+                    client=genai_client,
+                    model=ADVISOR_LLM_MODEL,
+                    contents=contents,
+                    config=config,
+                    emit_content=True,
+                )
             )
         )
     except LlmTurnFailed as exc:
-        yield {"type": "content", "delta": exc.user_message}
-        yield {"type": "done", "content": exc.user_message, "dashboard_picker": None}
+        yield from _yield_llm_failure(exc)
         return
 
-    for event in turn_events:
+    for event in _yield_turn_events(status_events, turn_events):
         yield event
 
     final_text = "".join(p.text for p in model_content.parts if p.text).strip()

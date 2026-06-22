@@ -30,7 +30,11 @@ from core.config import (
     USE_VERTEX_CONTEXTUAL_NAVIGATION,
     sector_slugify,
 )
-from core.llm_resilience import GENERIC_LLM_ERROR_MESSAGE, LlmTurnFailed
+from core.llm_resilience import (
+    GENERIC_LLM_ERROR_MESSAGE,
+    LlmTurnFailed,
+    is_terminal_llm_user_message,
+)
 from core.conversation import extract_turns, prepare_conversational_input
 from core.agent_stream import stream_advisor_agent, stream_simple_completion
 from core.contextual_navigation import generate_contextual_navigation
@@ -322,13 +326,17 @@ async def _stream_chat_events(
             await asyncio.sleep(0)
     except LlmTurnFailed as exc:
         answer = exc.user_message
-        yield _sse_payload({"type": "content", "delta": exc.user_message})
+        yield _sse_payload(
+            {"type": "content", "delta": exc.user_message, "replace": True}
+        )
     except Exception as exc:
         logger.error("Advisor stream failed: %s", exc, exc_info=True)
         answer = GENERIC_LLM_ERROR_MESSAGE
-        yield _sse_payload({"type": "content", "delta": answer})
+        yield _sse_payload(
+            {"type": "content", "delta": answer, "replace": True}
+        )
 
-    if dashboard_picker:
+    if dashboard_picker or is_terminal_llm_user_message(answer):
         followups, guidance = [], ""
     else:
         followups, guidance = generate_contextual_navigation(
