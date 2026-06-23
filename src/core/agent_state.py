@@ -93,6 +93,26 @@ def resolve_hard_agent_state(
     if days_pc is None:
         days_pc = _int_or_none(pc.get("selectedDaysRange"))
 
+    if pc.get("fresh_session") is True:
+        selection = pc.get("dashboard_selection")
+        if isinstance(selection, dict):
+            sel_id = _int_or_none(selection.get("id"))
+            if sel_id is not None:
+                return HardAgentState(
+                    dashboard_id=sel_id,
+                    since=since_pc,
+                    until=until_pc,
+                    days=days_pc,
+                    dashboard_locked=True,
+                    source="dashboard_selection",
+                )
+        return HardAgentState(
+            since=since_pc,
+            until=until_pc,
+            days=days_pc,
+            source="fresh_session",
+        )
+
     raw_scope = pc.get("analytics_scope")
     if isinstance(raw_scope, dict):
         scope_dash = _int_or_none(raw_scope.get("dashboard_id"))
@@ -168,6 +188,13 @@ def resolve_hard_agent_state(
 
 def hard_context_prompt_block(state: HardAgentState) -> str:
     """Stronger than scope_prompt_block — marks hard inputs the model must not override."""
+    if state.source == "fresh_session":
+        return (
+            "HARD CONTEXT (authoritative): This is a brand-new chat session with no "
+            "prior dashboard, topic, or analytics scope. Do NOT reuse context from "
+            "earlier sessions. If the user asks a data question, call list_dashboards "
+            "first unless they pick a dashboard in this turn."
+        )
     base = scope_prompt_block(state.as_established())
     if state.dashboard_locked and state.dashboard_id is not None:
         parts = [

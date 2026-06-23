@@ -121,6 +121,37 @@ def test_org_wide_analytics_scope_defers_to_last_dashboard_selection():
     assert should_expose_list_dashboards(state) is False
 
 
+def test_fresh_session_has_no_inherited_dashboard():
+    state = resolve_hard_agent_state(
+        [("user", "Bu konuların duygu trendleri nasıl?")],
+        {
+            "fresh_session": True,
+            "dashboard_id": 6208,
+            "analytics_scope": {"org_wide": True, "days": 7},
+            "last_dashboard_selection": {"id": 6208, "name": "SURVEY"},
+        },
+    )
+    assert state.dashboard_id is None
+    assert state.org_wide is False
+    assert state.source == "fresh_session"
+    assert should_expose_list_dashboards(state) is True
+    block = hard_context_prompt_block(state)
+    assert "brand-new chat" in block
+
+
+def test_fresh_session_honours_picker_selection_on_same_turn():
+    state = resolve_hard_agent_state(
+        [("user", "Bu konuların duygu trendleri nasıl?")],
+        {
+            "fresh_session": True,
+            "dashboard_selection": {"id": 6525, "name": "etstur memnuniyet"},
+        },
+    )
+    assert state.dashboard_id == 6525
+    assert state.dashboard_locked is True
+    assert state.source == "dashboard_selection"
+
+
 def test_sanitize_drops_list_dashboards_when_scope_set():
     state = HardAgentState(dashboard_id=6208, dashboard_locked=True, source="test")
     calls = [
