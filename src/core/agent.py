@@ -37,14 +37,20 @@ from core.metrics_normalize import normalize_metrics_response
 from core.pivony_platform import (
     fetch_dashboards,
     fetch_decisions,
+    fetch_digital_experience_score,
     fetch_distribution,
     fetch_emergent_topics,
     fetch_hotterms,
+    fetch_key_drivers,
     fetch_metrics,
     fetch_pivots,
     fetch_reviews,
     fetch_root_causes,
+    fetch_stored_genai,
+    fetch_topic_intent_distribution,
+    fetch_topic_participation,
     fetch_topic_ratings,
+    fetch_topic_sentiment,
     fetch_topic_trends,
     fetch_trends,
     request_plan_upgrade,
@@ -163,8 +169,9 @@ class DistributionArgs(ScopedDashboardArgs):
     kind: str = Field(
         default="sentiment",
         description=(
-            "Which breakdown: 'sentiment', 'intent', 'platform' (channel), or "
-            "'pivot' (a Pivot Analysis column such as hasChild / channel)."
+            "Which breakdown: 'sentiment', 'intent', 'platform' (channel), "
+            "'pivot' (Pivot Analysis column), 'rating' (star-rating doughnut), "
+            "'fraud' (fraud flag mix), or 'praise_intent' (Appraisal intent score)."
         ),
     )
     pivot_column: str | None = Field(
@@ -605,6 +612,174 @@ def _build_tools(
             )
         return json.dumps(data, ensure_ascii=False)
 
+    def _topic_intent_distribution(
+        dashboard_id: int,
+        pivot_key: str | None = None,
+        pivot_value: str | None = None,
+        days: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> str:
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
+        since, until, days = _eff_dates(since, until, days)
+        data = fetch_topic_intent_distribution(
+            user_id,
+            dashboard_id=resolved,
+            pivot_key=pivot_key,
+            pivot_value=pivot_value,
+            days=days,
+            since=since,
+            until=until,
+        )
+        if data is None:
+            return json.dumps(
+                {"error": "Konu bazında niyet servisi şu anda kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _topic_sentiment(
+        dashboard_id: int,
+        pivot_key: str | None = None,
+        pivot_value: str | None = None,
+        days: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> str:
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
+        since, until, days = _eff_dates(since, until, days)
+        data = fetch_topic_sentiment(
+            user_id,
+            dashboard_id=resolved,
+            pivot_key=pivot_key,
+            pivot_value=pivot_value,
+            days=days,
+            since=since,
+            until=until,
+        )
+        if data is None:
+            return json.dumps(
+                {"error": "Konu bazında duygu servisi şu anda kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _topic_participation(
+        dashboard_id: int,
+        pivot_key: str | None = None,
+        pivot_value: str | None = None,
+        days: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> str:
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
+        since, until, days = _eff_dates(since, until, days)
+        data = fetch_topic_participation(
+            user_id,
+            dashboard_id=resolved,
+            pivot_key=pivot_key,
+            pivot_value=pivot_value,
+            days=days,
+            since=since,
+            until=until,
+        )
+        if data is None:
+            return json.dumps(
+                {"error": "Konu katılım servisi şu anda kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _key_drivers(
+        dashboard_id: int,
+        pivot_key: str | None = None,
+        pivot_value: str | None = None,
+        days: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> str:
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
+        since, until, days = _eff_dates(since, until, days)
+        data = fetch_key_drivers(
+            user_id,
+            dashboard_id=resolved,
+            pivot_key=pivot_key,
+            pivot_value=pivot_value,
+            days=days,
+            since=since,
+            until=until,
+        )
+        if data is None:
+            return json.dumps(
+                {"error": "Temel etkenler (KDA) servisi şu anda kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _digital_experience_score(
+        dashboard_id: int,
+        pivot_key: str | None = None,
+        pivot_value: str | None = None,
+        days: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> str:
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
+        since, until, days = _eff_dates(since, until, days)
+        data = fetch_digital_experience_score(
+            user_id,
+            dashboard_id=resolved,
+            pivot_key=pivot_key,
+            pivot_value=pivot_value,
+            days=days,
+            since=since,
+            until=until,
+        )
+        if data is None:
+            return json.dumps(
+                {"error": "Digital Experience Score servisi şu anda kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _stored_genai(
+        dashboard_id: int,
+        pivot_key: str | None = None,
+        pivot_value: str | None = None,
+        days: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> str:
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
+        since, until, days = _eff_dates(since, until, days)
+        data = fetch_stored_genai(
+            user_id,
+            dashboard_id=resolved,
+            pivot_key=pivot_key,
+            pivot_value=pivot_value,
+            days=days,
+            since=since,
+            until=until,
+        )
+        if data is None:
+            return json.dumps(
+                {"error": "GenAI özet servisi şu anda kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
     def _root_causes(
         dashboard_id: int,
         topic: str | None = None,
@@ -766,10 +941,10 @@ def _build_tools(
         name="get_trends",
         description=(
             "Get the over-time KPI series for ONE scoped pivot value on a dashboard: "
-            "volume_daily, sentiment_daily, plus avg_rating, avg_sentiment and NPS. "
-            "Use for a single hotel/branch/segment trend (e.g. 'Voyage Torba rating "
-            "trendi'). For ranking or comparing MANY pivot values (e.g. 'en çok düşen "
-            "otel'), use compare_pivot_ratings instead."
+            "volume_daily, sentiment_daily, ratings_daily, plus avg_rating, "
+            "avg_sentiment and NPS. Use for a single hotel/branch/segment trend "
+            "(e.g. 'Voyage Torba rating trendi'). For ranking or comparing MANY "
+            "pivot values (e.g. 'en çok düşen otel'), use compare_pivot_ratings instead."
         ),
         args_schema=ScopedDashboardArgs,
     )
@@ -824,12 +999,74 @@ def _build_tools(
             "as the dashboard widgets (matches the page 1:1): 'sentiment' (positive/"
             "neutral/negative/mixed split — Sentiment Analysis), 'intent' (why "
             "customers write — Intent Analysis: complaint/request/suggestion…), "
-            "'platform' (channel/source mix), or 'pivot' (a Pivot Analysis column "
+            "'platform' (channel/source mix), 'pivot' (a Pivot Analysis column "
             "such as hasChild or channel — pass pivot_column; omit it first to list "
-            "the available columns). Use for 'intent oranı', 'duygu dağılımı', "
-            "'hangi kanaldan', 'hasChild/çocuklu oranı', 'pivot dağılımı'."
+            "the available columns), 'rating' (star-rating doughnut), 'fraud', or "
+            "'praise_intent' (Appraisal intent score). Use for 'intent oranı', "
+            "'duygu dağılımı', 'hangi kanaldan', 'hasChild/çocuklu oranı', "
+            "'pivot dağılımı', 'yıldız dağılımı', 'fraud oranı'."
         ),
         args_schema=DistributionArgs,
+    )
+    topic_intent_tool = StructuredTool.from_function(
+        func=_topic_intent_distribution,
+        name="get_topic_intent_distribution",
+        description=(
+            "Get intent distribution PER TOPIC (metric 12/17): each topic includes "
+            "intent_pcts and complaint_pct (Complaint intent %). Use for "
+            "'topiclerin şikayet oranı', 'konu bazında niyet', 'hangi konuda ne "
+            "kadar şikayet' — NOT get_distribution(intent) which is review-level only."
+        ),
+        args_schema=ScopedDashboardArgs,
+    )
+    topic_sentiment_tool = StructuredTool.from_function(
+        func=_topic_sentiment,
+        name="get_topic_sentiment",
+        description=(
+            "Get sentiment breakdown PER TOPIC (metric 14): positive/neutral/"
+            "negative % per topic. Matches DashboardData 'Kategorilerin Duygu "
+            "Skorları'. Use for 'konu bazında duygu', 'X konusunun sentimenti'."
+        ),
+        args_schema=ScopedDashboardArgs,
+    )
+    topic_participation_tool = StructuredTool.from_function(
+        func=_topic_participation,
+        name="get_topic_participation",
+        description=(
+            "Get participation (unique review count) PER TOPIC (metric 15). Use "
+            "for 'konu katılımı', 'hangi konuda kaç yorum', topic share of voice."
+        ),
+        args_schema=ScopedDashboardArgs,
+    )
+    key_drivers_tool = StructuredTool.from_function(
+        func=_key_drivers,
+        name="get_key_drivers",
+        description=(
+            "Get Key Drivers Analysis (KDA bubble) for a dashboard using the saved "
+            "KDA configuration on DashboardData. Returns status no_config when "
+            "analysis has not been set up. Use for 'temel etkenler', 'key drivers', "
+            "'hangi konu performansı en çok etkiliyor'."
+        ),
+        args_schema=ScopedDashboardArgs,
+    )
+    digital_experience_tool = StructuredTool.from_function(
+        func=_digital_experience_score,
+        name="get_digital_experience_score",
+        description=(
+            "Get Digital Experience Score (metric 18) when competitive VOC data "
+            "exists for the org. Returns status unavailable when not configured."
+        ),
+        args_schema=ScopedDashboardArgs,
+    )
+    stored_genai_tool = StructuredTool.from_function(
+        func=_stored_genai,
+        name="get_stored_genai_insights",
+        description=(
+            "List GenAI insight job status for a dashboard (summary/highlights "
+            "jobs). Use get_root_causes for stored root-cause text. Does not "
+            "generate new GenAI content."
+        ),
+        args_schema=ScopedDashboardArgs,
     )
     topic_ratings_tool = StructuredTool.from_function(
         func=_topic_ratings,
@@ -867,7 +1104,13 @@ def _build_tools(
         hotterms_tool,
         decisions_tool,
         distribution_tool,
+        topic_intent_tool,
+        topic_sentiment_tool,
+        topic_participation_tool,
         topic_ratings_tool,
+        key_drivers_tool,
+        digital_experience_tool,
+        stored_genai_tool,
         emergent_topics_tool,
         request_plan_upgrade_tool,
     ]
@@ -968,7 +1211,13 @@ _DASHBOARD_SCOPE_TOOLS = frozenset(
         "get_hotterms",
         "get_decision_distribution",
         "get_distribution",
+        "get_topic_intent_distribution",
+        "get_topic_sentiment",
+        "get_topic_participation",
         "get_topic_ratings",
+        "get_key_drivers",
+        "get_digital_experience_score",
+        "get_stored_genai_insights",
         "get_emergent_topics",
         "list_reviews",
         "get_dashboard_pivots",

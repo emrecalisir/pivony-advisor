@@ -31,8 +31,8 @@ def generate_contextual_guidance(followups: list[str]) -> str:
     Build a short Turkish guidance paragraph like Cursor's closing offers.
 
     Example:
-      "İstersen bir sonraki adımda dashboard oluşturma, Zendesk entegrasyonu
-       veya AI Insights konusuna geçebiliriz."
+      "İstersen bir sonraki adımda **şikayet konuları**, **NPS trendi**
+       veya **kök nedenler** konusuna geçebiliriz."
     """
     topics = [_topic_phrase(item) for item in followups if (item or "").strip()]
     topics = [t for t in topics if t]

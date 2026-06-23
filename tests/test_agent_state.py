@@ -26,6 +26,20 @@ _agent_state = _load_module(
     "core.agent_state",
     "agent_state.py",
 )
+if "core" not in sys.modules:
+    sys.modules["core"] = type(sys)("core")
+sys.modules["core.analytics_scope"] = _analytics
+
+_fake_platform = type(sys)("core.pivony_platform")
+_fake_platform.fetch_pivots = lambda *a, **k: None
+sys.modules["core.pivony_platform"] = _fake_platform
+
+_pivot_resolve = _load_module(
+    "core.pivot_resolve",
+    "pivot_resolve.py",
+)
+sys.modules["core.pivot_resolve"] = _pivot_resolve
+
 _tool_routing = _load_module(
     "core.tool_routing",
     "tool_routing.py",
@@ -37,6 +51,18 @@ HardAgentState = _agent_state.HardAgentState
 should_expose_list_dashboards = _tool_routing.should_expose_list_dashboards
 sanitize_tool_calls = _tool_routing.sanitize_tool_calls
 pin_tool_args_for_state = _tool_routing.pin_tool_args_for_state
+_DASHBOARD_ARG_TOOLS = _tool_routing._DASHBOARD_ARG_TOOLS
+
+_NEW_DASHBOARD_TOOLS = frozenset(
+    {
+        "get_topic_intent_distribution",
+        "get_topic_sentiment",
+        "get_topic_participation",
+        "get_key_drivers",
+        "get_digital_experience_score",
+        "get_stored_genai_insights",
+    }
+)
 
 
 def test_locked_dashboard_from_page_context():
@@ -128,3 +154,22 @@ def test_pin_tool_args_injects_user_selected_dashboard_id():
         state,
     )
     assert args["dashboard_id"] == 6208
+
+
+def test_pin_tool_args_for_new_topic_intent_tool():
+    state = HardAgentState(
+        dashboard_id=6208,
+        dashboard_locked=True,
+        source="dashboard_selection",
+    )
+    args = pin_tool_args_for_state(
+        "get_topic_intent_distribution",
+        {"dashboard_id": 9999, "days": 7},
+        state,
+    )
+    assert args["dashboard_id"] == 6208
+
+
+def test_new_dashboard_tools_registered_for_scope_pinning():
+    missing = _NEW_DASHBOARD_TOOLS - _DASHBOARD_ARG_TOOLS
+    assert not missing, f"Missing from _DASHBOARD_ARG_TOOLS: {missing}"

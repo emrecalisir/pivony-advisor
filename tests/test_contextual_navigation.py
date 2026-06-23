@@ -20,10 +20,13 @@ def _load_contextual_navigation():
     core_pkg = types.ModuleType("core")
     sys.modules.setdefault("core", core_pkg)
 
+    chip_mod = _load_file_module("core/chip_capabilities.py", "_chip_caps_for_nav")
     followups_mod = _load_file_module("core/followups.py", "_followups_for_nav")
     guidance_mod = _load_file_module("core/guidance.py", "_guidance_for_nav")
+    sys.modules["core.chip_capabilities"] = chip_mod
     sys.modules["core.followups"] = followups_mod
     sys.modules["core.guidance"] = guidance_mod
+    core_pkg.chip_capabilities = chip_mod
     core_pkg.followups = followups_mod
     core_pkg.guidance = guidance_mod
 
@@ -54,7 +57,7 @@ def test_vertex_disabled_uses_rule_based_fallback():
         use_vertex=False,
     )
     assert len(followups) == 3
-    assert any("Zendesk" in item for item in followups)
+    assert all("Zendesk" not in item for item in followups)
     assert guidance
 
 

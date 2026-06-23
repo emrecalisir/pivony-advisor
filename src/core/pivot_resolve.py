@@ -29,6 +29,14 @@ TOOLS_WITH_PIVOT_SCOPE = frozenset(
         "get_hotterms",
         "get_decision_distribution",
         "compare_pivot_ratings",
+        "get_distribution",
+        "get_topic_intent_distribution",
+        "get_topic_sentiment",
+        "get_topic_participation",
+        "get_topic_ratings",
+        "get_key_drivers",
+        "get_digital_experience_score",
+        "get_emergent_topics",
     }
 )
 

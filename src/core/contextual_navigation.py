@@ -9,6 +9,10 @@ from typing import TYPE_CHECKING
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from core.chip_capabilities import (
+    ADVISOR_CHIP_CAPABILITY_SUMMARY,
+    sanitize_chip_questions,
+)
 from core.followups import generate_followups as rule_based_followups
 from core.guidance import generate_contextual_guidance as template_guidance
 
@@ -72,13 +76,9 @@ _DATA_ANSWER_MARKERS: tuple[str, ...] = (
     "avg_rating",
 )
 
-CONVERSATION_STARTER_SYSTEM = """You suggest starter follow-up questions right after the user greeted the Advisor or made small talk — they have NOT asked a data question yet.
+CONVERSATION_STARTER_SYSTEM = f"""You suggest starter follow-up questions right after the user greeted the Advisor or made small talk — they have NOT asked a data question yet.
 
-The Pivony Advisor later answers DATA questions about the user's Voice-of-Customer dashboards:
-- Sentiment / satisfaction overview
-- Top complaint topics and root causes
-- NPS, rating, and trends over time
-- Rising/falling topics, hot terms, review counts
+{ADVISOR_CHIP_CAPABILITY_SUMMARY}
 
 Rules:
 - Match the user's language (Turkish by default).
@@ -87,30 +87,20 @@ Rules:
 - Do NOT invent facts from UI context; you are NOT given dashboard filters for this turn.
 - Do NOT suggest UI/how-to questions (creating dashboards, integrations, downloading reports).
 - Write one short welcoming guidance paragraph inviting them to explore guest-experience data.
-- Every suggested question must be answerable by the Advisor's analytics tools once a dashboard is chosen."""
+- Every suggested question must be answerable by the Advisor worker tools once a dashboard is chosen."""
 
-NAVIGATION_SYSTEM = """You are the Pivony Advisor follow-up assistant. The Advisor answers DATA questions about the user's own Voice-of-Customer dashboards by calling analytics tools. After it answers, suggest what the user could ask NEXT.
+NAVIGATION_SYSTEM = f"""You are the Pivony Advisor follow-up assistant. The Advisor answers DATA questions about the user's own Voice-of-Customer dashboards by calling worker/MCP analytics tools. After it answers, suggest what the user could ask NEXT.
 
-The Advisor can ONLY answer questions in this family (about the user's own dashboard data):
-- Sentiment breakdown and the Positive Sentiment Score
-- Most complained-about topics and their root causes
-- Review counts / volume — overall or for a specific topic
-- NPS, average rating, and how these trend over time
-- Rising / falling topics vs the previous period
-- Trending keywords (hot terms) and newly emerging topics
-- How many reviews require action (publish / open case / take action)
-- Sentiment / intent / channel (platform) distributions
-- Average rating per topic
-- A few example reviews behind a topic
+{ADVISOR_CHIP_CAPABILITY_SUMMARY}
 
 Rules:
 - Match the user's language (Turkish by default).
-- Propose exactly 2 or 3 follow-up QUESTIONS that the Advisor can actually answer with the capabilities listed above, staying on the SAME dashboard and time period already in context.
-- Phrase them as direct questions about the user's DATA, e.g. "Bu dönemde en çok şikayet edilen konular neler?" or "NPS son dönemde nasıl bir trend izliyor?".
+- Propose exactly 2 or 3 follow-up QUESTIONS that the Advisor can actually answer with the worker tools above, staying on the SAME dashboard and time period already in context.
+- Phrase them as direct questions about the user's DATA, e.g. "Bu dönemde en çok şikayet edilen konular neler?", "Konu bazında şikayet oranları neler?" or "NPS son dönemde nasıl bir trend izliyor?".
 - If the user message is ONLY a greeting, thanks, or small talk (e.g. "merhaba", "naber", "nasılsın") and the assistant reply contains NO metrics or data yet, suggest 2–3 GENERAL starter questions (sentiment overview, top complaints, NPS trend). Do NOT mention specific segments, pivots, travel types, or filters from UI context — the user has not asked about data yet.
-- NEVER suggest product how-to / setup / navigation questions — creating dashboards, integrations (Zendesk, CSV), adding widgets, downloading/scheduling reports, or anything phrased as "nasıl görebilirim / nasıl oluştururum / nereden indiririm". The Advisor answers data, not UI navigation.
+- NEVER suggest product how-to / setup / navigation questions — creating dashboards, integrations (Zendesk, CSV), adding widgets, downloading/scheduling reports, Market Intelligence, competitor dashboards, or anything phrased as "nasıl görebilirim / nasıl oluştururum / nereden indiririm". The Advisor answers data, not UI navigation.
 - Follow-up questions MUST stay within the same analytics scope as the assistant's previous answer. If the prior answer used organization-wide data (no specific dashboard named), suggest only questions answerable at that same org-wide scope — do NOT suggest dashboard-specific drill-downs that would require picking a dashboard unless the user already chose one.
-- Do not repeat the user's exact question and do not invent metrics outside the capabilities above.
+- Do not repeat the user's exact question and do not invent metrics outside the worker tool capabilities above.
 - Write one short closing paragraph (guidance) that naturally offers those directions. Use **bold** markdown only for metric/topic names inside guidance.
 - If the Advisor could not answer (no data), suggest trying a different dashboard or a wider date range instead."""
 
@@ -246,7 +236,11 @@ def _vertex_navigation(
     if not isinstance(result, ContextualNavigationResult):
         result = ContextualNavigationResult.model_validate(result)
 
-    followups = _dedupe_followups(result.followups, question, limit=3)
+    followups = sanitize_chip_questions(
+        _dedupe_followups(result.followups, question, limit=3),
+        user_question=question,
+        limit=3,
+    )
     guidance = (result.guidance or "").strip()
     if len(followups) < 2 or not guidance:
         raise ValueError("Incomplete navigation result from Vertex AI")

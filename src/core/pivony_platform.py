@@ -412,3 +412,121 @@ def fetch_emergent_topics(
         user_id, dashboard_id, pivot_key, pivot_value, days, since=since, until=until
     )
     return _post_worker(f"{_worker_base()}/advisor/emergent-topics", payload)
+
+
+def fetch_topic_intent_distribution(
+    user_id: Optional[str],
+    dashboard_id: int,
+    pivot_key: Optional[str] = None,
+    pivot_value: Optional[str] = None,
+    days: Optional[int] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    """Per-topic intent distribution (metric 12/17), including complaint_pct."""
+    if not user_id:
+        logger.warning("fetch_topic_intent_distribution called without user_id")
+        return None
+    payload = _scoped_payload(
+        user_id, dashboard_id, pivot_key, pivot_value, days, since=since, until=until
+    )
+    return _post_worker(
+        f"{_worker_base()}/advisor/topic-intent-distribution", payload
+    )
+
+
+def fetch_topic_sentiment(
+    user_id: Optional[str],
+    dashboard_id: int,
+    pivot_key: Optional[str] = None,
+    pivot_value: Optional[str] = None,
+    days: Optional[int] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    """Sentiment per topic (metric 14)."""
+    if not user_id:
+        logger.warning("fetch_topic_sentiment called without user_id")
+        return None
+    payload = _scoped_payload(
+        user_id, dashboard_id, pivot_key, pivot_value, days, since=since, until=until
+    )
+    return _post_worker(f"{_worker_base()}/advisor/topic-sentiment", payload)
+
+
+def fetch_topic_participation(
+    user_id: Optional[str],
+    dashboard_id: int,
+    pivot_key: Optional[str] = None,
+    pivot_value: Optional[str] = None,
+    days: Optional[int] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    """Participation per topic (metric 15)."""
+    if not user_id:
+        logger.warning("fetch_topic_participation called without user_id")
+        return None
+    payload = _scoped_payload(
+        user_id, dashboard_id, pivot_key, pivot_value, days, since=since, until=until
+    )
+    return _post_worker(f"{_worker_base()}/advisor/topic-participation", payload)
+
+
+def fetch_key_drivers(
+    user_id: Optional[str],
+    dashboard_id: int,
+    pivot_key: Optional[str] = None,
+    pivot_value: Optional[str] = None,
+    days: Optional[int] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    """Key Drivers Analysis (KDA bubble) using saved dashboard config."""
+    if not user_id:
+        logger.warning("fetch_key_drivers called without user_id")
+        return None
+    payload = _scoped_payload(
+        user_id, dashboard_id, pivot_key, pivot_value, days, since=since, until=until
+    )
+    return _post_worker(f"{_worker_base()}/advisor/key-drivers", payload)
+
+
+def fetch_digital_experience_score(
+    user_id: Optional[str],
+    dashboard_id: int,
+    pivot_key: Optional[str] = None,
+    pivot_value: Optional[str] = None,
+    days: Optional[int] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    """Digital Experience Score (metric 18) when competitive VOC is configured."""
+    if not user_id:
+        logger.warning("fetch_digital_experience_score called without user_id")
+        return None
+    payload = _scoped_payload(
+        user_id, dashboard_id, pivot_key, pivot_value, days, since=since, until=until
+    )
+    return _post_worker(
+        f"{_worker_base()}/advisor/digital-experience-score", payload
+    )
+
+
+def fetch_stored_genai(
+    user_id: Optional[str],
+    dashboard_id: int,
+    pivot_key: Optional[str] = None,
+    pivot_value: Optional[str] = None,
+    days: Optional[int] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    """GenAI job status for dashboard (metrics 21/23/25)."""
+    if not user_id:
+        logger.warning("fetch_stored_genai called without user_id")
+        return None
+    payload = _scoped_payload(
+        user_id, dashboard_id, pivot_key, pivot_value, days, since=since, until=until
+    )
+    return _post_worker(f"{_worker_base()}/advisor/stored-genai", payload)

@@ -5,6 +5,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from core.chip_capabilities import (
+    DEFAULT_CHIP_QUESTIONS,
+    sanitize_chip_questions,
+)
+
 
 @dataclass(frozen=True)
 class _TopicRule:
@@ -135,18 +140,62 @@ _TOPIC_RULES: tuple[_TopicRule, ...] = (
         followups=(
             "Yorumlar hangi kanallardan (platform) geliyor?",
             "Müşteriler en çok hangi amaçla (intent) yazıyor?",
+            "Konu bazında şikayet oranları neler?",
+        ),
+    ),
+    _TopicRule(
+        q_keywords=(
+            "konu bazında şikayet", "topiclerin şikayet", "şikayet oranı", "sikayet orani",
+            "intent", "niyet",
+        ),
+        followups=(
+            "Hangi konularda şikayet oranı en yüksek?",
+            "Bu konuların kök nedenleri neler?",
+            "Bu konularda birkaç örnek yorum gösterir misin?",
+        ),
+    ),
+    _TopicRule(
+        q_keywords=(
+            "katılım", "katilim", "participation", "pay", "ses",
+        ),
+        followups=(
+            "Hangi konularda en çok yorum var?",
+            "Konu bazında duygu skorları nasıl?",
+            "Bu konuların ortalama puanları nedir?",
+        ),
+    ),
+    _TopicRule(
+        q_keywords=(
+            "temel etken", "key driver", "kda", "etken analiz",
+        ),
+        followups=(
+            "En çok şikayet edilen konular neler?",
+            "NPS son dönemde nasıl bir trend izliyor?",
+            "Şikayetlerin kök nedenleri neler?",
+        ),
+    ),
+    _TopicRule(
+        q_keywords=(
+            "otel", "hotel", "marka", "şube", "sube", "vendor", "pivot", "karşılaştır", "karsilastir",
+        ),
+        followups=(
+            "Hangi otellerde rating en çok düştü?",
+            "Bu otelde en çok şikayet edilen konular neler?",
+            "Bu otelin NPS trendi nasıl?",
+        ),
+    ),
+    _TopicRule(
+        q_keywords=("fraud", "sahte", "bot", "yıldız dağılım", "yildiz dagilim"),
+        followups=(
+            "Yıldız (rating) dağılımı nasıl?",
             "Genel duyarlılık dağılımı nasıl?",
+            "Bu dönemde en çok şikayet edilen konular neler?",
         ),
     ),
 )
 
-# Capability-aligned defaults: data questions the Advisor's tools can actually
-# answer (not UI how-to/onboarding prompts).
-_DEFAULT_FOLLOWUPS: tuple[str, ...] = (
-    "Bu dönemde en çok şikayet edilen konular neler?",
-    "Genel müşteri memnuniyeti (duyarlılık) ne durumda?",
-    "Şikayetlerin temel nedenleri neler?",
-)
+# Capability-aligned defaults: data questions the Advisor worker APIs can answer.
+_DEFAULT_FOLLOWUPS: tuple[str, ...] = DEFAULT_CHIP_QUESTIONS
 
 _REFUSAL_MARKERS: tuple[str, ...] = (
     "bu bilgiye sahip değilim",
@@ -188,4 +237,8 @@ def generate_followups(
     if len(candidates) < 3:
         candidates.extend(_DEFAULT_FOLLOWUPS)
 
-    return _dedupe(candidates, question, limit=3)
+    return sanitize_chip_questions(
+        _dedupe(candidates, question, limit=3),
+        user_question=question,
+        limit=3,
+    )

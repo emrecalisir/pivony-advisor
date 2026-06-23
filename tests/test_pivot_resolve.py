@@ -77,3 +77,23 @@ def test_apply_pivot_to_tool_args():
     )
     assert out["pivot_key"] == "vendorName"
     assert out["pivot_value"] == "Voyage Torba"
+
+
+def test_apply_pivot_to_topic_intent_distribution():
+    mock_fetch = MagicMock(
+        return_value={
+            "pivots": {"vendorName": []},
+            "matches": [
+                {"pivot_key": "vendorName", "pivot_value": "Voyage Torba", "count": 5}
+            ],
+        }
+    )
+    mod = _load_pivot_resolve(fetch_pivots=mock_fetch)
+    out = mod.apply_pivot_to_tool_args(
+        "get_topic_intent_distribution",
+        {"dashboard_id": 6208, "pivot_key": "vendor_name", "pivot_value": "torba"},
+        user_id="u1",
+        dashboard_id=6208,
+    )
+    assert out["pivot_key"] == "vendorName"
+    assert out["pivot_value"] == "Voyage Torba"
