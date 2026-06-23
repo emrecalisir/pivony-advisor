@@ -22,6 +22,7 @@ from core.agent import (
     _to_langchain_messages,
 )
 from core.agent_state import hard_context_prompt_block, resolve_hard_agent_state
+from core.chart_specs import charts_from_tool_result, merge_chart_lists
 from core.llm_resilience import (
     LlmTurnFailed,
     PROCESSING_USER_MESSAGE,
@@ -218,6 +219,7 @@ def _yield_llm_failure(exc: LlmTurnFailed) -> Iterator[dict[str, Any]]:
         "type": "done",
         "content": exc.user_message,
         "dashboard_picker": None,
+        "charts": [],
     }
 
 
@@ -257,7 +259,8 @@ def stream_advisor_agent(
     Run the tool-calling loop and yield streaming events:
       - {"type": "thought", "delta": str}
       - {"type": "content", "delta": str}  (final answer only)
-      - {"type": "done", "content": str, "dashboard_picker": dict | None}
+      - {"type": "chart", "chart": dict}  (Welcome-compatible chart payload)
+      - {"type": "done", "content": str, "dashboard_picker": dict | None, "charts": list}
     """
     slug = sector_slugify(sector_slug or DEFAULT_SECTOR)
     _hard = resolve_hard_agent_state(turns, page_context)
@@ -321,6 +324,7 @@ def stream_advisor_agent(
             picker=picker,
             tools_called=tools_called,
             final_text=final_text,
+            charts=[],
         )
     except LlmTurnFailed as exc:
         logger.warning("Agent stream aborted: %s", exc.user_message)
@@ -340,6 +344,7 @@ def _run_agent_stream_loop(
     picker: dict | None,
     tools_called: set[str],
     final_text: str,
+    charts: list[dict[str, Any]],
 ) -> Iterator[dict[str, Any]]:
     for step in range(limit):
         status_events, events, model_content, function_calls = (
@@ -428,6 +433,11 @@ def _run_agent_stream_loop(
             if built:
                 picker = built
                 yield {"type": "dashboard_picker", "picker": picker}
+            new_charts = charts_from_tool_result(name, result)
+            if new_charts:
+                charts[:] = merge_chart_lists(charts, new_charts)
+                for chart in new_charts:
+                    yield {"type": "chart", "chart": chart}
             contents.append(
                 types.Content(
                     role="user",
@@ -460,7 +470,12 @@ def _run_agent_stream_loop(
             yield {"type": "dashboard_picker", "picker": picker}
 
     answer = _finalize_agent_reply(final_text or EMPTY_AGENT_REPLY)
-    yield {"type": "done", "content": answer, "dashboard_picker": picker}
+    yield {
+        "type": "done",
+        "content": answer,
+        "dashboard_picker": picker,
+        "charts": charts,
+    }
 
 
 def stream_simple_completion(
@@ -511,4 +526,4 @@ def stream_simple_completion(
 
     final_text = "".join(p.text for p in model_content.parts if p.text).strip()
     answer = _finalize_agent_reply(final_text or EMPTY_AGENT_REPLY)
-    yield {"type": "done", "content": answer, "dashboard_picker": None}
+    yield {"type": "done", "content": answer, "dashboard_picker": None, "charts": []}

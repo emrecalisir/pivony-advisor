@@ -193,6 +193,10 @@ class ChatCompletionResponse(BaseModel):
         default=None,
         description="When set, the UI should render a searchable dashboard picker: {dashboards:[{id,name}], default_dashboard_id}",
     )
+    pivony_charts: list[dict] = Field(
+        default_factory=list,
+        description="Welcome-compatible chart payloads rendered inline with the assistant reply.",
+    )
 
 
 def _prepare_chat_input(messages: list[ChatMessage]) -> dict[str, str]:
@@ -234,6 +238,7 @@ def _openai_chat_completion(
     suggested_followups: list[str] | None = None,
     guidance: str | None = None,
     dashboard_picker: dict | None = None,
+    charts: list[dict] | None = None,
 ) -> ChatCompletionResponse:
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex}",
@@ -245,6 +250,7 @@ def _openai_chat_completion(
         pivony_suggested_followups=suggested_followups or [],
         pivony_guidance=guidance or "",
         pivony_dashboard_picker=dashboard_picker,
+        pivony_charts=charts or [],
     )
 
 
@@ -291,6 +297,7 @@ async def _stream_chat_events(
     turns = extract_turns(request.messages)
     answer = ""
     dashboard_picker: dict | None = None
+    charts: list[dict] = []
 
     if USE_AGENT:
         stream = stream_advisor_agent(
@@ -314,6 +321,9 @@ async def _stream_chat_events(
             if event.get("type") == "done":
                 answer = str(event.get("content") or "")
                 dashboard_picker = event.get("dashboard_picker")
+                raw_charts = event.get("charts")
+                if isinstance(raw_charts, list):
+                    charts = [c for c in raw_charts if isinstance(c, dict)]
                 continue
             if event.get("type") == "dashboard_picker":
                 picker_payload = event.get("picker")
@@ -364,6 +374,7 @@ async def _stream_chat_events(
             "pivony_suggested_followups": followups,
             "pivony_guidance": guidance,
             "pivony_dashboard_picker": dashboard_picker,
+            "pivony_charts": charts,
         }
     )
     yield "data: [DONE]\n\n"
