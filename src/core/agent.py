@@ -49,9 +49,13 @@ from core.pivony_platform import (
     fetch_stored_genai,
     fetch_topic_intent_distribution,
     fetch_topic_participation,
+    fetch_topic_participation_daily,
     fetch_topic_ratings,
     fetch_topic_sentiment,
+    fetch_topic_sentiment_daily,
     fetch_topic_trends,
+    fetch_topic_trends_view,
+    fetch_review_statistics,
     fetch_trends,
     request_plan_upgrade,
 )
@@ -225,6 +229,25 @@ class RootCausesArgs(BaseModel):
     )
     pivot_key: str | None = Field(default=None, description="Optional pivot key.")
     pivot_value: str | None = Field(default=None, description="Optional pivot value.")
+
+
+class TopicDailyArgs(ScopedDashboardArgs):
+    topic: str | None = Field(
+        default=None,
+        description="Topic name to scope daily trends to (e.g. 'Oda', 'F&B').",
+    )
+    topic_id: int | None = Field(
+        default=None,
+        description="DashTopics topic id when known.",
+    )
+    period: str | None = Field(
+        default="daily",
+        description="Granularity: daily, weekly, or monthly.",
+    )
+    limit: int | None = Field(
+        default=None,
+        description="Max topics to return when no single topic is scoped (default 12).",
+    )
 
 
 class MetricsArgs(BaseModel):
@@ -696,6 +719,142 @@ def _build_tools(
             )
         return json.dumps(data, ensure_ascii=False)
 
+    def _topic_sentiment_daily(
+        dashboard_id: int,
+        pivot_key: str | None = None,
+        pivot_value: str | None = None,
+        days: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        topic: str | None = None,
+        topic_id: int | None = None,
+        period: str | None = None,
+        limit: int | None = None,
+    ) -> str:
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
+        since, until, days = _eff_dates(since, until, days)
+        data = fetch_topic_sentiment_daily(
+            user_id,
+            dashboard_id=resolved,
+            pivot_key=pivot_key,
+            pivot_value=pivot_value,
+            days=days,
+            since=since,
+            until=until,
+            topic=topic,
+            topic_id=topic_id,
+            period=period,
+            limit=limit,
+        )
+        if data is None:
+            return json.dumps(
+                {"error": "Konu bazında günlük duygu trendi servisi kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _topic_participation_daily(
+        dashboard_id: int,
+        pivot_key: str | None = None,
+        pivot_value: str | None = None,
+        days: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        topic: str | None = None,
+        topic_id: int | None = None,
+        period: str | None = None,
+        limit: int | None = None,
+    ) -> str:
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
+        since, until, days = _eff_dates(since, until, days)
+        data = fetch_topic_participation_daily(
+            user_id,
+            dashboard_id=resolved,
+            pivot_key=pivot_key,
+            pivot_value=pivot_value,
+            days=days,
+            since=since,
+            until=until,
+            topic=topic,
+            topic_id=topic_id,
+            period=period,
+            limit=limit,
+        )
+        if data is None:
+            return json.dumps(
+                {"error": "Konu bazında günlük katılım trendi servisi kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _topic_trends_view(
+        dashboard_id: int,
+        pivot_key: str | None = None,
+        pivot_value: str | None = None,
+        days: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        topic: str | None = None,
+        topic_id: int | None = None,
+        period: str | None = None,
+        limit: int | None = None,
+    ) -> str:
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
+        since, until, days = _eff_dates(since, until, days)
+        data = fetch_topic_trends_view(
+            user_id,
+            dashboard_id=resolved,
+            pivot_key=pivot_key,
+            pivot_value=pivot_value,
+            days=days,
+            since=since,
+            until=until,
+            topic=topic,
+            topic_id=topic_id,
+            period=period,
+            limit=limit,
+        )
+        if data is None:
+            return json.dumps(
+                {"error": "Konu trend görünümü servisi kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _review_statistics(
+        dashboard_id: int,
+        pivot_key: str | None = None,
+        pivot_value: str | None = None,
+        days: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> str:
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
+        since, until, days = _eff_dates(since, until, days)
+        data = fetch_review_statistics(
+            user_id,
+            dashboard_id=resolved,
+            pivot_key=pivot_key,
+            pivot_value=pivot_value,
+            days=days,
+            since=since,
+            until=until,
+        )
+        if data is None:
+            return json.dumps(
+                {"error": "Yorum istatistikleri servisi kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
     def _key_drivers(
         dashboard_id: int,
         pivot_key: str | None = None,
@@ -909,7 +1068,8 @@ def _build_tools(
             "Get the analyzed root causes behind complaints for a dashboard, optionally "
             "scoped to a topic (pass topic_id from get_pivony_metrics complaint_topics, "
             "or a topic name). Use for 'ana problem / neden / kök neden' questions. "
-            "Returns status: 'ok' (root_causes listed), 'none_for_topic' (analysis exists "
+            "Returns status: 'ok' (root_causes listed with recommendation per row — "
+            "metric 20 table shape), 'none_for_topic' (analysis exists "
             "but none for this topic), or 'not_generated' (root-cause analysis has not "
             "been run for this dashboard yet — tell the user it must be generated)."
         ),
@@ -1038,6 +1198,50 @@ def _build_tools(
         ),
         args_schema=ScopedDashboardArgs,
     )
+    topic_sentiment_daily_tool = StructuredTool.from_function(
+        func=_topic_sentiment_daily,
+        name="get_topic_sentiment_daily",
+        description=(
+            "Get daily/weekly/monthly sentiment trend PER TOPIC (positive/negative "
+            "counts and positive_pct by day). Matches Dashboard Topics Trends "
+            "SentimentDaily. Use for 'X konusunun duygu trendi', 'konu bazında "
+            "günlük sentiment'. Pass topic or topic_id to scope one topic."
+        ),
+        args_schema=TopicDailyArgs,
+    )
+    topic_participation_daily_tool = StructuredTool.from_function(
+        func=_topic_participation_daily,
+        name="get_topic_participation_daily",
+        description=(
+            "Get daily/weekly/monthly review volume (participation) PER TOPIC. "
+            "Matches Dashboard Topics Trends VolumeDaily. Use for 'X konusunun "
+            "hacim trendi', 'konu bazında günlük yorum sayısı'."
+        ),
+        args_schema=TopicDailyArgs,
+    )
+    topic_trends_view_tool = StructuredTool.from_function(
+        func=_topic_trends_view,
+        name="get_topic_trends_view",
+        description=(
+            "Get the Dashboard Topics Trends view for one or more topics: both "
+            "volume_daily and sentiment_daily series per topic (same as "
+            "dashboards/v2/get/trends_from_topics view_type=trends). Use when "
+            "comparing multiple topics over time or when both volume and sentiment "
+            "daily charts are needed."
+        ),
+        args_schema=TopicDailyArgs,
+    )
+    review_statistics_tool = StructuredTool.from_function(
+        func=_review_statistics,
+        name="get_review_statistics",
+        description=(
+            "Get Review Statistics (metric 8): total review count hero, optional "
+            "platform/doughnut distribution, and review volume time series. "
+            "Matches Welcome 'Review Statistics' widget. Use for 'toplam yorum "
+            "sayısı', 'yorum hacmi trendi', 'kanal dağılımı' in one payload."
+        ),
+        args_schema=ScopedDashboardArgs,
+    )
     key_drivers_tool = StructuredTool.from_function(
         func=_key_drivers,
         name="get_key_drivers",
@@ -1107,6 +1311,10 @@ def _build_tools(
         topic_intent_tool,
         topic_sentiment_tool,
         topic_participation_tool,
+        topic_sentiment_daily_tool,
+        topic_participation_daily_tool,
+        topic_trends_view_tool,
+        review_statistics_tool,
         topic_ratings_tool,
         key_drivers_tool,
         digital_experience_tool,
@@ -1214,6 +1422,10 @@ _DASHBOARD_SCOPE_TOOLS = frozenset(
         "get_topic_intent_distribution",
         "get_topic_sentiment",
         "get_topic_participation",
+        "get_topic_sentiment_daily",
+        "get_topic_participation_daily",
+        "get_topic_trends_view",
+        "get_review_statistics",
         "get_topic_ratings",
         "get_key_drivers",
         "get_digital_experience_score",

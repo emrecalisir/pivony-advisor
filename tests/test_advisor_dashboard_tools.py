@@ -27,3 +27,18 @@ def test_prompts_document_ratings_daily_in_trends():
 def test_prompts_document_distribution_kinds():
     for kind in ("rating", "fraud", "praise_intent"):
         assert kind in AGENT_TOOL_GUIDANCE
+
+
+def test_prompts_document_topic_daily_tools():
+    for tool in (
+        "get_topic_sentiment_daily",
+        "get_topic_participation_daily",
+        "get_topic_trends_view",
+        "get_review_statistics",
+    ):
+        assert tool in AGENT_TOOL_GUIDANCE
+
+
+def test_prompts_no_longer_claim_daily_sentiment_unavailable():
+    assert "not yet available" not in AGENT_TOOL_GUIDANCE
+    assert "get_topic_sentiment_daily" in AGENT_TOOL_GUIDANCE

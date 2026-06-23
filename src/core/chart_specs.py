@@ -296,6 +296,102 @@ def _charts_from_distribution(data: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def _topic_daily_palette() -> list[str]:
+    return ["#6366f1", "#0ea5e9", "#4CAF50", "#F44336", "#FF9800", "#9C27B0"]
+
+
+def _charts_from_topic_daily_sentiment(data: dict[str, Any]) -> list[dict[str, Any]]:
+    topics = data.get("topics") or []
+    if not isinstance(topics, list) or not topics:
+        return []
+    charts: list[dict[str, Any]] = []
+    palette = _topic_daily_palette()
+    for idx, topic in enumerate(topics[:4]):
+        if not isinstance(topic, dict):
+            continue
+        series = topic.get("sentiment_daily") or []
+        if not isinstance(series, list) or not series:
+            continue
+        labels = [str(r.get("day") or "") for r in series]
+        values = [float(r.get("positive_pct") or 0) for r in series]
+        if not labels or not any(values):
+            continue
+        name = str(topic.get("topic_name") or "?")
+        charts.append(
+            _line_chart(
+                title=f"{name} — pozitif duygu trendi (%)",
+                labels=labels,
+                datasets=[
+                    {
+                        "label": "Pozitif %",
+                        "data": values,
+                        "borderColor": palette[idx % len(palette)],
+                        "backgroundColor": "rgba(99,102,241,0.12)",
+                        "fill": True,
+                    }
+                ],
+                source_tool="get_topic_sentiment_daily",
+            )
+        )
+    return charts
+
+
+def _charts_from_topic_daily_participation(data: dict[str, Any]) -> list[dict[str, Any]]:
+    topics = data.get("topics") or []
+    if not isinstance(topics, list) or not topics:
+        return []
+    charts: list[dict[str, Any]] = []
+    palette = _topic_daily_palette()
+    for idx, topic in enumerate(topics[:4]):
+        if not isinstance(topic, dict):
+            continue
+        series = topic.get("volume_daily") or []
+        if not isinstance(series, list) or not series:
+            continue
+        labels = [str(r.get("day") or "") for r in series]
+        values = [float(r.get("count") or 0) for r in series]
+        if not labels or not any(values):
+            continue
+        name = str(topic.get("topic_name") or "?")
+        charts.append(
+            _line_chart(
+                title=f"{name} — günlük yorum hacmi",
+                labels=labels,
+                datasets=[
+                    {
+                        "label": "Yorum",
+                        "data": values,
+                        "borderColor": palette[idx % len(palette)],
+                        "backgroundColor": "rgba(99,102,241,0.12)",
+                        "fill": True,
+                    }
+                ],
+                source_tool="get_topic_participation_daily",
+            )
+        )
+    return charts
+
+
+def _charts_from_topic_trends_view(data: dict[str, Any]) -> list[dict[str, Any]]:
+    charts = _charts_from_topic_daily_participation(data)
+    charts.extend(_charts_from_topic_daily_sentiment(data))
+    for chart in charts:
+        chart["source_tool"] = "get_topic_trends_view"
+    return charts
+
+
+def _charts_from_review_statistics(data: dict[str, Any]) -> list[dict[str, Any]]:
+    payload = data.get("review_statistics")
+    if not isinstance(payload, dict):
+        return []
+    if payload.get("chart_type") != "review_statistics":
+        return []
+    out = dict(payload)
+    out["source_tool"] = "get_review_statistics"
+    out["title"] = (payload.get("header") or {}).get("title") or "Review Statistics"
+    return [out]
+
+
 def _charts_from_topic_trends(data: dict[str, Any]) -> list[dict[str, Any]]:
     rising = data.get("rising") or []
     falling = data.get("falling") or []
@@ -344,6 +440,10 @@ _TOOL_CHART_BUILDERS = {
     "get_topic_intent_distribution": _charts_from_topic_intent,
     "get_distribution": _charts_from_distribution,
     "get_topic_trends": _charts_from_topic_trends,
+    "get_topic_sentiment_daily": _charts_from_topic_daily_sentiment,
+    "get_topic_participation_daily": _charts_from_topic_daily_participation,
+    "get_topic_trends_view": _charts_from_topic_trends_view,
+    "get_review_statistics": _charts_from_review_statistics,
 }
 
 
@@ -361,7 +461,9 @@ def charts_from_tool_result(tool_name: str, result: str | dict[str, Any] | None)
         charts = builder(data)
     except (TypeError, ValueError, KeyError):
         return []
-    return [c for c in charts if isinstance(c, dict) and c.get("labels")]
+    return [c for c in charts if isinstance(c, dict) and (
+        c.get("labels") or c.get("chart_type") == "review_statistics"
+    )]
 
 
 def merge_chart_lists(

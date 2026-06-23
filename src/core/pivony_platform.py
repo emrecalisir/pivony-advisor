@@ -473,6 +473,129 @@ def fetch_topic_participation(
     return _post_worker(f"{_worker_base()}/advisor/topic-participation", payload)
 
 
+def fetch_topic_sentiment_daily(
+    user_id: Optional[str],
+    dashboard_id: int,
+    pivot_key: Optional[str] = None,
+    pivot_value: Optional[str] = None,
+    days: Optional[int] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    topic: Optional[str] = None,
+    topic_id: Optional[int] = None,
+    topic_ids: Optional[list[int]] = None,
+    period: Optional[str] = None,
+    limit: Optional[int] = None,
+) -> Optional[dict[str, Any]]:
+    """Per-topic daily/weekly/monthly sentiment series (Dashboard Topics Trends)."""
+    if not user_id:
+        logger.warning("fetch_topic_sentiment_daily called without user_id")
+        return None
+    payload = _scoped_payload(
+        user_id, dashboard_id, pivot_key, pivot_value, days, since=since, until=until
+    )
+    if topic and str(topic).strip():
+        payload["topic"] = str(topic).strip()
+    if topic_id is not None:
+        payload["topic_id"] = topic_id
+    if topic_ids:
+        payload["topic_ids"] = topic_ids
+    if period and str(period).strip():
+        payload["period"] = str(period).strip().lower()
+    if limit:
+        payload["limit"] = limit
+    return _post_worker(f"{_worker_base()}/advisor/topic-sentiment-daily", payload)
+
+
+def fetch_topic_participation_daily(
+    user_id: Optional[str],
+    dashboard_id: int,
+    pivot_key: Optional[str] = None,
+    pivot_value: Optional[str] = None,
+    days: Optional[int] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    topic: Optional[str] = None,
+    topic_id: Optional[int] = None,
+    topic_ids: Optional[list[int]] = None,
+    period: Optional[str] = None,
+    limit: Optional[int] = None,
+) -> Optional[dict[str, Any]]:
+    """Per-topic daily/weekly/monthly volume (participation) series."""
+    if not user_id:
+        logger.warning("fetch_topic_participation_daily called without user_id")
+        return None
+    payload = _scoped_payload(
+        user_id, dashboard_id, pivot_key, pivot_value, days, since=since, until=until
+    )
+    if topic and str(topic).strip():
+        payload["topic"] = str(topic).strip()
+    if topic_id is not None:
+        payload["topic_id"] = topic_id
+    if topic_ids:
+        payload["topic_ids"] = topic_ids
+    if period and str(period).strip():
+        payload["period"] = str(period).strip().lower()
+    if limit:
+        payload["limit"] = limit
+    return _post_worker(
+        f"{_worker_base()}/advisor/topic-participation-daily", payload
+    )
+
+
+def fetch_topic_trends_view(
+    user_id: Optional[str],
+    dashboard_id: int,
+    pivot_key: Optional[str] = None,
+    pivot_value: Optional[str] = None,
+    days: Optional[int] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    topic: Optional[str] = None,
+    topic_id: Optional[int] = None,
+    topic_ids: Optional[list[int]] = None,
+    period: Optional[str] = None,
+    limit: Optional[int] = None,
+) -> Optional[dict[str, Any]]:
+    """Dashboard Topics Trends view — volume + sentiment daily per topic."""
+    if not user_id:
+        logger.warning("fetch_topic_trends_view called without user_id")
+        return None
+    payload = _scoped_payload(
+        user_id, dashboard_id, pivot_key, pivot_value, days, since=since, until=until
+    )
+    if topic and str(topic).strip():
+        payload["topic"] = str(topic).strip()
+    if topic_id is not None:
+        payload["topic_id"] = topic_id
+    if topic_ids:
+        payload["topic_ids"] = topic_ids
+    if period and str(period).strip():
+        payload["period"] = str(period).strip().lower()
+    if limit:
+        payload["limit"] = limit
+    return _post_worker(f"{_worker_base()}/advisor/topic-trends-view", payload)
+
+
+def fetch_review_statistics(
+    user_id: Optional[str],
+    dashboard_id: int,
+    pivot_key: Optional[str] = None,
+    pivot_value: Optional[str] = None,
+    days: Optional[int] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    """Review Statistics (metric 8): hero total + time series + platform doughnut."""
+    if not user_id:
+        logger.warning("fetch_review_statistics called without user_id")
+        return None
+    payload = _scoped_payload(
+        user_id, dashboard_id, pivot_key, pivot_value, days, since=since, until=until
+    )
+    return _post_worker(f"{_worker_base()}/advisor/review-statistics", payload)
+
+
 def fetch_key_drivers(
     user_id: Optional[str],
     dashboard_id: int,
