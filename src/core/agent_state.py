@@ -130,14 +130,16 @@ def resolve_hard_agent_state(
             )
         if raw_scope.get("org_wide"):
             picker_dash = _dashboard_from_picker_context(pc)
-            if picker_dash is not None:
+            page_dash = _int_or_none(pc.get("dashboard_id"))
+            locked = picker_dash or page_dash
+            if locked is not None:
                 return HardAgentState(
-                    dashboard_id=picker_dash,
+                    dashboard_id=locked,
                     since=str(scope_since).strip() if scope_since else since_pc,
                     until=str(scope_until).strip() if scope_until else until_pc,
                     days=scope_days or days_pc or 7,
                     dashboard_locked=True,
-                    source="last_dashboard_selection",
+                    source="last_dashboard_selection" if picker_dash else "page_dashboard_id",
                 )
             return HardAgentState(
                 org_wide=True,

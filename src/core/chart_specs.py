@@ -84,6 +84,27 @@ def _charts_from_trends(data: dict[str, Any]) -> list[dict[str, Any]]:
         pos = [float(r.get("positive") or 0) for r in sentiment]
         neg = [float(r.get("negative") or 0) for r in sentiment]
         if any(pos) or any(neg):
+            neg_pct = []
+            for p, n in zip(pos, neg):
+                total = p + n
+                neg_pct.append(round(100.0 * n / total, 1) if total > 0 else 0.0)
+            if any(neg_pct):
+                charts.append(
+                    _line_chart(
+                        title="Günlük negatif yorum oranı (%)",
+                        labels=labels,
+                        datasets=[
+                            {
+                                "label": "Negatif %",
+                                "data": neg_pct,
+                                "borderColor": "#F44336",
+                                "backgroundColor": "rgba(244,67,54,0.15)",
+                                "fill": True,
+                            }
+                        ],
+                        source_tool="get_trends",
+                    )
+                )
             charts.append(
                 _line_chart(
                     title="Günlük duygu (pozitif / negatif yorum)",

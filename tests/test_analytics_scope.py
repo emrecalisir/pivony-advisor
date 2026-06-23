@@ -52,6 +52,24 @@ def test_page_context_dashboard_overrides_inference():
     assert scope.dashboard_id == 6198
 
 
+def test_page_dashboard_id_blocks_org_wide_inference():
+    turns = [
+        ("user", "negatiflik trendi"),
+        ("assistant", "Son 7 günde negatif oran %12."),
+        ("user", "grafiği tekrar oluştur"),
+    ]
+    scope = infer_established_analytics_scope(
+        turns,
+        {
+            "dashboard_id": 6208,
+            "last_dashboard_selection": {"id": 6208, "name": "SURVEY"},
+        },
+    )
+    assert scope is not None
+    assert scope.dashboard_id == 6208
+    assert scope.org_wide is False
+
+
 def test_scope_prompt_org_wide():
     block = scope_prompt_block(
         infer_established_analytics_scope(

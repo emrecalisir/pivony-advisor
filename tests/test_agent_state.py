@@ -121,6 +121,20 @@ def test_org_wide_analytics_scope_defers_to_last_dashboard_selection():
     assert should_expose_list_dashboards(state) is False
 
 
+def test_org_wide_analytics_scope_defers_to_page_dashboard_id():
+    state = resolve_hard_agent_state(
+        [("user", "grafiği tekrar oluştur")],
+        {
+            "analytics_scope": {"org_wide": True, "days": 7},
+            "dashboard_id": 6208,
+        },
+    )
+    assert state.dashboard_id == 6208
+    assert state.dashboard_locked is True
+    assert state.org_wide is False
+    assert state.source == "page_dashboard_id"
+
+
 def test_fresh_session_has_no_inherited_dashboard():
     state = resolve_hard_agent_state(
         [("user", "Bu konuların duygu trendleri nasıl?")],

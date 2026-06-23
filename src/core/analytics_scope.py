@@ -110,6 +110,21 @@ def infer_established_analytics_scope(
         return None
 
     pc = page_context if isinstance(page_context, dict) else {}
+
+    page_dash = pc.get("dashboard_id")
+    if page_dash is not None:
+        try:
+            return EstablishedAnalyticsScope(dashboard_id=int(page_dash))
+        except (TypeError, ValueError):
+            pass
+
+    selection = pc.get("last_dashboard_selection") or pc.get("dashboard_selection")
+    if isinstance(selection, dict) and selection.get("id") is not None:
+        try:
+            return EstablishedAnalyticsScope(dashboard_id=int(selection["id"]))
+        except (TypeError, ValueError):
+            pass
+
     since = pc.get("since")
     until = pc.get("until")
     days = _parse_days_from_text(last_substantive) or 7
