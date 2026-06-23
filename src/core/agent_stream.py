@@ -401,16 +401,20 @@ def _run_agent_stream_loop(
             ).strip()
             break
 
+        raw_function_calls = list(function_calls)
         function_calls = sanitize_function_calls(function_calls, _hard)
-        for fc in function_calls:
+        executable_ids = {id(fc) for fc in function_calls}
+        for fc in raw_function_calls:
             name = fc.name or ""
             if name:
                 tools_called.add(name)
             yield {"type": "status", "phase": "tool", "detail": name}
             args = dict(fc.args or {})
             tool = tool_map.get(name)
-            blocked = blocked_tool_result(name, _hard) if name else None
-            if blocked:
+            if id(fc) not in executable_ids:
+                blocked = blocked_tool_result(name, _hard) if name else None
+                result = blocked or f"Bilinmeyen araç: {name}"
+            elif blocked := blocked_tool_result(name, _hard) if name else None:
                 result = blocked
             elif tool is None:
                 result = f"Bilinmeyen araç: {name}"
@@ -438,9 +442,10 @@ def _run_agent_stream_loop(
                 )
             )
         logger.info(
-            "Agent stream step %s: executed %s tool call(s)",
+            "Agent stream step %s: executed %s tool call(s) (%s suppressed)",
             step + 1,
-            len(function_calls),
+            len(executable_ids),
+            len(raw_function_calls) - len(executable_ids),
         )
 
     if picker is None:

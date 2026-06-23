@@ -28,8 +28,20 @@ class _FakeClientError(Exception):
     code = 429
 
 
+class _Fake400ClientError(Exception):
+    code = 400
+
+
 def test_is_rate_limit_detects_429_client_error():
     assert is_rate_limit_error(_FakeClientError("RESOURCE_EXHAUSTED"))
+
+
+def test_is_rate_limit_rejects_400_client_error():
+    assert not is_rate_limit_error(
+        _Fake400ClientError(
+            "400 INVALID_ARGUMENT. function response parts mismatch"
+        )
+    )
 
 
 def test_is_rate_limit_detects_message_text():

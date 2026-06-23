@@ -71,7 +71,13 @@ def is_rate_limit_error(exc: BaseException) -> bool:
         ClientError = ()  # type: ignore[misc, assignment]
 
     if isinstance(exc, ClientError):
-        return True
+        status = getattr(exc, "status_code", None)
+        if status is None:
+            status = getattr(exc, "code", None)
+        if status == 429:
+            return True
+        text = str(exc)
+        return "429" in text and "RESOURCE_EXHAUSTED" in text
 
     text = str(exc)
     return "429" in text and "RESOURCE_EXHAUSTED" in text
