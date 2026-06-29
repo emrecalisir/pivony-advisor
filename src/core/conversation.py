@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 _MAX_HISTORY_TURNS = 6
-_MAX_ASSISTANT_SNIPPET = 400
+_MAX_ASSISTANT_SNIPPET = 700
 
 _FOLLOW_UP_MARKERS = (
     "peki",
@@ -28,6 +28,23 @@ _FOLLOW_UP_MARKERS = (
     "that",
     "this",
     "it",
+)
+
+# Questions whose answer lives in the previous assistant turn (hotel / time / place).
+_REFERENCE_MARKERS = (
+    "hangi otel",
+    "hangi otelde",
+    "hangi otelden",
+    "bu otel",
+    "o otel",
+    "nerede",
+    "neresi",
+    "ne zaman",
+    "hangi tarih",
+    "which hotel",
+    "what hotel",
+    "where",
+    "when",
 )
 
 
@@ -55,13 +72,25 @@ def _non_system_messages(messages: list[Any]) -> list[tuple[str, str]]:
     return out
 
 
+def _normalize(text: str) -> str:
+    return re.sub(r"\s+", " ", text.lower()).strip()
+
+
+def _is_reference_question(question: str) -> bool:
+    """True when the answer refers back to the previous turn (hotel/date/place)."""
+    normalized = _normalize(question)
+    return any(marker in normalized for marker in _REFERENCE_MARKERS)
+
+
 def _is_follow_up(question: str) -> bool:
-    normalized = re.sub(r"\s+", " ", question.lower()).strip()
+    normalized = _normalize(question)
     if not normalized:
         return False
     if len(normalized) <= 45:
         return True
     if normalized.startswith(_FOLLOW_UP_MARKERS):
+        return True
+    if _is_reference_question(normalized):
         return True
     return any(f" {marker} " in f" {normalized} " for marker in _FOLLOW_UP_MARKERS)
 
@@ -110,14 +139,26 @@ def build_retrieval_query(messages: list[Any]) -> str:
         previous = user_messages[-2]
         parts = [previous, current]
 
+        # Reference questions ("bu hangi otelde?") need the previous answer,
+        # which carries the hotel/date, weighted into the retrieval query.
+        snippet_len = 1200 if _is_reference_question(current) else _MAX_ASSISTANT_SNIPPET
         for role, content in reversed(turns[:-1]):
             if role == "assistant":
-                parts.append(_truncate(content, _MAX_ASSISTANT_SNIPPET))
+                parts.append(_truncate(content, snippet_len))
                 break
 
         return "\n".join(parts)
 
     return current
+
+
+def extract_turns(messages: list[Any], *, max_turns: int = _MAX_HISTORY_TURNS) -> list[tuple[str, str]]:
+    """Public: ordered (role, content) user/assistant turns, trimmed to recent history."""
+    turns = _non_system_messages(messages)
+    if not turns:
+        return []
+    # Keep the latest user message plus up to max_turns of prior context.
+    return turns[-(max_turns + 1):]
 
 
 def prepare_conversational_input(messages: list[Any]) -> dict[str, str]:

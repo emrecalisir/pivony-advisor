@@ -9,6 +9,10 @@ from typing import TYPE_CHECKING
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+from core.chip_capabilities import (
+    ADVISOR_CHIP_CAPABILITY_SUMMARY,
+    sanitize_chip_questions,
+)
 from core.followups import generate_followups as rule_based_followups
 from core.guidance import generate_contextual_guidance as template_guidance
 
@@ -25,18 +29,80 @@ _REFUSAL_MARKERS: tuple[str, ...] = (
     "don't have information",
 )
 
-NAVIGATION_SYSTEM = """You are the Pivony Advisor navigation assistant.
-After the user receives an answer about the Pivony customer experience platform, suggest what they might explore next.
+_GREETING_MARKERS: tuple[str, ...] = (
+    "naber",
+    "nasilsin",
+    "nasılsın",
+    "merhaba",
+    "selam",
+    "hello",
+    "hi ",
+    "hey",
+    "günaydın",
+    "gunaydin",
+    "iyi günler",
+    "teşekkür",
+    "tesekkur",
+    "sağol",
+    "sagol",
+    "how are you",
+    "thanks",
+    "thank you",
+)
+
+_GENERIC_ANSWER_MARKERS: tuple[str, ...] = (
+    "yapay zeka",
+    "asistan",
+    "size nasıl yardımcı",
+    "how can i help",
+    "nasıl yardımcı olabilirim",
+)
+
+_DATA_ANSWER_MARKERS: tuple[str, ...] = (
+    "%",
+    "nps",
+    "rating",
+    "puan",
+    "şikayet",
+    "sikayet",
+    "dashboard",
+    "yorum",
+    "sentiment",
+    "duyarlılık",
+    "duyarlilik",
+    "review_count",
+    "konu",
+    "topic",
+    "avg_rating",
+)
+
+CONVERSATION_STARTER_SYSTEM = f"""You suggest starter follow-up questions right after the user greeted the Advisor or made small talk — they have NOT asked a data question yet.
+
+{ADVISOR_CHIP_CAPABILITY_SUMMARY}
 
 Rules:
 - Match the user's language (Turkish by default).
-- Propose exactly 2 or 3 specific follow-up questions the user could ask next.
-- Write one short Cursor-style closing paragraph (guidance) that naturally offers those directions.
-- Use **bold** markdown only inside guidance for topic names.
-- Ground suggestions in the conversation — Pivony features such as dashboards, VoC, Market Intelligence, Zendesk, My Workspace, AI Insights, reports, filters.
-- Do not repeat the user's exact question.
-- Do not invent product features not implied by the exchange.
-- If the assistant could not answer, suggest general onboarding questions instead."""
+- Propose exactly 2 or 3 GENERAL, broad starter questions — overview level only (e.g. overall sentiment, top complaints, NPS trend).
+- Do NOT mention specific segments, travel types, pivots, hotel/brand names, or filters — scope is not established yet.
+- Do NOT invent facts from UI context; you are NOT given dashboard filters for this turn.
+- Do NOT suggest UI/how-to questions (creating dashboards, integrations, downloading reports).
+- Write one short welcoming guidance paragraph inviting them to explore guest-experience data.
+- Every suggested question must be answerable by the Advisor worker tools once a dashboard is chosen."""
+
+NAVIGATION_SYSTEM = f"""You are the Pivony Advisor follow-up assistant. The Advisor answers DATA questions about the user's own Voice-of-Customer dashboards by calling worker/MCP analytics tools. After it answers, suggest what the user could ask NEXT.
+
+{ADVISOR_CHIP_CAPABILITY_SUMMARY}
+
+Rules:
+- Match the user's language (Turkish by default).
+- Propose exactly 2 or 3 follow-up QUESTIONS that the Advisor can actually answer with the worker tools above, staying on the SAME dashboard and time period already in context.
+- Phrase them as direct questions about the user's DATA, e.g. "Bu dönemde en çok şikayet edilen konular neler?", "Konu bazında şikayet oranları neler?" or "NPS son dönemde nasıl bir trend izliyor?".
+- If the user message is ONLY a greeting, thanks, or small talk (e.g. "merhaba", "naber", "nasılsın") and the assistant reply contains NO metrics or data yet, suggest 2–3 GENERAL starter questions (sentiment overview, top complaints, NPS trend). Do NOT mention specific segments, pivots, travel types, or filters from UI context — the user has not asked about data yet.
+- NEVER suggest product how-to / setup / navigation questions — creating dashboards, integrations (Zendesk, CSV), adding widgets, downloading/scheduling reports, Market Intelligence, competitor dashboards, or anything phrased as "nasıl görebilirim / nasıl oluştururum / nereden indiririm". The Advisor answers data, not UI navigation.
+- Follow-up questions MUST stay within the same analytics scope as the assistant's previous answer. If the prior answer used organization-wide data (no specific dashboard named), suggest only questions answerable at that same org-wide scope — do NOT suggest dashboard-specific drill-downs that would require picking a dashboard unless the user already chose one.
+- Do not repeat the user's exact question and do not invent metrics outside the worker tool capabilities above.
+- Write one short closing paragraph (guidance) that naturally offers those directions. Use **bold** markdown only for metric/topic names inside guidance.
+- If the Advisor could not answer (no data), suggest trying a different dashboard or a wider date range instead."""
 
 
 class ContextualNavigationResult(BaseModel):
@@ -61,6 +127,39 @@ def _normalize(text: str) -> str:
 def _is_refusal(answer: str) -> bool:
     answer_norm = _normalize(answer)
     return not answer_norm or any(marker in answer_norm for marker in _REFUSAL_MARKERS)
+
+
+def _is_conversational_turn(question: str, answer: str) -> bool:
+    """Greeting/small-talk with no data in the reply — skip segment-specific chips."""
+    q = _normalize(question)
+    a = _normalize(answer)
+    if not q:
+        return False
+    is_greeting = any(marker in q for marker in _GREETING_MARKERS)
+    if not is_greeting and len(q.split()) > 8:
+        return False
+    if not is_greeting:
+        # Very short non-data openers ("nabe", "hey") without analytics keywords.
+        is_greeting = len(q.split()) <= 4 and not any(
+            kw in q
+            for kw in (
+                "nps",
+                "rating",
+                "şikayet",
+                "sikayet",
+                "yorum",
+                "duyarlılık",
+                "duyarlilik",
+                "trend",
+                "dashboard",
+                "otel",
+            )
+        )
+    if not is_greeting:
+        return False
+    has_data = any(marker in a for marker in _DATA_ANSWER_MARKERS)
+    is_generic = any(marker in a for marker in _GENERIC_ANSWER_MARKERS)
+    return is_generic or (not has_data and len(a) < 280)
 
 
 def _dedupe_followups(items: list[str], question: str, limit: int = 3) -> list[str]:
@@ -108,6 +207,69 @@ def _build_navigation_prompt(
     return "\n".join(parts)
 
 
+def _vertex_navigation(
+    *,
+    system: str,
+    question: str,
+    answer: str,
+    chat_history: str | None,
+    context_hint: str | None,
+    llm: ChatGoogleGenerativeAI,
+) -> tuple[list[str], str]:
+    structured_llm = llm.with_structured_output(
+        ContextualNavigationResult,
+        method="json_schema",
+    )
+    result = structured_llm.invoke(
+        [
+            SystemMessage(content=system),
+            HumanMessage(
+                content=_build_navigation_prompt(
+                    question=question,
+                    answer=answer,
+                    chat_history=chat_history,
+                    context_hint=context_hint,
+                )
+            ),
+        ]
+    )
+    if not isinstance(result, ContextualNavigationResult):
+        result = ContextualNavigationResult.model_validate(result)
+
+    followups = sanitize_chip_questions(
+        _dedupe_followups(result.followups, question, limit=3),
+        user_question=question,
+        limit=3,
+    )
+    guidance = (result.guidance or "").strip()
+    if len(followups) < 2 or not guidance:
+        raise ValueError("Incomplete navigation result from Vertex AI")
+    return followups, guidance
+
+
+def _starter_navigation(
+    question: str,
+    answer: str,
+    *,
+    llm: ChatGoogleGenerativeAI | None,
+    use_vertex: bool,
+) -> tuple[list[str], str]:
+    """General starter chips after greeting — LLM-generated, no UI context leak."""
+    if use_vertex and llm is not None:
+        try:
+            return _vertex_navigation(
+                system=CONVERSATION_STARTER_SYSTEM,
+                question=question,
+                answer=answer,
+                chat_history=None,
+                context_hint=None,
+                llm=llm,
+            )
+        except Exception as exc:
+            logger.warning("Vertex starter navigation failed, using fallback: %s", exc)
+    return _fallback_navigation(question, answer, context_hint=None)
+
+
 def generate_contextual_navigation(
     question: str,
     answer: str,
@@ -122,6 +284,9 @@ def generate_contextual_navigation(
 
     Falls back to rule-based suggestions if Vertex is disabled or the call fails.
     """
+    if _is_conversational_turn(question, answer):
+        return _starter_navigation(question, answer, llm=llm, use_vertex=use_vertex)
+
     if _is_refusal(answer):
         return _fallback_navigation(question, answer, context_hint=context_hint)
 
@@ -129,32 +294,14 @@ def generate_contextual_navigation(
         return _fallback_navigation(question, answer, context_hint=context_hint)
 
     try:
-        structured_llm = llm.with_structured_output(
-            ContextualNavigationResult,
-            method="json_schema",
+        return _vertex_navigation(
+            system=NAVIGATION_SYSTEM,
+            question=question,
+            answer=answer,
+            chat_history=chat_history,
+            context_hint=context_hint,
+            llm=llm,
         )
-        result = structured_llm.invoke(
-            [
-                SystemMessage(content=NAVIGATION_SYSTEM),
-                HumanMessage(
-                    content=_build_navigation_prompt(
-                        question=question,
-                        answer=answer,
-                        chat_history=chat_history,
-                        context_hint=context_hint,
-                    )
-                ),
-            ]
-        )
-        if not isinstance(result, ContextualNavigationResult):
-            result = ContextualNavigationResult.model_validate(result)
-
-        followups = _dedupe_followups(result.followups, question, limit=3)
-        guidance = (result.guidance or "").strip()
-        if len(followups) < 2 or not guidance:
-            raise ValueError("Incomplete navigation result from Vertex AI")
-
-        return followups, guidance
     except Exception as exc:
         logger.warning("Vertex contextual navigation failed, using fallback: %s", exc)
         return _fallback_navigation(question, answer, context_hint=context_hint)

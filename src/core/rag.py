@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from langchain_core.output_parsers import StrOutputParser
@@ -17,7 +18,7 @@ from core.config import (
     EMBEDDING_MODEL,
     GCP_LOCATION,
     GCP_PROJECT,
-    LLM_MODEL,
+    ADVISOR_LLM_MODEL,
     LLM_TEMPERATURE,
     PLATFORM_COLLECTION,
     PLATFORM_K,
@@ -31,9 +32,81 @@ from core.prompts import HUMAN_PROMPT, MASTER_PROMPT, get_sector_prompt
 
 logger = logging.getLogger(__name__)
 
+_META_LINE = re.compile(r"^-?\s*([A-Za-z0-9_\[\]\.]+)\s*:\s*(.+)$")
+_SECTOR_HEADER = re.compile(r"^\[Sector:.*\]\s*$", re.MULTILINE)
+
+# Candidate ingest keys -> display dimension (first non-empty wins)
+_HOTEL_KEYS = ("vendorName", "projectName", "hotelName", "propertyName", "hotel", "Property")
+_DATE_KEYS = ("SubmittedAt", "ReviewSubmissionDate", "date", "sk")
+_CATEGORY_KEYS = ("category", "Category", "topic", "subTopic", "subtopic")
+
+
+def _scan_fields(text: str) -> dict[str, str]:
+    """Collect `- key: value` / `key: value` pairs from a chunk's text prefix."""
+    fields: dict[str, str] = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("["):
+            continue
+        match = _META_LINE.match(stripped)
+        if not match:
+            # Stop scanning once the free-text review body starts.
+            if fields:
+                break
+            continue
+        key, value = match.group(1), match.group(2).strip()
+        if key not in fields and value:
+            fields[key] = value
+    return fields
+
+
+def _pick(fields: dict[str, str], metadata: dict[str, Any], keys) -> str | None:
+    for key in keys:
+        value = fields.get(key) or metadata.get(key)
+        if value and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+def extract_review_dimensions(doc) -> dict[str, str | None]:
+    """Pull hotel / date / category for metadata injection (page_content + metadata)."""
+    fields = _scan_fields(getattr(doc, "page_content", "") or "")
+    metadata = getattr(doc, "metadata", {}) or {}
+    return {
+        "hotel": _pick(fields, metadata, _HOTEL_KEYS),
+        "date": _pick(fields, metadata, _DATE_KEYS),
+        "category": _pick(fields, metadata, _CATEGORY_KEYS),
+    }
+
+
+def _strip_internal_header(text: str) -> str:
+    return _SECTOR_HEADER.sub("", text or "", count=1).strip()
+
 
 def format_docs(docs) -> str:
+    """Plain concatenation (used for platform knowledge, non-review chunks)."""
     return "\n\n".join(doc.page_content for doc in docs)
+
+
+def format_review_docs(docs) -> str:
+    """
+    Inject structured metadata so hotel/date survive into the prompt:
+
+        [Metadata -> Otel: X | Tarih: Y | Kategori: Z]
+        Misafir Yorumu: <review text>
+    """
+    blocks: list[str] = []
+    for doc in docs:
+        dims = extract_review_dimensions(doc)
+        meta_parts = [f"Otel: {dims['hotel'] or 'Belirtilmemiş'}"]
+        if dims["date"]:
+            meta_parts.append(f"Tarih: {dims['date']}")
+        if dims["category"]:
+            meta_parts.append(f"Kategori: {dims['category']}")
+        header = "[Metadata -> " + " | ".join(meta_parts) + "]"
+        body = _strip_internal_header(getattr(doc, "page_content", "") or "")
+        blocks.append(f"{header}\nMisafir Yorumu: {body}")
+    return "\n\n".join(blocks)
 
 
 def create_qdrant_client() -> QdrantClient:
@@ -53,7 +126,7 @@ def build_embeddings() -> GoogleGenerativeAIEmbeddings:
 
 def build_llm() -> ChatGoogleGenerativeAI:
     return ChatGoogleGenerativeAI(
-        model=LLM_MODEL,
+        model=ADVISOR_LLM_MODEL,
         project=GCP_PROJECT,
         location=GCP_LOCATION,
         vertexai=True,
@@ -114,12 +187,34 @@ def retrieve_merged_context(
     if sector_docs:
         parts.append(
             f"=== {slug.replace('-', ' ').title()} Sector Knowledge ===\n"
-            + format_docs(sector_docs)
+            + format_review_docs(sector_docs)
         )
 
     if not parts:
         return "(No relevant documents retrieved from knowledge bases.)"
     return "\n\n".join(parts)
+
+
+def search_reviews(
+    query: str,
+    sector_slug: str,
+    *,
+    embeddings: GoogleGenerativeAIEmbeddings,
+    client: QdrantClient,
+    k: int | None = None,
+) -> str:
+    """Sector-only review search with metadata injection (used by the agent tool)."""
+    slug = sector_slugify(sector_slug or DEFAULT_SECTOR)
+    docs = _search_collection(
+        client=client,
+        embeddings=embeddings,
+        collection_name=collection_for_sector(slug),
+        question=query,
+        k=k or SECTOR_K,
+    )
+    if not docs:
+        return "(Bu konuda ilgili misafir yorumu bulunamadı.)"
+    return format_review_docs(docs)
 
 
 def build_rag_chain(

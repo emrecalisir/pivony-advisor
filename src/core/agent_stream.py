@@ -1,333 +1,529 @@
-"""
-Tool-calling Advisor agent with SSE streaming.
-
-Advisor Basic: precomputed metrics / stored root causes only.
-Advisor Pro: adds live review search and on-the-fly root-cause vendor breakdown.
-"""
+"""Streaming advisor agent with Gemini thinking tokens (Vertex AI)."""
 
 from __future__ import annotations
 
-import json
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.tools import StructuredTool
-from pydantic import BaseModel, Field
+from google import genai
+from google.genai import types
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from qdrant_client import QdrantClient
 
-from core.advisor_plan import allowed_tools, is_pro_mode, tier_label
-from core.config import ADVISOR_AGENT_MAX_TOOL_ROUNDS
-from core.contextual_navigation import generate_contextual_navigation
-from core.rag import build_llm
-from core.welcome_client import compact_json, post_worker
+from core.agent import (
+    EMPTY_AGENT_REPLY,
+    _build_tools,
+    _extract_dashboard_picker,
+    _finalize_agent_reply,
+    _message_text,
+    _resolve_dashboard_picker_fallback,
+    _to_langchain_messages,
+)
+from core.agent_state import hard_context_prompt_block, resolve_hard_agent_state
+from core.chart_specs import charts_from_tool_result, merge_chart_lists
+from core.llm_resilience import (
+    LlmTurnFailed,
+    PROCESSING_USER_MESSAGE,
+    collect_stream_turn,
+    make_rate_limit_retry_status,
+)
+from core.tool_routing import (
+    blocked_tool_result,
+    filter_tools_for_state,
+    sanitize_function_calls,
+    validated_tool_invoke,
+)
+from core.config import (
+    AGENT_MAX_TOOL_ITERATIONS,
+    DEFAULT_SECTOR,
+    GCP_LOCATION,
+    GCP_PROJECT,
+    ADVISOR_LLM_MODEL,
+    LLM_TEMPERATURE,
+    sector_slugify,
+)
+from core.prompts import build_agent_system_prompt
 
 logger = logging.getLogger(__name__)
 
-AGENT_SYSTEM = """You are Pivony Advisor ({tier}).
-
-Use tools to answer questions about the user's Voice of Customer data.
-Respond in the same language as the user. Be concise and actionable.
-
-{pivot_hint}
-"""
+_genai_client: genai.Client | None = None
 
 
-class EmptyArgs(BaseModel):
-    pass
+def _get_genai_client() -> genai.Client:
+    global _genai_client
+    if _genai_client is None:
+        _genai_client = genai.Client(
+            vertexai=True,
+            project=GCP_PROJECT,
+            location=GCP_LOCATION,
+        )
+    return _genai_client
 
 
-class DashboardIdArgs(BaseModel):
-    dashboard_id: int = Field(description="Dashboard id")
-    days: int | None = Field(default=1, description="Lookback days when since/until omitted")
-
-
-class RootCausesArgs(BaseModel):
-    dashboard_id: int
-    topic: str | None = None
-    limit: int | None = 5
-
-
-class ReviewsArgs(BaseModel):
-    dashboard_id: int
-    topic_id: int | None = None
-    pivot_key: str | None = None
-    pivot_value: str | None = None
-    days: int | None = 90
-    limit: int | None = None
-
-
-class SearchReviewsArgs(BaseModel):
-    dashboard_id: int
-    query: str
-    days: int | None = 90
-
-
-class AnalyzeRootCauseArgs(BaseModel):
-    dashboard_id: int
-    root_cause_text: str
-    days: int | None = 90
-
-
-class PlanUpgradeArgs(BaseModel):
-    message: str | None = None
-
-
-def _sse(event: dict[str, Any]) -> str:
-    return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-
-
-def _build_tools(
-    *,
-    user_id: str,
-    advisor_mode: str | None,
-    page_context: dict[str, Any] | None,
-) -> list[StructuredTool]:
-    pc = page_context if isinstance(page_context, dict) else {}
-    base = {"user_id": user_id, "advisor_mode": advisor_mode or "advisor"}
-    if pc.get("since"):
-        base["since"] = pc["since"]
-    if pc.get("until"):
-        base["until"] = pc["until"]
-    if pc.get("days") is not None:
-        base["days"] = pc["days"]
-    default_dash = pc.get("dashboard_id")
-
-    def _merge(extra: dict[str, Any]) -> dict[str, Any]:
-        body = {**base}
-        if default_dash is not None and "dashboard_id" not in extra:
-            body["dashboard_id"] = default_dash
-        body.update(extra)
-        return body
-
-    tools: list[StructuredTool] = []
-
-    def _add(name: str, description: str, fn, args_schema):
-        if name not in allowed_tools(advisor_mode):
-            return
-        tools.append(
-            StructuredTool.from_function(
-                func=fn,
-                name=name,
-                description=description,
-                args_schema=args_schema,
+def _tool_declarations(tools: list[Any]) -> list[types.Tool]:
+    declarations: list[types.FunctionDeclaration] = []
+    for tool in tools:
+        schema = tool.args_schema.model_json_schema()
+        schema.pop("title", None)
+        for prop in schema.get("properties", {}).values():
+            if isinstance(prop, dict):
+                prop.pop("title", None)
+        declarations.append(
+            types.FunctionDeclaration(
+                name=tool.name,
+                description=tool.description or "",
+                parameters=schema,
             )
         )
+    return [types.Tool(function_declarations=declarations)]
 
-    def list_dashboards() -> str:
-        return compact_json(post_worker("/worker/advisor/dashboards", _merge({})))
 
-    def get_pivony_metrics(dashboard_id: int, days: int | None = 1) -> str:
-        return compact_json(
-            post_worker(
-                "/worker/advisor-metrics",
-                _merge({"dashboard_id": dashboard_id, "days": days or 1}),
+def _langchain_to_genai_contents(messages: list[BaseMessage]) -> list[types.Content]:
+    contents: list[types.Content] = []
+    for message in messages:
+        if isinstance(message, HumanMessage):
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[types.Part(text=str(message.content or ""))],
+                )
             )
-        )
-
-    def get_root_causes(dashboard_id: int, topic: str | None = None, limit: int | None = 5) -> str:
-        body = _merge({"dashboard_id": dashboard_id, "limit": limit or 5})
-        if topic:
-            body["topic"] = topic
-        return compact_json(post_worker("/worker/advisor/root-causes", body))
-
-    def list_reviews(
-        dashboard_id: int,
-        topic_id: int | None = None,
-        pivot_key: str | None = None,
-        pivot_value: str | None = None,
-        days: int | None = 90,
-        limit: int | None = None,
-    ) -> str:
-        body = _merge({"dashboard_id": dashboard_id, "days": days or 90})
-        if topic_id is not None:
-            body["topic_id"] = topic_id
-        if pivot_key and pivot_value:
-            body["pivot_key"] = pivot_key
-            body["pivot_value"] = pivot_value
-        if limit is not None:
-            body["limit"] = limit
-        return compact_json(post_worker("/worker/advisor/reviews", body))
-
-    def search_reviews(dashboard_id: int, query: str, days: int | None = 90) -> str:
-        return compact_json(
-            post_worker(
-                "/worker/advisor/search-reviews",
-                _merge({"dashboard_id": dashboard_id, "query": query, "days": days or 90}),
+        elif isinstance(message, AIMessage):
+            parts: list[types.Part] = []
+            text = _message_text(message)
+            if text:
+                parts.append(types.Part(text=text))
+            for call in getattr(message, "tool_calls", None) or []:
+                parts.append(
+                    types.Part(
+                        function_call=types.FunctionCall(
+                            name=call.get("name") or "",
+                            args=call.get("args") or {},
+                        )
+                    )
+                )
+            if parts:
+                contents.append(types.Content(role="model", parts=parts))
+        elif isinstance(message, ToolMessage):
+            name = message.name or message.tool_call_id or "tool"
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part(
+                            function_response=types.FunctionResponse(
+                                name=name,
+                                response={"result": str(message.content or "")},
+                            )
+                        )
+                    ],
+                )
             )
-        )
-
-    def analyze_root_cause_live(
-        dashboard_id: int, root_cause_text: str, days: int | None = 90
-    ) -> str:
-        return compact_json(
-            post_worker(
-                "/worker/advisor/analyze-root-cause-live",
-                _merge(
-                    {
-                        "dashboard_id": dashboard_id,
-                        "root_cause_text": root_cause_text,
-                        "days": days or 90,
-                    }
-                ),
-            )
-        )
-
-    def request_plan_upgrade(message: str | None = None) -> str:
-        body = _merge({})
-        if message:
-            body["message"] = message
-        return compact_json(post_worker("/worker/advisor/plan-request", body))
-
-    _add(
-        "list_dashboards",
-        "List dashboards the user can access. Use when dashboard context is missing.",
-        list_dashboards,
-        EmptyArgs,
-    )
-    _add(
-        "get_pivony_metrics",
-        "Headline KPIs, sentiment, complaint topics, and precomputed top root causes for a dashboard.",
-        get_pivony_metrics,
-        DashboardIdArgs,
-    )
-    _add(
-        "get_root_causes",
-        "Stored (precomputed) root causes from GenAI/MCP pipeline with scope, pivot, and date_period.",
-        get_root_causes,
-        RootCausesArgs,
-    )
-    _add(
-        "list_reviews",
-        "Fetch a small sample of example review texts (Basic: max 10, Pro: max 50).",
-        list_reviews,
-        ReviewsArgs,
-    )
-    _add(
-        "search_reviews",
-        "Advisor Pro: keyword search across reviews with vendor distribution.",
-        search_reviews,
-        SearchReviewsArgs,
-    )
-    _add(
-        "analyze_root_cause_live",
-        "Advisor Pro: live vendor/hotel breakdown for a root-cause phrase by searching matching reviews.",
-        analyze_root_cause_live,
-        AnalyzeRootCauseArgs,
-    )
-    _add(
-        "request_plan_upgrade",
-        "Email Pivony team to upgrade the org to Advisor Pro.",
-        request_plan_upgrade,
-        PlanUpgradeArgs,
-    )
-    return tools
+    return contents
 
 
-def _messages_from_openai(raw_messages: list[dict[str, Any]]) -> list:
-    out = []
-    for msg in raw_messages:
-        role = (msg.get("role") or "").strip()
-        content = msg.get("content") or ""
-        if role == "system":
-            out.append(SystemMessage(content=content))
-        elif role == "user":
-            out.append(HumanMessage(content=content))
-        elif role == "assistant" and content:
-            out.append(AIMessage(content=content))
-    return out
-
-
-def stream_agent_chat(
-    *,
-    messages: list[dict[str, Any]],
-    advisor_mode: str | None,
-    user_id: str | None,
-    page_context: dict[str, Any] | None,
-    api_system: str | None,
-) -> Iterator[str]:
-    uid = (user_id or "").strip()
-    if not uid:
-        yield _sse({"type": "error", "message": "Missing pivony_user_id"})
-        yield "data: [DONE]\n\n"
+def _merge_function_calls(
+    existing: dict[str, types.FunctionCall],
+    part: types.Part,
+) -> None:
+    fc = part.function_call
+    if fc is None:
         return
-
-    tools = _build_tools(user_id=uid, advisor_mode=advisor_mode, page_context=page_context)
-    llm = build_llm().bind_tools(tools)
-
-    pivot_hint = ""
-    if is_pro_mode(advisor_mode):
-        pivot_hint = (
-            "You may use search_reviews and analyze_root_cause_live for live analysis. "
-            "Prefer get_root_causes for precomputed RCA first."
+    key = fc.id or fc.name or "call"
+    if key not in existing:
+        existing[key] = types.FunctionCall(
+            id=fc.id,
+            name=fc.name,
+            args=dict(fc.args or {}),
         )
-    else:
-        pivot_hint = (
-            "You are on Advisor Basic: use only precomputed tools. "
-            "For hotel/vendor live breakdown or custom RCA, call request_plan_upgrade."
+        return
+    cur = existing[key]
+    if fc.name:
+        cur.name = fc.name
+    if fc.args:
+        merged = dict(cur.args or {})
+        merged.update(dict(fc.args))
+        cur.args = merged
+
+
+def _stream_model_turn(
+    *,
+    client: genai.Client,
+    model: str,
+    contents: list[types.Content],
+    config: types.GenerateContentConfig,
+    emit_content: bool,
+) -> Iterator[dict[str, Any]]:
+    """Stream one model turn; return (model_content, function_calls) via StopIteration."""
+    content_parts: list[str] = []
+    function_calls: dict[str, types.FunctionCall] = {}
+
+    for chunk in client.models.generate_content_stream(
+        model=model,
+        contents=contents,
+        config=config,
+    ):
+        if not chunk.candidates:
+            continue
+        for part in chunk.candidates[0].content.parts or []:
+            if getattr(part, "thought", None) and part.text:
+                yield {"type": "thought", "delta": part.text}
+            elif part.text and not part.function_call:
+                content_parts.append(part.text)
+                if emit_content:
+                    yield {"type": "content", "delta": part.text}
+            if part.function_call:
+                _merge_function_calls(function_calls, part)
+
+    model_parts: list[types.Part] = []
+    full_text = "".join(content_parts)
+    if full_text:
+        model_parts.append(types.Part(text=full_text))
+    for fc in function_calls.values():
+        model_parts.append(types.Part(function_call=fc))
+
+    return (
+        types.Content(role="model", parts=model_parts),
+        list(function_calls.values()),
+    )
+
+
+def _collect_turn_with_rate_limit_status(
+    turn_factory: Callable[[], Iterator[dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], Any, list[Any]]:
+    """Run collect_stream_turn; emit at most one retry status SSE event on 429 backoff."""
+    status_events: list[dict[str, Any]] = []
+
+    def on_rate_limit_retry(attempt: int, max_attempts: int, _wait: float) -> None:
+        if status_events:
+            return
+        status_events.append(make_rate_limit_retry_status(attempt, max_attempts))
+
+    events, model_content, function_calls = collect_stream_turn(
+        turn_factory,
+        on_rate_limit_retry=on_rate_limit_retry,
+    )
+    return status_events, events, model_content, function_calls
+
+
+def _yield_llm_failure(exc: LlmTurnFailed) -> Iterator[dict[str, Any]]:
+    """Single replaceable error bubble after automatic retries are exhausted."""
+    yield {
+        "type": "content",
+        "delta": exc.user_message,
+        "replace": True,
+    }
+    yield {
+        "type": "done",
+        "content": exc.user_message,
+        "dashboard_picker": None,
+        "charts": [],
+    }
+
+
+def _yield_turn_events(
+    status_events: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+) -> Iterator[dict[str, Any]]:
+    """Emit retry status once, then model events (replace waiting text on first content)."""
+    replace_pending = bool(status_events)
+    for event in status_events:
+        yield event
+    for event in events:
+        if (
+            replace_pending
+            and event.get("type") == "content"
+            and event.get("delta")
+        ):
+            yield {**event, "replace": True}
+            replace_pending = False
+        else:
+            yield event
+
+
+def stream_advisor_agent(
+    *,
+    turns: list[tuple[str, str]],
+    sector_slug: str = DEFAULT_SECTOR,
+    extra_system_prompt: str | None = None,
+    embeddings: GoogleGenerativeAIEmbeddings,
+    client: QdrantClient,
+    advisor_mode: str,
+    user_id: str | None = None,
+    page_context: dict | None = None,
+    max_iterations: int | None = None,
+) -> Iterator[dict[str, Any]]:
+    """
+    Run the tool-calling loop and yield streaming events:
+      - {"type": "thought", "delta": str}
+      - {"type": "content", "delta": str}  (final answer only)
+      - {"type": "chart", "chart": dict}  (Welcome-compatible chart payload)
+      - {"type": "done", "content": str, "dashboard_picker": dict | None, "charts": list}
+    """
+    slug = sector_slugify(sector_slug or DEFAULT_SECTOR)
+    _hard = resolve_hard_agent_state(turns, page_context)
+    tools = filter_tools_for_state(
+        _build_tools(
+            sector_slug=slug,
+            embeddings=embeddings,
+            client=client,
+            advisor_mode=advisor_mode,
+            user_id=user_id,
+            page_context=page_context,
+            turns=turns,
+            hard_state=_hard,
+        ),
+        _hard,
+    )
+    tool_map = {tool.name: tool for tool in tools}
+    genai_client = _get_genai_client()
+
+    scope_hint = hard_context_prompt_block(_hard)
+    system_prompt = build_agent_system_prompt(
+        slug, extra_system_prompt, advisor_mode=advisor_mode
+    )
+    if scope_hint:
+        system_prompt = f"{system_prompt}\n\n{scope_hint}"
+    lc_messages = _to_langchain_messages(system_prompt, turns)
+    contents = _langchain_to_genai_contents(lc_messages[1:])
+
+    base_config = types.GenerateContentConfig(
+        system_instruction=types.Content(
+            role="user",
+            parts=[types.Part(text=system_prompt)],
+        ),
+        tools=_tool_declarations(tools),
+        thinking_config=types.ThinkingConfig(include_thoughts=True),
+        temperature=LLM_TEMPERATURE,
+    )
+
+    default_dash = _hard.dashboard_id
+    if default_dash is None and isinstance(page_context, dict):
+        raw = page_context.get("dashboard_id")
+        try:
+            default_dash = int(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            default_dash = None
+    picker: dict | None = None
+    tools_called: set[str] = set()
+    limit = max_iterations or AGENT_MAX_TOOL_ITERATIONS
+    final_text = ""
+
+    try:
+        yield from _run_agent_stream_loop(
+            genai_client=genai_client,
+            base_config=base_config,
+            contents=contents,
+            tool_map=tool_map,
+            _hard=_hard,
+            default_dash=default_dash,
+            user_id=user_id,
+            limit=limit,
+            picker=picker,
+            tools_called=tools_called,
+            final_text=final_text,
+            charts=[],
         )
+    except LlmTurnFailed as exc:
+        logger.warning("Agent stream aborted: %s", exc.user_message)
+        yield from _yield_llm_failure(exc)
 
-    system = AGENT_SYSTEM.format(tier=tier_label(advisor_mode), pivot_hint=pivot_hint)
-    if api_system:
-        system = f"{system}\n\n{api_system}"
 
-    lc_messages = [SystemMessage(content=system)] + _messages_from_openai(messages)
+def _run_agent_stream_loop(
+    *,
+    genai_client: genai.Client,
+    base_config: types.GenerateContentConfig,
+    contents: list[types.Content],
+    tool_map: dict[str, Any],
+    _hard: Any,
+    default_dash: int | None,
+    user_id: str | None,
+    limit: int,
+    picker: dict | None,
+    tools_called: set[str],
+    final_text: str,
+    charts: list[dict[str, Any]],
+) -> Iterator[dict[str, Any]]:
+    for step in range(limit):
+        status_events, events, model_content, function_calls = (
+            _collect_turn_with_rate_limit_status(
+                lambda: _stream_model_turn(
+                    client=genai_client,
+                    model=ADVISOR_LLM_MODEL,
+                    contents=contents,
+                    config=base_config,
+                    emit_content=False,
+                )
+            )
+        )
+        for event in _yield_turn_events(status_events, events):
+            yield event
 
-    answer = ""
-    tool_actions: list[str] = []
-
-    for _round in range(ADVISOR_AGENT_MAX_TOOL_ROUNDS):
-        ai_msg = llm.invoke(lc_messages)
-        lc_messages.append(ai_msg)
-
-        if not getattr(ai_msg, "tool_calls", None):
-            answer = (ai_msg.content or "").strip()
+        if not model_content.parts and not function_calls:
+            logger.error("Agent stream: empty model turn after retries at step %s", step + 1)
+            yield {"type": "content", "delta": PROCESSING_USER_MESSAGE}
+            final_text = PROCESSING_USER_MESSAGE
             break
 
-        for call in ai_msg.tool_calls:
-            name = call.get("name") or ""
-            tool_actions.append(name)
-            yield _sse({"type": "status", "phase": "tool", "detail": name})
-            tool_fn = next((t for t in tools if t.name == name), None)
-            if tool_fn is None:
-                result = json.dumps(
-                    {"error": "tool_not_allowed", "tool": name}, ensure_ascii=False
+        if not model_content.parts:
+            break
+
+        contents.append(model_content)
+
+        if not function_calls:
+            for part in model_content.parts:
+                if part.text:
+                    yield {"type": "content", "delta": part.text}
+            final_text = "".join(
+                p.text for p in model_content.parts if p.text
+            ).strip()
+            break
+
+        if step == limit - 1:
+            no_tool_config = types.GenerateContentConfig(
+                system_instruction=base_config.system_instruction,
+                thinking_config=base_config.thinking_config,
+                temperature=LLM_TEMPERATURE,
+            )
+            retry_status, retry_events, model_content, _ = (
+                _collect_turn_with_rate_limit_status(
+                    lambda: _stream_model_turn(
+                        client=genai_client,
+                        model=ADVISOR_LLM_MODEL,
+                        contents=contents,
+                        config=no_tool_config,
+                        emit_content=True,
+                    )
                 )
+            )
+            for event in _yield_turn_events(retry_status, retry_events):
+                yield event
+            contents.append(model_content)
+            final_text = "".join(
+                p.text for p in model_content.parts if p.text
+            ).strip()
+            break
+
+        raw_function_calls = list(function_calls)
+        function_calls = sanitize_function_calls(function_calls, _hard)
+        executable_ids = {id(fc) for fc in function_calls}
+        for fc in raw_function_calls:
+            name = fc.name or ""
+            if name:
+                tools_called.add(name)
+            yield {"type": "status", "phase": "tool", "detail": name}
+            args = dict(fc.args or {})
+            tool = tool_map.get(name)
+            if id(fc) not in executable_ids:
+                blocked = blocked_tool_result(name, _hard) if name else None
+                result = blocked or f"Bilinmeyen araç: {name}"
+            elif blocked := blocked_tool_result(name, _hard) if name else None:
+                result = blocked
+            elif tool is None:
+                result = f"Bilinmeyen araç: {name}"
             else:
                 try:
-                    result = tool_fn.invoke(call.get("args") or {})
+                    result = validated_tool_invoke(tool, args, _hard, user_id=user_id)
                 except Exception as exc:
-                    logger.exception("Tool %s failed: %s", name, exc)
-                    result = json.dumps({"error": str(exc)}, ensure_ascii=False)
-            lc_messages.append(
-                ToolMessage(content=str(result), tool_call_id=call.get("id") or name)
+                    logger.warning("Tool %s failed: %s", name, exc)
+                    result = f"Araç hatası ({name}): {exc}"
+            built = _extract_dashboard_picker(name, result, default_dash)
+            if built:
+                picker = built
+                yield {"type": "dashboard_picker", "picker": picker}
+            new_charts = charts_from_tool_result(name, result)
+            if new_charts:
+                charts[:] = merge_chart_lists(charts, new_charts)
+                for chart in new_charts:
+                    yield {"type": "chart", "chart": chart}
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part(
+                            function_response=types.FunctionResponse(
+                                name=name,
+                                response={"result": str(result)},
+                            )
+                        )
+                    ],
+                )
             )
-    else:
-        answer = "I could not complete the analysis within the tool step limit."
+        logger.info(
+            "Agent stream step %s: executed %s tool call(s) (%s suppressed)",
+            step + 1,
+            len(executable_ids),
+            len(raw_function_calls) - len(executable_ids),
+        )
 
-    if answer:
-        yield _sse({"type": "content", "delta": answer})
+    if picker is None:
+        picker = _resolve_dashboard_picker_fallback(
+            user_id=user_id,
+            default_dashboard_id=default_dash,
+            assistant_text=final_text,
+            tools_called=tools_called,
+            established_scope=_hard.as_established(),
+        )
+        if picker:
+            yield {"type": "dashboard_picker", "picker": picker}
 
-    question = ""
-    for msg in reversed(messages):
-        if msg.get("role") == "user" and msg.get("content"):
-            question = str(msg["content"])
-            break
+    answer = _finalize_agent_reply(final_text or EMPTY_AGENT_REPLY)
+    yield {
+        "type": "done",
+        "content": answer,
+        "dashboard_picker": picker,
+        "charts": charts,
+    }
 
-    followups, guidance = generate_contextual_navigation(
-        question,
-        answer,
-        context_hint=api_system,
-        llm=build_llm(),
+
+def stream_simple_completion(
+    *,
+    system_prompt: str,
+    user_messages: list[tuple[str, str]],
+) -> Iterator[dict[str, Any]]:
+    """Non-agent fallback: stream a single Gemini completion with thinking tokens."""
+    genai_client = _get_genai_client()
+    contents: list[types.Content] = []
+    for role, text in user_messages:
+        if role == "user":
+            contents.append(
+                types.Content(role="user", parts=[types.Part(text=text)])
+            )
+        elif role == "assistant":
+            contents.append(
+                types.Content(role="model", parts=[types.Part(text=text)])
+            )
+
+    config = types.GenerateContentConfig(
+        system_instruction=types.Content(
+            role="user",
+            parts=[types.Part(text=system_prompt)],
+        ),
+        thinking_config=types.ThinkingConfig(include_thoughts=True),
+        temperature=LLM_TEMPERATURE,
     )
 
-    yield _sse(
-        {
-            "type": "done",
-            "content": answer,
-            "pivony_suggested_followups": followups,
-            "pivony_guidance": guidance,
-            "pivony_tool_actions": tool_actions,
-        }
-    )
-    yield "data: [DONE]\n\n"
+    try:
+        status_events, turn_events, model_content, _ = (
+            _collect_turn_with_rate_limit_status(
+                lambda: _stream_model_turn(
+                    client=genai_client,
+                    model=ADVISOR_LLM_MODEL,
+                    contents=contents,
+                    config=config,
+                    emit_content=True,
+                )
+            )
+        )
+    except LlmTurnFailed as exc:
+        yield from _yield_llm_failure(exc)
+        return
+
+    for event in _yield_turn_events(status_events, turn_events):
+        yield event
+
+    final_text = "".join(p.text for p in model_content.parts if p.text).strip()
+    answer = _finalize_agent_reply(final_text or EMPTY_AGENT_REPLY)
+    yield {"type": "done", "content": answer, "dashboard_picker": None, "charts": []}

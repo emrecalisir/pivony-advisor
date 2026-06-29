@@ -59,3 +59,7 @@ psql "$DATABASE_URL" -f migrations/cx_gpt_industry_prompts.sql
 ```
 
 Set `EnterpriseCustomers.category_id` to the correct `Industries.ID`, optionally set `cx_gpt_custom_prompt_override`.
+
+## Hospitality from MongoDB `ETSReviews`
+
+See [HOSPITALITY_ETSREVIEWS.md](./HOSPITALITY_ETSREVIEWS.md) for exporting the last year of reviews into `hospitality/YYYY-MM/` before ingest.

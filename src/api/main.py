@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import asyncio
 import os
 import sys
 import time
@@ -20,14 +22,21 @@ from fastapi.responses import StreamingResponse
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
 
+from core.agent import DEFAULT_ADVISOR_MODE, run_advisor_agent
 from core.config import (
-    ADVISOR_USE_AGENT,
     CREDS_PATH,
     DEFAULT_SECTOR,
+    USE_AGENT,
     USE_VERTEX_CONTEXTUAL_NAVIGATION,
     sector_slugify,
 )
-from core.conversation import prepare_conversational_input
+from core.llm_resilience import (
+    GENERIC_LLM_ERROR_MESSAGE,
+    LlmTurnFailed,
+    is_terminal_llm_user_message,
+)
+from core.conversation import extract_turns, prepare_conversational_input
+from core.agent_stream import stream_advisor_agent, stream_simple_completion
 from core.contextual_navigation import generate_contextual_navigation
 from core.logging_config import get_advisor_logger, log_conversation, setup_logging
 from core.rag import (
@@ -142,13 +151,19 @@ class ChatCompletionRequest(BaseModel):
         default=None,
         description="User email (from pivony-api)",
     )
-    pivony_advisor_mode: str | None = Field(
-        default=None,
-        description="advisor (Basic) | industry_expert (Pro)",
-    )
     pivony_page_context: dict | None = Field(
         default=None,
-        description="Structured dashboard/date scope from pivony-api",
+        description=(
+            "Structured page scope from pivony-api (dashboard_id, since, until) so "
+            "tools can be pinned to exactly what the user's page is showing."
+        ),
+    )
+    pivony_advisor_mode: str | None = Field(
+        default=None,
+        description=(
+            "Product tier from pivony-api: 'industry_expert' (paid, raw-review RAG) "
+            "or 'advisor' (freemium, metrics-only). Defaults to industry_expert."
+        ),
     )
 
 
@@ -173,6 +188,14 @@ class ChatCompletionResponse(BaseModel):
     pivony_guidance: str = Field(
         default="",
         description="Cursor-style contextual next-step guidance prose",
+    )
+    pivony_dashboard_picker: dict | None = Field(
+        default=None,
+        description="When set, the UI should render a searchable dashboard picker: {dashboards:[{id,name}], default_dashboard_id}",
+    )
+    pivony_charts: list[dict] = Field(
+        default_factory=list,
+        description="Welcome-compatible chart payloads rendered inline with the assistant reply.",
     )
 
 
@@ -214,6 +237,8 @@ def _openai_chat_completion(
     *,
     suggested_followups: list[str] | None = None,
     guidance: str | None = None,
+    dashboard_picker: dict | None = None,
+    charts: list[dict] | None = None,
 ) -> ChatCompletionResponse:
     return ChatCompletionResponse(
         id=f"chatcmpl-{uuid.uuid4().hex}",
@@ -224,6 +249,8 @@ def _openai_chat_completion(
         ],
         pivony_suggested_followups=suggested_followups or [],
         pivony_guidance=guidance or "",
+        pivony_dashboard_picker=dashboard_picker,
+        pivony_charts=charts or [],
     )
 
 
@@ -252,6 +279,108 @@ async def list_models() -> dict:
     }
 
 
+def _sse_payload(data: object) -> str:
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+async def _stream_chat_events(
+    request: ChatCompletionRequest,
+    *,
+    user_id: str | None,
+    user_email: str | None,
+    chat_input: dict[str, str],
+    sector: str,
+    api_system: str | None,
+    advisor_mode: str,
+):
+    embeddings, client, llm = _components()
+    turns = extract_turns(request.messages)
+    answer = ""
+    dashboard_picker: dict | None = None
+    charts: list[dict] = []
+
+    if USE_AGENT:
+        stream = stream_advisor_agent(
+            turns=turns,
+            sector_slug=sector,
+            extra_system_prompt=api_system,
+            embeddings=embeddings,
+            client=client,
+            advisor_mode=advisor_mode,
+            user_id=user_id,
+            page_context=request.pivony_page_context,
+        )
+    else:
+        stream = stream_simple_completion(
+            system_prompt=api_system or "",
+            user_messages=turns,
+        )
+
+    try:
+        for event in stream:
+            if event.get("type") == "done":
+                answer = str(event.get("content") or "")
+                dashboard_picker = event.get("dashboard_picker")
+                raw_charts = event.get("charts")
+                if isinstance(raw_charts, list):
+                    charts = [c for c in raw_charts if isinstance(c, dict)]
+                continue
+            if event.get("type") == "dashboard_picker":
+                picker_payload = event.get("picker")
+                if isinstance(picker_payload, dict):
+                    dashboard_picker = picker_payload
+                yield _sse_payload(event)
+                await asyncio.sleep(0)
+                continue
+            yield _sse_payload(event)
+            await asyncio.sleep(0)
+    except LlmTurnFailed as exc:
+        answer = exc.user_message
+        yield _sse_payload(
+            {"type": "content", "delta": exc.user_message, "replace": True}
+        )
+    except Exception as exc:
+        logger.error("Advisor stream failed: %s", exc, exc_info=True)
+        answer = GENERIC_LLM_ERROR_MESSAGE
+        yield _sse_payload(
+            {"type": "content", "delta": answer, "replace": True}
+        )
+
+    if dashboard_picker or is_terminal_llm_user_message(answer):
+        followups, guidance = [], ""
+    else:
+        followups, guidance = generate_contextual_navigation(
+            chat_input.get("retrieval_query") or chat_input["question"],
+            answer,
+            chat_history=chat_input.get("chat_history"),
+            context_hint=api_system,
+            llm=llm,
+            use_vertex=USE_VERTEX_CONTEXTUAL_NAVIGATION,
+        )
+    log_conversation(
+        user_id=user_id,
+        user_email=user_email,
+        sector=sector,
+        model=request.model,
+        messages=_messages_for_history(request.messages),
+        assistant_response=answer,
+        suggested_followups=followups,
+        guidance=guidance,
+    )
+    yield _sse_payload(
+        {
+            "type": "done",
+            "content": answer,
+            "pivony_suggested_followups": followups,
+            "pivony_guidance": guidance,
+            "pivony_dashboard_picker": dashboard_picker,
+            "pivony_charts": charts,
+        }
+    )
+    yield "data: [DONE]\n\n"
+    await asyncio.sleep(0)
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(
     request: ChatCompletionRequest,
@@ -266,58 +395,76 @@ async def chat_completions(
 
     sector = sector_slugify(request.pivony_sector or DEFAULT_SECTOR)
     api_system = extract_api_system_prompt(request.messages)
-    advisor_mode = (request.pivony_advisor_mode or "advisor").strip()
-    page_context = request.pivony_page_context if isinstance(request.pivony_page_context, dict) else None
+    advisor_mode = (request.pivony_advisor_mode or DEFAULT_ADVISOR_MODE).strip().lower()
 
     logger.info(
-        "chat_completions user_id=%s user_email=%s sector=%s model=%s mode=%s stream=%s messages=%s",
+        "chat_completions user_id=%s user_email=%s sector=%s model=%s messages=%s agent=%s mode=%s stream=%s",
         user_id or "-",
         user_email or "-",
         sector,
         request.model,
+        len(request.messages),
+        USE_AGENT,
         advisor_mode,
         request.stream,
-        len(request.messages),
     )
 
-    raw_messages = [
-        {"role": m.role, "content": m.content}
-        for m in request.messages
-        if m.role in ("system", "user", "assistant")
-    ]
-
-    if ADVISOR_USE_AGENT and request.stream:
-        from core.agent_stream import stream_agent_chat
-
-        return StreamingResponse(
-            stream_agent_chat(
-                messages=raw_messages,
-                advisor_mode=advisor_mode,
-                user_id=user_id,
-                page_context=page_context,
-                api_system=api_system,
-            ),
-            media_type="text/event-stream",
-        )
-
     if request.stream:
-        raise HTTPException(
-            status_code=400,
-            detail="Streaming requires ADVISOR_USE_AGENT=true",
-        )
+        try:
+            return StreamingResponse(
+                _stream_chat_events(
+                    request,
+                    user_id=user_id,
+                    user_email=user_email,
+                    chat_input=chat_input,
+                    sector=sector,
+                    api_system=api_system,
+                    advisor_mode=advisor_mode,
+                ),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("Streaming chat completion failed: %s", exc)
+            raise HTTPException(
+                status_code=500, detail=f"Chat completion failed: {exc}"
+            ) from exc
 
     try:
-        chain = _get_chain(sector, api_system)
-        answer = chain.invoke(chat_input)
-        _, _, llm = _components()
-        followups, guidance = generate_contextual_navigation(
-            chat_input.get("retrieval_query") or chat_input["question"],
-            answer,
-            chat_history=chat_input.get("chat_history"),
-            context_hint=api_system,
-            llm=llm,
-            use_vertex=USE_VERTEX_CONTEXTUAL_NAVIGATION,
-        )
+        embeddings, client, llm = _components()
+        dashboard_picker: dict | None = None
+        if USE_AGENT:
+            answer, dashboard_picker = run_advisor_agent(
+                turns=extract_turns(request.messages),
+                sector_slug=sector,
+                extra_system_prompt=api_system,
+                embeddings=embeddings,
+                client=client,
+                llm=llm,
+                advisor_mode=advisor_mode,
+                user_id=user_id,
+                page_context=request.pivony_page_context,
+            )
+        else:
+            chain = _get_chain(sector, api_system)
+            answer = chain.invoke(chat_input)
+        if dashboard_picker:
+            followups, guidance = [], ""
+        else:
+            followups, guidance = generate_contextual_navigation(
+                chat_input.get("retrieval_query") or chat_input["question"],
+                answer,
+                chat_history=chat_input.get("chat_history"),
+                context_hint=api_system,
+                llm=llm,
+                use_vertex=USE_VERTEX_CONTEXTUAL_NAVIGATION,
+            )
         log_conversation(
             user_id=user_id,
             user_email=user_email,
@@ -333,6 +480,7 @@ async def chat_completions(
             answer,
             suggested_followups=followups,
             guidance=guidance,
+            dashboard_picker=dashboard_picker,
         )
     except HTTPException:
         raise

@@ -5,6 +5,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from core.chip_capabilities import (
+    DEFAULT_CHIP_QUESTIONS,
+    sanitize_chip_questions,
+)
+
 
 @dataclass(frozen=True)
 class _TopicRule:
@@ -41,133 +46,156 @@ def _dedupe(items: list[str], question: str, limit: int = 3) -> list[str]:
     return out
 
 
+# Capability-aligned follow-ups: every suggestion is a DATA question the
+# Advisor's analytics tools can actually answer about the user's own dashboard
+# (no UI how-to / onboarding / integration prompts).
 _TOPIC_RULES: tuple[_TopicRule, ...] = (
     _TopicRule(
-        q_keywords=("dashboard", "oluştur", "create dashboard", "yeni dashboard", "new dashboard"),
-        followups=(
-            "Zendesk entegrasyonu nasıl yapılır?",
-            "Dashboard hazır olunca AI Insights nasıl oluşturulur?",
-            "Data Overview'da hangi filtreleri kullanmalıyım?",
+        q_keywords=(
+            "duyarlılık", "duyarlilik", "sentiment", "memnuniyet", "satisfaction",
+            "pozitif", "positive", "negatif", "negative", "skor", "score",
         ),
-        a_keywords=("new dashboard", "source wizard", "mydashboards", "journey"),
+        followups=(
+            "Bu dönemde en çok şikayet edilen konular neler?",
+            "NPS son dönemde nasıl bir trend izliyor?",
+            "Şikayetlerin temel nedenleri neler?",
+        ),
+        a_keywords=("duyarlılık", "sentiment", "pozitif", "memnuniyet"),
     ),
     _TopicRule(
         q_keywords=(
-            "dış veri",
-            "dis veri",
-            "market intelligence",
-            "rakip",
-            "competitor",
-            "public",
-            "outside-in",
-            "dış kaynak",
+            "şikayet", "sikayet", "complaint", "sorun", "problem", "şikâyet",
         ),
         followups=(
-            "Competitor Analysis'te markaları nasıl karşılaştırırım?",
-            "My Workspace'e rakip widget'ı nasıl eklerim?",
-            "Digital Experience Score (DES) nerede görüntülenir?",
+            "Bu şikayetlerin temel nedenleri (kök neden) neler?",
+            "Bu konuyla ilgili birkaç örnek yorum gösterir misin?",
+            "Şikayet konuları önceki döneme göre arttı mı, azaldı mı?",
         ),
-        a_keywords=("industrytopics", "competitor analysis", "market intelligence"),
+        a_keywords=("şikayet", "complaint", "negatif"),
+    ),
+    _TopicRule(
+        q_keywords=("kök neden", "kok neden", "root cause", "neden", "sebep"),
+        followups=(
+            "Bu konuda birkaç örnek yorum gösterir misin?",
+            "Bu konu önceki döneme göre arttı mı?",
+            "Genel duyarlılık dağılımı nasıl?",
+        ),
+        a_keywords=("kök neden", "root cause"),
+    ),
+    _TopicRule(
+        q_keywords=("nps", "rating", "puan", "yıldız", "yildiz", "ortalama"),
+        followups=(
+            "NPS zaman içinde nasıl bir trend izliyor?",
+            "Hangi konular en düşük puana sahip?",
+            "Bu dönemde en çok şikayet edilen konular neler?",
+        ),
+        a_keywords=("nps", "rating", "puan"),
     ),
     _TopicRule(
         q_keywords=(
-            "iç veri",
-            "ic veri",
-            "voc",
-            "voice of customer",
-            "inside-out",
-            "destek",
-            "ticket",
-            "zendesk",
-            "csv",
+            "trend", "zaman", "artıyor", "artiyor", "azalıyor", "azaliyor",
+            "değişti", "degisti", "yükseliyor", "yukseliyor", "düşüyor", "dusuyor",
         ),
         followups=(
-            "Zendesk entegrasyonu nasıl yapılır?",
-            "CSV ile dashboard nasıl oluşturulur?",
-            "AI Insights raporu nasıl alınır?",
+            "Hangi konular yükseliyor, hangileri düşüyor?",
+            "Yeni ortaya çıkan konular neler?",
+            "Öne çıkan anahtar kelimeler (hot terms) neler?",
         ),
-        a_keywords=("voice of customer", "zendesk", "csv upload", "inside-out"),
+        a_keywords=("trend", "rising", "falling"),
     ),
     _TopicRule(
-        q_keywords=("zendesk", "entegrasyon", "integration", "oauth"),
-        followups=(
-            "Zendesk bağlandıktan sonra dashboard nasıl oluşturulur?",
-            "Ticket filtrelerini dashboard'da nasıl kullanırım?",
-            "My Workspace'e VoC widget'ı nasıl eklerim?",
+        q_keywords=(
+            "kaç yorum", "kac yorum", "yorum sayısı", "yorum sayisi", "hacim",
+            "volume", "konu", "topic",
         ),
+        followups=(
+            "Bu konuda birkaç örnek yorum gösterir misin?",
+            "Bu konunun duyarlılık kırılımı nasıl?",
+            "Bu konu önceki döneme göre nasıl değişti?",
+        ),
+        a_keywords=("topic", "konu", "yorum"),
     ),
     _TopicRule(
-        q_keywords=("my workspace", "workspace", "widget", "metric", "metrik"),
+        q_keywords=("örnek yorum", "ornek yorum", "yorum göster", "review", "yazmışlar"),
         followups=(
-            "Aylık otomatik rapor nasıl ayarlanır?",
-            "Executive sunum (KPI Views) nasıl hazırlanır?",
-            "Dashboard PDF export nasıl yapılır?",
-        ),
-    ),
-    _TopicRule(
-        q_keywords=("rapor", "report", "pdf", "csv export", "download", "indir"),
-        followups=(
-            "Aylık AI Insights raporu nasıl oluşturulur?",
-            "Ad hoc rapor ile periyodik rapor arasındaki fark nedir?",
-            "My Workspace PDF export nasıl yapılır?",
-        ),
-        a_keywords=("reportpdf", "auto-refresh", "downloads"),
-    ),
-    _TopicRule(
-        q_keywords=("ai insight", "ai insights", "otomatik", "auto refresh", "monthly"),
-        followups=(
-            "Auto Refresh ayarlarını nereden yapılandırırım?",
-            "Aylık raporları nereden indiririm?",
-            "My Workspace ile Auto Refresh arasındaki fark nedir?",
-        ),
-    ),
-    _TopicRule(
-        q_keywords=("full intelligence", "full plan", "her iki", "voc ve market"),
-        followups=(
-            "Dış veriyi nasıl analiz ederim?",
-            "İç veriyi nasıl analiz ederim?",
-            "Full Intelligence ile hangi entegrasyonlar kullanılabilir?",
-        ),
-    ),
-    _TopicRule(
-        q_keywords=("filtre", "filter", "data overview", "sentiment", "topic"),
-        followups=(
-            "Dashboard'da konu (topic) hiyerarşisi nasıl çalışır?",
-            "AI Insights ile filtrelenmiş veriyi nasıl özetlerim?",
-            "My Workspace widget'ında filtre nasıl uygulanır?",
-        ),
-    ),
-    _TopicRule(
-        q_keywords=("adım", "step", "nasıl yap", "how to", "ne yapmalı"),
-        followups=(
-            "Dış veriyi nasıl analiz ederim?",
-            "İç veriyi nasıl analiz ederim?",
-            "Dashboard nasıl oluşturabilirim?",
+            "Bu yorumların duyarlılık dağılımı nasıl?",
+            "En çok şikayet edilen konular neler?",
+            "Bu konunun kök nedenleri neler?",
         ),
     ),
     _TopicRule(
         q_keywords=(
-            "müşteri deneyim",
-            "customer experience",
-            "deneyimini artır",
-            "memnuniyet",
-            "cx ",
-            "müşteri memnun",
+            "aksiyon", "vaka", "case", "takeaction", "action", "decision", "karar",
         ),
         followups=(
-            "İç veriyi nasıl analiz ederim?",
-            "AI Insights raporu nasıl alınır?",
-            "My Workspace'e KPI widget'ı nasıl eklerim?",
+            "Bu dönemde kaç yorum aksiyon gerektiriyor?",
+            "En çok şikayet edilen konular neler?",
+            "Şikayetlerin kök nedenleri neler?",
         ),
-        a_keywords=("voice of customer", "voc", "segment", "root cause"),
+    ),
+    _TopicRule(
+        q_keywords=(
+            "kanal", "channel", "platform", "intent", "amaç", "amac", "dağılım", "dagilim",
+        ),
+        followups=(
+            "Yorumlar hangi kanallardan (platform) geliyor?",
+            "Müşteriler en çok hangi amaçla (intent) yazıyor?",
+            "Konu bazında şikayet oranları neler?",
+        ),
+    ),
+    _TopicRule(
+        q_keywords=(
+            "konu bazında şikayet", "topiclerin şikayet", "şikayet oranı", "sikayet orani",
+            "intent", "niyet",
+        ),
+        followups=(
+            "Hangi konularda şikayet oranı en yüksek?",
+            "Bu konuların kök nedenleri neler?",
+            "Bu konularda birkaç örnek yorum gösterir misin?",
+        ),
+    ),
+    _TopicRule(
+        q_keywords=(
+            "katılım", "katilim", "participation", "pay", "ses",
+        ),
+        followups=(
+            "Hangi konularda en çok yorum var?",
+            "Konu bazında duygu skorları nasıl?",
+            "Bu konuların ortalama puanları nedir?",
+        ),
+    ),
+    _TopicRule(
+        q_keywords=(
+            "temel etken", "key driver", "kda", "etken analiz",
+        ),
+        followups=(
+            "En çok şikayet edilen konular neler?",
+            "NPS son dönemde nasıl bir trend izliyor?",
+            "Şikayetlerin kök nedenleri neler?",
+        ),
+    ),
+    _TopicRule(
+        q_keywords=(
+            "otel", "hotel", "marka", "şube", "sube", "vendor", "pivot", "karşılaştır", "karsilastir",
+        ),
+        followups=(
+            "Hangi otellerde rating en çok düştü?",
+            "Bu otelde en çok şikayet edilen konular neler?",
+            "Bu otelin NPS trendi nasıl?",
+        ),
+    ),
+    _TopicRule(
+        q_keywords=("fraud", "sahte", "bot", "yıldız dağılım", "yildiz dagilim"),
+        followups=(
+            "Yıldız (rating) dağılımı nasıl?",
+            "Genel duyarlılık dağılımı nasıl?",
+            "Bu dönemde en çok şikayet edilen konular neler?",
+        ),
     ),
 )
 
-_DEFAULT_FOLLOWUPS: tuple[str, ...] = (
-    "Dashboard nasıl oluşturabilirim?",
-    "Dış veriyi nasıl analiz ederim?",
-    "Raporları nereden indirebilirim?",
-)
+# Capability-aligned defaults: data questions the Advisor worker APIs can answer.
+_DEFAULT_FOLLOWUPS: tuple[str, ...] = DEFAULT_CHIP_QUESTIONS
 
 _REFUSAL_MARKERS: tuple[str, ...] = (
     "bu bilgiye sahip değilim",
@@ -209,4 +237,8 @@ def generate_followups(
     if len(candidates) < 3:
         candidates.extend(_DEFAULT_FOLLOWUPS)
 
-    return _dedupe(candidates, question, limit=3)
+    return sanitize_chip_questions(
+        _dedupe(candidates, question, limit=3),
+        user_question=question,
+        limit=3,
+    )

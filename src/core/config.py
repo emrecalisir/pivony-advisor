@@ -6,6 +6,36 @@ import os
 import re
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _load_env_file_manual(env_path: str) -> None:
+    """Parse .env without python-dotenv (KEY=VALUE, optional quotes)."""
+    with open(env_path, encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+def load_project_env() -> None:
+    """Load pivony-advisor/.env if present (does not override existing env vars)."""
+    env_path = os.path.join(BASE_DIR, ".env")
+    if not os.path.isfile(env_path):
+        return
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(env_path, override=False)
+    except ImportError:
+        _load_env_file_manual(env_path)
+
+
+load_project_env()
 CREDS_PATH = os.path.join(BASE_DIR, "config", "google_creds.json")
 LOGS_DIR = os.path.join(BASE_DIR, "logs")
 ADVISOR_LOG_PATH = os.path.join(LOGS_DIR, "advisor.log")
@@ -21,7 +51,11 @@ QDRANT_TIMEOUT_SEC = int(os.environ.get("QDRANT_TIMEOUT_SEC", "30"))
 QDRANT_URL = f"http://{QDRANT_HOST}:{QDRANT_PORT}"
 
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-004")
-LLM_MODEL = os.environ.get("LLM_MODEL", "gemini-2.5-flash")
+ADVISOR_LLM_MODEL = (
+    os.environ.get("ADVISOR_LLM_MODEL") or os.environ.get("LLM_MODEL") or "gemini-2.5-flash"
+).strip()
+# Deprecated alias for imports that still reference LLM_MODEL.
+LLM_MODEL = ADVISOR_LLM_MODEL
 LLM_TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0.2"))
 NAVIGATION_LLM_TEMPERATURE = float(os.environ.get("NAVIGATION_LLM_TEMPERATURE", "0.3"))
 USE_VERTEX_CONTEXTUAL_NAVIGATION = os.environ.get(
@@ -29,8 +63,24 @@ USE_VERTEX_CONTEXTUAL_NAVIGATION = os.environ.get(
 ).lower() in ("1", "true", "yes")
 
 PLATFORM_K = int(os.environ.get("PLATFORM_RETRIEVER_K", "3"))
-SECTOR_K = int(os.environ.get("SECTOR_RETRIEVER_K", "5"))
+SECTOR_K = int(os.environ.get("SECTOR_RETRIEVER_K", "8"))
 VECTOR_SIZE = 768
+
+# Agentic RAG: Gemini orchestrates tools (search_qdrant_reviews, get_pivony_metrics)
+USE_AGENT = os.environ.get("ADVISOR_USE_AGENT", "true").lower() in ("1", "true", "yes")
+AGENT_MAX_TOOL_ITERATIONS = int(os.environ.get("AGENT_MAX_TOOL_ITERATIONS", "6"))
+ADVISOR_COMPARE_MAX_PIVOTS = int(os.environ.get("ADVISOR_COMPARE_MAX_PIVOTS", "20"))
+ADVISOR_COMPARE_MAX_WORKERS = int(os.environ.get("ADVISOR_COMPARE_MAX_WORKERS", "8"))
+
+# Faz 3: real freemium-Advisor metrics from pivony-api worker endpoint.
+# Full URL to the advisor-metrics route, e.g.
+#   http://<pivony-api-host>/api/v1/welcome/worker/advisor-metrics  (production)
+#   http://<pivony-api-host>/api/welcome/worker/advisor-metrics     (development)
+PIVONY_API_METRICS_URL = os.environ.get("PIVONY_API_METRICS_URL", "").strip()
+# Shared secret == pivony-api WELCOME_WORKER_SECRET (X-Welcome-Worker-Key header).
+PIVONY_API_WORKER_SECRET = os.environ.get("PIVONY_API_WORKER_SECRET", "").strip()
+PIVONY_API_TIMEOUT_SEC = int(os.environ.get("PIVONY_API_TIMEOUT_SEC", "20"))
+PIVONY_METRICS_DEFAULT_DAYS = int(os.environ.get("PIVONY_METRICS_DEFAULT_DAYS", "90"))
 
 # GCS folder prefixes → platform knowledge (shared across all sectors)
 PLATFORM_PREFIXES = frozenset({"master", "general", "platform"})

@@ -1,0 +1,52 @@
+Pivony Advisor yanıtlarını şu kriterlere göre değerlendir:
+
+## Bağlam Yönetimi (0-10 puan)
+- Dashboard seçildikten sonra hatırlıyor mu?
+- Önceki turların bilgisini kullanıyor mu?
+- Aynı soruyu tekrar soruyor mu?
+- org_wide kullanımı seçili dashboard varken tetikleniyor mu?
+
+## Tool Kullanımı (0-10 puan)
+- Doğru tool'u kullandı mı? (get_trends, get_topic_trends, list_reviews, get_pivony_metrics)
+- Tool parametreleri doğru muydu? (dashboard_id, org_wide, days, topic)
+- Tool başarısız olduğunda ne yaptı?
+
+## Yanıt Kalitesi (0-10 puan)
+- Soruyu gerçekten yanıtladı mı?
+- Veriyi doğru yorumladı mı?
+- Önerdiği follow-up'lar mantıklı mı?
+
+## Hata Yönetimi (0-10 puan)
+- Hata mesajı kullanıcıyı yanıltıyor mu?
+- Çözüm yolu sundu mu?
+- Bağlamda çözüm varken "yapamam" dedi mi?
+
+## Bilinen risk alanları (pivony-advisor)
+- src/core/agent_state.py — hard scope resolution (analytics_scope vs dashboard_selection)
+- src/core/tool_routing.py — pin_tool_args_for_state, list_dashboards gating
+- src/core/analytics_scope.py — infer_established_analytics_scope org_wide fallback
+- Web tarafı (pivony-web-platform): util/advisorAnalyticsScope.js — session scope retention
+- API tarafı (pivony-api): dashboards.py cx_gpt chat page_context mapping
+
+## Değerlendirme Çıktısı Formatı (JSON):
+{
+  "scores": {
+    "context_management": <0-10>,
+    "tool_usage": <0-10>,
+    "response_quality": <0-10>,
+    "error_handling": <0-10>
+  },
+  "issues": [
+    {
+      "severity": "critical|high|medium|low",
+      "category": "context_loss|wrong_tool_params|poor_response|misleading_error",
+      "message_index": <int>,
+      "description": "Sorunun açıklaması",
+      "evidence": "İlgili reasoning veya content'ten kanıt",
+      "fix_hint": "Hangi dosyada ne değişmeli (ör. src/core/agent_state.py)"
+    }
+  ],
+  "good_parts": ["İyi yapılan şeyler listesi"],
+  "overall_verdict": "pass|needs_improvement|fail",
+  "priority_fix": "En kritik fix'in tek cümle özeti"
+}

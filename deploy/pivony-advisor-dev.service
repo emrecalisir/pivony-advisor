@@ -1,0 +1,18 @@
+[Unit]
+Description=Pivony Advisor RAG API (development)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/pivony-advisor-dev
+Environment=PYTHONPATH=/home/ubuntu/pivony-advisor-dev/src
+Environment=QDRANT_HOST=127.0.0.1
+Environment=QDRANT_PORT=6333
+Environment=ADVISOR_PORT=8011
+ExecStart=/home/ubuntu/pivony-advisor-dev/scripts/start_advisor.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
