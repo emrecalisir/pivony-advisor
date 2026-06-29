@@ -16,10 +16,12 @@ if _BASE not in sys.path:
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
 
 from core.config import (
+    ADVISOR_USE_AGENT,
     CREDS_PATH,
     DEFAULT_SECTOR,
     USE_VERTEX_CONTEXTUAL_NAVIGATION,
@@ -140,6 +142,14 @@ class ChatCompletionRequest(BaseModel):
         default=None,
         description="User email (from pivony-api)",
     )
+    pivony_advisor_mode: str | None = Field(
+        default=None,
+        description="advisor (Basic) | industry_expert (Pro)",
+    )
+    pivony_page_context: dict | None = Field(
+        default=None,
+        description="Structured dashboard/date scope from pivony-api",
+    )
 
 
 class ChatCompletionMessage(BaseModel):
@@ -242,14 +252,11 @@ async def list_models() -> dict:
     }
 
 
-@app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
+@app.post("/v1/chat/completions")
 async def chat_completions(
     request: ChatCompletionRequest,
     http_request: Request,
-) -> ChatCompletionResponse:
-    if request.stream:
-        raise HTTPException(status_code=400, detail="Streaming is not supported")
-
+):
     user_id, user_email = _resolve_user_context(request, http_request)
 
     try:
@@ -259,15 +266,45 @@ async def chat_completions(
 
     sector = sector_slugify(request.pivony_sector or DEFAULT_SECTOR)
     api_system = extract_api_system_prompt(request.messages)
+    advisor_mode = (request.pivony_advisor_mode or "advisor").strip()
+    page_context = request.pivony_page_context if isinstance(request.pivony_page_context, dict) else None
 
     logger.info(
-        "chat_completions user_id=%s user_email=%s sector=%s model=%s messages=%s",
+        "chat_completions user_id=%s user_email=%s sector=%s model=%s mode=%s stream=%s messages=%s",
         user_id or "-",
         user_email or "-",
         sector,
         request.model,
+        advisor_mode,
+        request.stream,
         len(request.messages),
     )
+
+    raw_messages = [
+        {"role": m.role, "content": m.content}
+        for m in request.messages
+        if m.role in ("system", "user", "assistant")
+    ]
+
+    if ADVISOR_USE_AGENT and request.stream:
+        from core.agent_stream import stream_agent_chat
+
+        return StreamingResponse(
+            stream_agent_chat(
+                messages=raw_messages,
+                advisor_mode=advisor_mode,
+                user_id=user_id,
+                page_context=page_context,
+                api_system=api_system,
+            ),
+            media_type="text/event-stream",
+        )
+
+    if request.stream:
+        raise HTTPException(
+            status_code=400,
+            detail="Streaming requires ADVISOR_USE_AGENT=true",
+        )
 
     try:
         chain = _get_chain(sector, api_system)

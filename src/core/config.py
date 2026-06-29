@@ -38,8 +38,17 @@ PLATFORM_COLLECTION = "pivony_platform_knowledge"
 DEFAULT_SECTOR = os.environ.get("DEFAULT_SECTOR", "hospitality")
 
 SUPPORTED_SUFFIXES = (".txt", ".md")
-CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", "1400"))
-CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", "200"))
+ADVISOR_USE_AGENT = os.environ.get("ADVISOR_USE_AGENT", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+WELCOME_WORKER_API_BASE_URL = os.environ.get("WELCOME_WORKER_API_BASE_URL", "").rstrip("/")
+WELCOME_WORKER_SECRET = os.environ.get("WELCOME_WORKER_SECRET", "").strip()
+WELCOME_WORKER_PREFIX = os.environ.get(
+    "WELCOME_WORKER_WELCOME_PREFIX", "/api/welcome"
+).rstrip("/")
+ADVISOR_AGENT_MAX_TOOL_ROUNDS = int(os.environ.get("ADVISOR_AGENT_MAX_TOOL_ROUNDS", "8"))
 
 
 def sector_slugify(industry_name: str) -> str:
