@@ -61,37 +61,56 @@
     </aside>
 
     <main class="content">
-      <section id="view-feedback">
-        <div class="stats" id="stats"></div>
+      <section id="view-feedback" class="workbench-view">
+        <div class="stats stats-compact" id="stats"></div>
 
-        <div id="live-run-panel" class="panel hidden">
-          <div class="panel-header">
-            <h3 id="live-run-title">Canlı Run</h3>
-            <span id="live-run-status" class="badge">—</span>
-          </div>
-          <div class="panel-body" id="live-run-body"></div>
-        </div>
-
-        <div class="panel feedback-panel" style="margin-top:1rem">
-          <div class="panel-header">
-            <h3>Feedback Loop — Son Run</h3>
-            <span id="feedback-run-meta" class="muted"></span>
-          </div>
-          <div id="feedback-run-block" class="panel-body run-detail-panel empty">Henüz run yok — <strong>Run Başlat</strong> ile başlayın</div>
-          <div class="detail-grid feedback-session-grid hidden" id="feedback-session-grid">
-            <div class="panel session-sidebar-panel">
-              <div class="panel-header"><h3>Konuşmalar</h3></div>
-              <div id="feedback-session-list" class="session-list-scroll"></div>
+        <div class="workbench" id="workbench">
+          <aside class="workbench-sessions panel">
+            <div class="workbench-sessions-head panel-header">
+              <h3>Konuşmalar</h3>
+              <span class="badge" id="session-count-badge">0</span>
             </div>
-            <div class="panel session-detail-panel">
-              <div class="panel-header panel-header-split">
-                <h3 id="feedback-session-title">Session</h3>
-                <div id="feedback-session-toolbar" class="header-toolbar hidden">
-                  <button class="btn primary btn-sm" id="feedback-session-json-btn" type="button">↓ JSON</button>
-                  <button class="btn ghost btn-sm" id="feedback-session-export-btn" type="button">↓ Export</button>
+            <div id="feedback-session-list" class="session-list-scroll"></div>
+          </aside>
+
+          <div class="workbench-main panel">
+            <div class="workbench-toolbar" id="workbench-toolbar">
+              <div class="workbench-toolbar-left">
+                <span class="badge" id="workbench-live-badge">Hazır</span>
+                <span class="muted-small" id="feedback-run-meta"></span>
+              </div>
+              <div class="workbench-toolbar-right header-toolbar">
+                <button id="toolbar-stop-btn" class="btn danger btn-sm hidden" type="button">■ Durdur</button>
+                <button id="toolbar-json-btn" class="btn primary btn-sm hidden" type="button">↓ JSON</button>
+                <button id="toolbar-export-btn" class="btn ghost btn-sm hidden" type="button">↓ Export</button>
+                <a id="toolbar-langsmith-link" class="btn secondary btn-sm hidden" href="#" target="_blank" rel="noopener">LangSmith ↗</a>
+              </div>
+            </div>
+
+            <div class="workbench-tabs" role="tablist">
+              <button class="tab-btn active" type="button" data-tab="conversation" role="tab">Konuşma</button>
+              <button class="tab-btn" type="button" data-tab="run-qa" role="tab">Run &amp; QA</button>
+              <button class="tab-btn hidden" type="button" data-tab="live" id="live-tab-btn" role="tab">Canlı</button>
+            </div>
+
+            <div class="workbench-panels">
+              <div id="tab-conversation" class="tab-panel active" role="tabpanel">
+                <div class="tab-panel-toolbar panel-header-split">
+                  <h3 id="feedback-session-title">Session seçin</h3>
+                  <span class="muted-small" id="feedback-session-meta"></span>
+                </div>
+                <div id="feedback-session-detail" class="tab-panel-body empty">Soldan bir konuşma seçin</div>
+              </div>
+
+              <div id="tab-run-qa" class="tab-panel hidden" role="tabpanel">
+                <div id="feedback-run-block" class="tab-panel-body run-detail-panel empty">
+                  Henüz run yok — <strong>Run Başlat</strong> ile başlayın
                 </div>
               </div>
-              <div id="feedback-session-detail" class="panel-body empty">Soldan bir konuşma seçin</div>
+
+              <div id="tab-live" class="tab-panel hidden" role="tabpanel">
+                <div id="live-run-body" class="tab-panel-body"></div>
+              </div>
             </div>
           </div>
         </div>

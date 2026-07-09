@@ -480,14 +480,16 @@ function showSessionDetail(detail, { runId = null, listContainerId = null } = {}
   setExportContext(exportPayload);
 
   const feedbackTitle = document.getElementById("feedback-session-title");
+  const feedbackMeta = document.getElementById("feedback-session-meta");
   const feedbackDetail = document.getElementById("feedback-session-detail");
-  const feedbackToolbar = document.getElementById("feedback-session-toolbar");
   if (feedbackTitle) feedbackTitle.textContent = title;
+  if (feedbackMeta) {
+    feedbackMeta.textContent = `${detail.turn_count || 0} tur · ${detail.sector || "?"}`;
+  }
   if (feedbackDetail) {
     feedbackDetail.classList.remove("empty");
     feedbackDetail.innerHTML = body;
   }
-  if (feedbackToolbar) feedbackToolbar.classList.remove("hidden");
 
   const sessionTitle = document.getElementById("session-title");
   const sessionDetail = document.getElementById("session-detail");
@@ -500,6 +502,7 @@ function showSessionDetail(detail, { runId = null, listContainerId = null } = {}
   if (sessionToolbar) sessionToolbar.classList.remove("hidden");
   document.getElementById("session-export-btn")?.classList.remove("hidden");
   updateExportButtons(Boolean(detail.turns?.length));
+  updateWorkbenchToolbar({ hasSession: Boolean(detail.turns?.length) });
 
   if (listContainerId) {
     const el = document.getElementById(listContainerId);
@@ -513,6 +516,64 @@ function showSessionDetail(detail, { runId = null, listContainerId = null } = {}
 }
 
 let activeSessionId = null;
+let activeLiveJob = null;
+
+function setWorkbenchTab(tabName) {
+  document.querySelectorAll(".workbench-tabs .tab-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.tab === tabName);
+  });
+  document.querySelectorAll(".workbench-panels .tab-panel").forEach((panel) => {
+    const active = panel.id === `tab-${tabName}`;
+    panel.classList.toggle("active", active);
+    panel.classList.toggle("hidden", !active);
+  });
+}
+
+function updateWorkbenchToolbar({ job = activeLiveJob, hasSession = false } = {}) {
+  const liveBadge = document.getElementById("workbench-live-badge");
+  const stopBtn = document.getElementById("toolbar-stop-btn");
+  const jsonBtn = document.getElementById("toolbar-json-btn");
+  const exportBtn = document.getElementById("toolbar-export-btn");
+  const langsmithLink = document.getElementById("toolbar-langsmith-link");
+  const liveTabBtn = document.getElementById("live-tab-btn");
+
+  const running = job && ["queued", "running"].includes(job.status);
+  if (liveBadge) {
+    if (running) {
+      const vtx = job.vertex?.state && job.vertex.state !== "ok" ? ` · ${job.vertex.state}` : "";
+      liveBadge.textContent = `${job.phase}${vtx}`;
+      liveBadge.className = "badge running";
+      liveBadge.title = job.message || "";
+    } else {
+      liveBadge.textContent = "Hazır";
+      liveBadge.className = "badge";
+      liveBadge.title = "";
+    }
+  }
+
+  stopBtn?.classList.toggle("hidden", !running);
+  liveTabBtn?.classList.toggle("hidden", !running);
+
+  const canExport = hasSession || Boolean(exportContext?.messages?.length);
+  jsonBtn?.classList.toggle("hidden", !canExport);
+  exportBtn?.classList.toggle("hidden", !canExport);
+  document.getElementById("export-btn")?.classList.toggle("hidden", !canExport);
+
+  if (langsmithLink) {
+    if (running && job.langsmith_url) {
+      langsmithLink.href = job.langsmith_url;
+      langsmithLink.classList.remove("hidden");
+    } else {
+      langsmithLink.classList.add("hidden");
+    }
+  }
+}
+
+function initWorkbenchTabs() {
+  document.querySelectorAll(".workbench-tabs .tab-btn").forEach((btn) => {
+    btn.addEventListener("click", () => setWorkbenchTab(btn.dataset.tab));
+  });
+}
 
 function renderStats(overview) {
   const c = overview.counts;
@@ -581,12 +642,36 @@ function autoSelectSessionItem(containerId, sessionId) {
 async function loadFeedback() {
   const [runs, sessions] = await Promise.all([api("/api/runs"), api("/api/sessions")]);
   const runBlock = document.getElementById("feedback-run-block");
-  const sessionGrid = document.getElementById("feedback-session-grid");
+  const countBadge = document.getElementById("session-count-badge");
+  if (countBadge) countBadge.textContent = String(sessions.length);
+
+  if (!sessions.length) {
+    document.getElementById("feedback-session-list").innerHTML =
+      `<div class="empty">Henüz konuşma yok</div>`;
+  } else {
+    renderList(
+      "feedback-session-list",
+      sessions,
+      async (item) => {
+        await selectSessionById(item.session_id, {
+          runId: runs[0]?.run_id,
+          listContainerId: "feedback-session-list",
+        });
+        setWorkbenchTab("conversation");
+      },
+      sessionListLabel,
+      sessionListMeta,
+      { idKey: "session_id" }
+    );
+  }
 
   if (!runs.length) {
     runBlock.innerHTML =
       `<div class="empty">Henüz run yok. Sunucuda loop çalıştır veya <button class="btn" onclick="document.getElementById('sync-hint-btn').click()">sync</button> yap.</div>`;
-    sessionGrid?.classList.add("hidden");
+    document.getElementById("feedback-run-meta").textContent = "";
+    if (sessions[0]) {
+      autoSelectSessionItem("feedback-session-list", sessions[0].session_id);
+    }
     return;
   }
 
@@ -595,26 +680,10 @@ async function loadFeedback() {
   document.getElementById("feedback-run-meta").textContent = `${detail.run_id} · ${fmtDate(detail.created_at)}`;
   renderRunDetail(detail, "feedback-run-block", { includeSession: false });
 
-  if (!sessions.length) {
-    sessionGrid?.classList.add("hidden");
-    return;
+  const preferId = activeSessionId || detail.session_id || sessions[0]?.session_id;
+  if (preferId) {
+    autoSelectSessionItem("feedback-session-list", preferId);
   }
-
-  sessionGrid?.classList.remove("hidden");
-  renderList(
-    "feedback-session-list",
-    sessions,
-    async (item) => {
-      await selectSessionById(item.session_id, {
-        runId: detail.run_id,
-        listContainerId: "feedback-session-list",
-      });
-    },
-    sessionListLabel,
-    sessionListMeta,
-    { idKey: "session_id" }
-  );
-  autoSelectSessionItem("feedback-session-list", detail.session_id || sessions[0]?.session_id);
 }
 
 async function loadRuns() {
@@ -883,60 +952,50 @@ function renderVertexBanner(job) {
 }
 
 function renderLiveRun(job) {
-  const panel = document.getElementById("live-run-panel");
   const body = document.getElementById("live-run-body");
-  const statusEl = document.getElementById("live-run-status");
-  const titleEl = document.getElementById("live-run-title");
-
+  activeLiveJob = job || null;
   updateRunButtons(job);
+  updateWorkbenchToolbar({
+    job,
+    hasSession: Boolean(exportContext?.messages?.length),
+  });
 
   if (!job || !["queued", "running"].includes(job.status)) {
-    panel.classList.add("hidden");
+    if (body) body.innerHTML = `<div class="empty">Aktif run yok</div>`;
     return;
   }
 
-  panel.classList.remove("hidden");
-  titleEl.textContent = `Canlı Run — ${job.job_id}`;
-  const vtx = job.vertex;
-  const statusSuffix =
-    vtx && vtx.state && vtx.state !== "ok" ? ` · vertex:${vtx.state}` : "";
-  statusEl.textContent = `${job.phase} · ${job.message || ""}${statusSuffix}`;
-
-  const turns = job.session_detail?.turns || [];
   const qa = job.qa_preview;
+  if (body) {
+    body.innerHTML = `
+      ${renderVertexBanner(job)}
+      <div class="live-compact-flow">${renderFlowSteps(job.flow)}</div>
+      <details class="live-meta-fold">
+        <summary>LangSmith &amp; izleme detayı</summary>
+        ${renderLangSmithBlock(job.observability, job.job_id)}
+      </details>
+      <div class="chips" style="margin:0.75rem 0">
+        <span class="chip">${esc(job.turn_count || 0)} tur</span>
+        ${job.session_id ? `<span class="chip">${esc(shortSessionId(job.session_id))}</span>` : ""}
+        <span class="chip">${esc(job.job_id)}</span>
+      </div>
+      ${qa?.priority_fix ? `<div class="meta-block verdict-box"><h4>QA önizleme</h4><p>${esc(qa.priority_fix)}</p>${renderIssues(qa.issues || [], { compact: true })}</div>` : ""}
+      <p class="muted-small">Canlı konuşma <strong>Konuşma</strong> sekmesinde güncellenir. Soldan ilgili session seçili kalır.</p>
+    `;
+  }
 
-  body.innerHTML = `
-    <div style="margin-bottom:0.75rem;display:flex;gap:0.5rem;flex-wrap:wrap">
-      <button class="btn danger" onclick="stopRun()">■ Run'ı Durdur</button>
-      ${job.session_id && turns.length ? `<button class="btn primary" type="button" data-session-id="${esc(job.session_id)}" data-job-id="${esc(job.job_id || "")}" onclick="downloadAllTurns(this.dataset.sessionId, this.dataset.jobId || null)">↓ Tüm turları indir (JSON)</button>` : ""}
-      ${turns.length ? `<button class="btn ghost" type="button" onclick="openExportModal()">↓ Export (JSON/MD)</button>` : ""}
-      ${job.langsmith_url ? `<a class="btn secondary" href="${esc(job.langsmith_url)}" target="_blank" rel="noopener">LangSmith Trace ↗</a>` : ""}
-    </div>
-    ${renderVertexBanner(job)}
-    ${renderLangSmithBlock(job.observability, job.job_id)}
-    ${renderFlowSteps(job.flow)}
-    <div class="meta-block">
-      <h4>Karar mekanizması</h4>
-      <p class="flow-desc">
-        <strong>QA Agent (Quality Checker)</strong> Advisor'ın hangi noktada gelişmesi gerektiğine karar verir:
-        skorlar, severity, kanıt ve <code>fix_hint</code> üretir.
-        <strong>Coding Agent</strong> bu kararı koda dönüştürür.
-      </p>
-    </div>
-    <div class="chips" style="margin-bottom:0.75rem">
-      <span class="chip">${esc(job.turn_count || 0)} tur</span>
-      ${job.session_id ? `<span class="chip">${esc(job.session_id)}</span>` : ""}
-    </div>
-    ${turns.length ? `<div class="meta-block"><h4>Konuşma (canlı)</h4>${renderTurns(turns, job.session_detail?.auto_issues)}</div>` : `<div class="empty">Konuşma başlıyor…</div>`}
-    ${qa?.priority_fix ? `<div class="meta-block verdict-box"><h4>QA Kararı — Advisor nerede gelişmeli?</h4><p>${esc(qa.priority_fix)}</p>${renderIssues(qa.issues || [], { compact: true })}</div>` : ""}
-  `;
-  if (job.session_detail?.turns?.length) {
-    setExportContext(
-      buildExportPayloadFromDetail(job.session_detail, {
-        job_id: job.job_id,
-        session_id: job.session_id,
-      })
-    );
+  if (job.session_id && job.session_detail?.turns?.length) {
+    const livePayload = buildExportPayloadFromDetail(job.session_detail, {
+      job_id: job.job_id,
+      session_id: job.session_id,
+    });
+    if (!activeSessionId || activeSessionId === job.session_id) {
+      showSessionDetail(job.session_detail, {
+        runId: job.job_id,
+        listContainerId: "feedback-session-list",
+      });
+      setExportContext(livePayload);
+    }
   }
 }
 
@@ -970,7 +1029,7 @@ async function stopRun() {
       clearInterval(pollTimer);
       pollTimer = null;
     }
-    document.getElementById("live-run-panel").classList.add("hidden");
+    updateWorkbenchToolbar({ job: null });
     updateRunButtons(null);
     await refreshAll();
   } catch (err) {
@@ -1061,6 +1120,7 @@ async function startRun() {
   btn.textContent = "Başlatılıyor…";
   try {
     setView("feedback");
+    setWorkbenchTab("live");
     const job = await apiPost("/api/jobs/start", { mode: "full", iterations: 1 });
     renderLiveRun(job);
     if (!pollTimer) pollTimer = setInterval(pollActiveJob, 4000);
@@ -1115,9 +1175,11 @@ async function boot() {
 
   document.getElementById("export-btn")?.addEventListener("click", openExportModal);
   document.getElementById("session-export-btn")?.addEventListener("click", openExportModal);
-  document.getElementById("feedback-session-export-btn")?.addEventListener("click", openExportModal);
+  document.getElementById("toolbar-export-btn")?.addEventListener("click", openExportModal);
   document.getElementById("session-json-btn")?.addEventListener("click", downloadActiveSessionJson);
-  document.getElementById("feedback-session-json-btn")?.addEventListener("click", downloadActiveSessionJson);
+  document.getElementById("toolbar-json-btn")?.addEventListener("click", downloadActiveSessionJson);
+  document.getElementById("toolbar-stop-btn")?.addEventListener("click", stopRun);
+  initWorkbenchTabs();
   document.getElementById("export-json-btn")?.addEventListener("click", downloadExportJson);
   document.getElementById("export-md-btn")?.addEventListener("click", downloadExportMarkdown);
   document.getElementById("export-close")?.addEventListener("click", closeExportModal);
