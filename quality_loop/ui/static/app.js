@@ -388,24 +388,29 @@ function renderRunHero(run) {
     </div>`;
 }
 
-function renderRunDetail(run, targetId) {
+function renderRunDetail(run, targetId, { includeSession = true } = {}) {
   const qa = run.qa_report || {};
   const fixes = run.fixes || {};
   const verdict = qa.overall_verdict || run.summary?.verdict;
-  const sessionBlock = run.session_detail?.turns?.length
-    ? `<section class="run-section">
+  const sessionBlock =
+    includeSession && run.session_detail?.turns?.length
+      ? `<section class="run-section">
         <h4 class="run-section-title">Konuşma <span class="muted-small">${esc(run.session_id || "")}</span></h4>
         <div class="conversation-thread">${renderTurns(run.session_detail.turns, run.session_detail.auto_issues)}</div>
       </section>`
-    : run.session_id
-      ? `<div class="empty">Session dosyası henüz sync edilmemiş: ${esc(run.session_id)}</div>`
-      : "";
+      : includeSession && run.session_id
+        ? `<div class="empty">Session dosyası henüz sync edilmemiş: ${esc(run.session_id)}</div>`
+        : "";
 
   document.getElementById(targetId).innerHTML = `
     <div class="run-detail">
-      <div class="detail-toolbar">
-        ${run.session_detail?.turns?.length ? `<button class="btn ghost" type="button" onclick="openExportModal()">↓ Export</button>` : ""}
-      </div>
+      ${
+        includeSession && run.session_detail?.turns?.length
+          ? `<div class="detail-toolbar">
+        <button class="btn ghost" type="button" onclick="openExportModal()">↓ Export</button>
+      </div>`
+          : ""
+      }
       <div class="chips run-chips">
         <span class="chip">${esc(run.mode)}</span>
         ${run.iteration != null ? `<span class="chip">iter ${esc(run.iteration)}</span>` : ""}
@@ -430,7 +435,7 @@ function renderRunDetail(run, targetId) {
       ${renderPhaseTechnical(run)}
     </div>
   `;
-  if (run.session_detail?.turns?.length) {
+  if (includeSession && run.session_detail?.turns?.length) {
     setExportContext(
       buildExportPayloadFromDetail(run.session_detail, {
         run_id: run.run_id,
@@ -439,6 +444,75 @@ function renderRunDetail(run, targetId) {
     );
   }
 }
+
+function renderSessionDetailBody(detail) {
+  const linked = (detail.linked_runs || [])
+    .map((r) => `<span class="chip">${esc(r.run_id)}</span>`)
+    .join("");
+  const qa = detail.qa_report || {};
+  const qaBlock = qa.overall_verdict
+    ? `<div class="meta-block verdict-box">
+        <h4>QA Raporu ${detail.run_id ? `<span class="chip">${esc(detail.run_id)}</span>` : ""}
+          <span class="verdict ${esc(qa.overall_verdict)}">${esc(qa.overall_verdict)}</span>
+        </h4>
+        ${qa.priority_fix ? `<p>${esc(qa.priority_fix)}</p>` : ""}
+        ${renderScores(qa)}
+        ${renderIssues(qa.issues || [], { compact: true })}
+      </div>`
+    : "";
+  return `
+    ${renderSessionHeader(detail)}
+    ${linked ? `<div class="meta-block"><h4>Bağlı Run'lar</h4><div class="chips">${linked}</div></div>` : ""}
+    ${qaBlock}
+    <div class="conversation-thread">
+      ${renderTurns(detail.turns, detail.auto_issues)}
+    </div>`;
+}
+
+function showSessionDetail(detail, { runId = null, listContainerId = null } = {}) {
+  activeSessionId = detail.session_id;
+  const title = shortSessionId(detail.session_id);
+  const body = renderSessionDetailBody(detail);
+  const exportPayload = buildExportPayloadFromDetail(detail, {
+    run_id: runId || detail.run_id,
+    qa_report: detail.qa_report,
+  });
+  setExportContext(exportPayload);
+
+  const feedbackTitle = document.getElementById("feedback-session-title");
+  const feedbackDetail = document.getElementById("feedback-session-detail");
+  const feedbackToolbar = document.getElementById("feedback-session-toolbar");
+  if (feedbackTitle) feedbackTitle.textContent = title;
+  if (feedbackDetail) {
+    feedbackDetail.classList.remove("empty");
+    feedbackDetail.innerHTML = body;
+  }
+  if (feedbackToolbar) feedbackToolbar.classList.remove("hidden");
+
+  const sessionTitle = document.getElementById("session-title");
+  const sessionDetail = document.getElementById("session-detail");
+  const sessionToolbar = document.getElementById("session-toolbar");
+  if (sessionTitle) sessionTitle.textContent = title;
+  if (sessionDetail) {
+    sessionDetail.classList.remove("empty");
+    sessionDetail.innerHTML = body;
+  }
+  if (sessionToolbar) sessionToolbar.classList.remove("hidden");
+  document.getElementById("session-export-btn")?.classList.remove("hidden");
+  updateExportButtons(Boolean(detail.turns?.length));
+
+  if (listContainerId) {
+    const el = document.getElementById(listContainerId);
+    el?.querySelectorAll(".list-item").forEach((node) => {
+      node.classList.toggle(
+        "selected",
+        node.dataset.sessionId === detail.session_id
+      );
+    });
+  }
+}
+
+let activeSessionId = null;
 
 function renderStats(overview) {
   const c = overview.counts;
@@ -453,7 +527,7 @@ function renderStats(overview) {
     .join("");
 }
 
-function renderList(containerId, items, onClick, labelFn, metaFn) {
+function renderList(containerId, items, onClick, labelFn, metaFn, { idKey = null } = {}) {
   const el = document.getElementById(containerId);
   if (!items.length) {
     el.innerHTML = `<div class="empty">Kayıt yok</div>`;
@@ -462,7 +536,7 @@ function renderList(containerId, items, onClick, labelFn, metaFn) {
   el.innerHTML = items
     .map(
       (item, idx) => `
-    <div class="list-item" data-idx="${idx}">
+    <div class="list-item" data-idx="${idx}"${idKey && item[idKey] ? ` data-session-id="${esc(item[idKey])}"` : ""}>
       <div class="title">${esc(labelFn(item))}</div>
       <div class="meta">${esc(metaFn ? metaFn(item) : fmtDateTime(item.created_at || item.modified_at))}</div>
     </div>`
@@ -477,17 +551,70 @@ function renderList(containerId, items, onClick, labelFn, metaFn) {
   });
 }
 
+function sessionListLabel(item) {
+  return `${shortSessionId(item.session_id)} · ${item.turn_count} tur`;
+}
+
+function sessionListMeta(item) {
+  const start = fmtDateTime(item.created_at);
+  const end = fmtDateTime(item.updated_at || item.modified_at);
+  const preview = item.preview ? clipText(item.preview, 72) : "";
+  const sector = item.sector ? ` · ${item.sector}` : "";
+  return `${start}${end !== start ? ` → ${end}` : ""}${sector}${preview ? ` · ${preview}` : ""}`;
+}
+
+async function selectSessionById(sessionId, { runId = null, listContainerId = null } = {}) {
+  if (!sessionId) return;
+  const detail = await api(`/api/sessions/${encodeURIComponent(sessionId)}`);
+  showSessionDetail(detail, { runId, listContainerId });
+}
+
+function autoSelectSessionItem(containerId, sessionId) {
+  const el = document.getElementById(containerId);
+  if (!el || !sessionId) return;
+  const node =
+    el.querySelector(`.list-item[data-session-id="${sessionId}"]`) ||
+    el.querySelector(".list-item");
+  node?.click();
+}
+
 async function loadFeedback() {
-  const runs = await api("/api/runs");
+  const [runs, sessions] = await Promise.all([api("/api/runs"), api("/api/sessions")]);
+  const runBlock = document.getElementById("feedback-run-block");
+  const sessionGrid = document.getElementById("feedback-session-grid");
+
   if (!runs.length) {
-    document.getElementById("feedback-detail").innerHTML =
+    runBlock.innerHTML =
       `<div class="empty">Henüz run yok. Sunucuda loop çalıştır veya <button class="btn" onclick="document.getElementById('sync-hint-btn').click()">sync</button> yap.</div>`;
+    sessionGrid?.classList.add("hidden");
     return;
   }
+
   const latest = runs[0];
   const detail = await api(`/api/runs/${encodeURIComponent(latest.run_id)}`);
   document.getElementById("feedback-run-meta").textContent = `${detail.run_id} · ${fmtDate(detail.created_at)}`;
-  renderRunDetail(detail, "feedback-detail");
+  renderRunDetail(detail, "feedback-run-block", { includeSession: false });
+
+  if (!sessions.length) {
+    sessionGrid?.classList.add("hidden");
+    return;
+  }
+
+  sessionGrid?.classList.remove("hidden");
+  renderList(
+    "feedback-session-list",
+    sessions,
+    async (item) => {
+      await selectSessionById(item.session_id, {
+        runId: detail.run_id,
+        listContainerId: "feedback-session-list",
+      });
+    },
+    sessionListLabel,
+    sessionListMeta,
+    { idKey: "session_id" }
+  );
+  autoSelectSessionItem("feedback-session-list", detail.session_id || sessions[0]?.session_id);
 }
 
 async function loadRuns() {
@@ -511,41 +638,17 @@ async function loadSessions() {
     "session-list",
     sessions,
     async (item) => {
-      const detail = await api(`/api/sessions/${encodeURIComponent(item.session_id)}`);
-      document.getElementById("session-title").textContent = shortSessionId(detail.session_id);
-      const linked = (detail.linked_runs || [])
-        .map((r) => `<span class="chip">${esc(r.run_id)}</span>`)
-        .join("");
-      const qa = detail.qa_report || {};
-      const qaBlock = qa.overall_verdict
-        ? `<div class="meta-block verdict-box">
-            <h4>QA Raporu ${detail.run_id ? `<span class="chip">${esc(detail.run_id)}</span>` : ""}
-              <span class="verdict ${esc(qa.overall_verdict)}">${esc(qa.overall_verdict)}</span>
-            </h4>
-            ${qa.priority_fix ? `<p>${esc(qa.priority_fix)}</p>` : ""}
-            ${renderScores(qa)}
-            ${renderIssues(qa.issues || [], { compact: true })}
-          </div>`
-        : "";
-      document.getElementById("session-detail").innerHTML = `
-        ${renderSessionHeader(detail)}
-        ${linked ? `<div class="meta-block"><h4>Bağlı Run'lar</h4><div class="chips">${linked}</div></div>` : ""}
-        ${qaBlock}
-        <div class="conversation-thread">
-          ${renderTurns(detail.turns, detail.auto_issues)}
-        </div>
-      `;
-      setExportContext(buildExportPayloadFromDetail(detail));
+      await selectSessionById(item.session_id, { listContainerId: "session-list" });
     },
-    (s) => `${shortSessionId(s.session_id)} · ${s.turn_count} tur · ${s.sector || "?"}`,
-    (s) => {
-      const start = fmtDateTime(s.created_at);
-      const end = fmtDateTime(s.updated_at || s.modified_at);
-      const preview = s.preview ? clipText(s.preview, 80) : "";
-      return `${start}${end !== start ? ` → ${end}` : ""}${preview ? ` · ${preview}` : ""}`;
-    }
+    sessionListLabel,
+    sessionListMeta,
+    { idKey: "session_id" }
   );
-  if (sessions[0]) document.querySelector("#session-list .list-item")?.click();
+  if (activeSessionId) {
+    autoSelectSessionItem("session-list", activeSessionId);
+  } else if (sessions[0]) {
+    autoSelectSessionItem("session-list", sessions[0].session_id);
+  }
 }
 
 async function loadQaBoard() {
@@ -708,7 +811,15 @@ function downloadAllTurns(sessionId, jobId = null) {
   a.click();
 }
 
+function downloadActiveSessionJson() {
+  downloadAllTurns(
+    activeSessionId,
+    exportContext?.meta?.job_id || exportContext?.meta?.run_id || null
+  );
+}
+
 window.downloadAllTurns = downloadAllTurns;
+window.downloadActiveSessionJson = downloadActiveSessionJson;
 
 window.openExportModal = openExportModal;
 
@@ -1004,6 +1115,9 @@ async function boot() {
 
   document.getElementById("export-btn")?.addEventListener("click", openExportModal);
   document.getElementById("session-export-btn")?.addEventListener("click", openExportModal);
+  document.getElementById("feedback-session-export-btn")?.addEventListener("click", openExportModal);
+  document.getElementById("session-json-btn")?.addEventListener("click", downloadActiveSessionJson);
+  document.getElementById("feedback-session-json-btn")?.addEventListener("click", downloadActiveSessionJson);
   document.getElementById("export-json-btn")?.addEventListener("click", downloadExportJson);
   document.getElementById("export-md-btn")?.addEventListener("click", downloadExportMarkdown);
   document.getElementById("export-close")?.addEventListener("click", closeExportModal);

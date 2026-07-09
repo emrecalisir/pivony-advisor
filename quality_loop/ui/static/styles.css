@@ -211,6 +211,41 @@ header p { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.84rem; }
   gap: 1rem;
 }
 
+.feedback-session-grid {
+  border-top: 1px solid var(--border);
+  padding: 1rem;
+  background: rgba(11, 16, 24, 0.25);
+}
+
+.feedback-panel .run-detail-panel {
+  border-bottom: 1px solid var(--border);
+}
+
+.session-sidebar-panel .panel-header,
+.session-detail-panel .panel-header {
+  padding: 0.65rem 0.9rem;
+}
+
+.session-list-scroll {
+  max-height: min(62vh, 640px);
+  overflow-y: auto;
+}
+
+.session-detail-panel .panel-body {
+  max-height: min(62vh, 640px);
+}
+
+.header-toolbar {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.btn-sm {
+  padding: 0.35rem 0.65rem;
+  font-size: 0.78rem;
+}
+
 .list-item {
   padding: 0.75rem 0.9rem;
   border-bottom: 1px solid var(--border);

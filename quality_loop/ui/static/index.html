@@ -72,12 +72,28 @@
           <div class="panel-body" id="live-run-body"></div>
         </div>
 
-        <div class="panel" style="margin-top:1rem">
+        <div class="panel feedback-panel" style="margin-top:1rem">
           <div class="panel-header">
             <h3>Feedback Loop — Son Run</h3>
             <span id="feedback-run-meta" class="muted"></span>
           </div>
-          <div id="feedback-detail" class="panel-body run-detail-panel empty">Henüz run yok — <strong>Run Başlat</strong> ile başlayın</div>
+          <div id="feedback-run-block" class="panel-body run-detail-panel empty">Henüz run yok — <strong>Run Başlat</strong> ile başlayın</div>
+          <div class="detail-grid feedback-session-grid hidden" id="feedback-session-grid">
+            <div class="panel session-sidebar-panel">
+              <div class="panel-header"><h3>Konuşmalar</h3></div>
+              <div id="feedback-session-list" class="session-list-scroll"></div>
+            </div>
+            <div class="panel session-detail-panel">
+              <div class="panel-header panel-header-split">
+                <h3 id="feedback-session-title">Session</h3>
+                <div id="feedback-session-toolbar" class="header-toolbar hidden">
+                  <button class="btn primary btn-sm" id="feedback-session-json-btn" type="button">↓ JSON</button>
+                  <button class="btn ghost btn-sm" id="feedback-session-export-btn" type="button">↓ Export</button>
+                </div>
+              </div>
+              <div id="feedback-session-detail" class="panel-body empty">Soldan bir konuşma seçin</div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -110,7 +126,10 @@
           <div class="panel">
             <div class="panel-header panel-header-split">
               <h3 id="session-title">Detay</h3>
-              <button id="session-export-btn" class="btn ghost hidden" type="button">↓ Export</button>
+              <div id="session-toolbar" class="header-toolbar hidden">
+                <button id="session-json-btn" class="btn primary btn-sm" type="button">↓ JSON</button>
+                <button id="session-export-btn" class="btn ghost btn-sm hidden" type="button">↓ Export</button>
+              </div>
             </div>
             <div id="session-detail" class="panel-body empty">Bir session seçin</div>
           </div>
