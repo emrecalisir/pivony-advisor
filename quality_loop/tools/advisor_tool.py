@@ -168,13 +168,15 @@ class CreateSessionTool(BaseTool):
 
         env_uid = os.environ.get("QUALITY_LOOP_USER_ID", "").strip()
         env_email = os.environ.get("QUALITY_LOOP_USER_EMAIL", "").strip()
+        env_sector = os.environ.get("QUALITY_LOOP_SECTOR", "").strip()
         effective_user_id = env_uid or user_id
         effective_user_email = env_email or user_email
+        effective_sector = env_sector or sector or "hospitality"
 
         session = create_session(
             user_id=effective_user_id,
             user_email=effective_user_email,
-            sector=sector,
+            sector=effective_sector,
             advisor_mode=advisor_mode,
         )
         return json.dumps(
