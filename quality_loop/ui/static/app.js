@@ -397,9 +397,7 @@ async function openSessionFromImprovement(sessionId, runId = null) {
 }
 
 function downloadImprovementsExport(runId) {
-  const { base } = getApiConfig();
-  const rel = `api/runs/${encodeURIComponent(runId)}/improvements/export.json`;
-  const url = base ? `${base.replace(/\/$/, "")}/${rel}` : rel;
+  const url = apiUrl(`api/runs/${encodeURIComponent(runId)}/improvements/export.json`);
   fetch(url, fetchOptions())
     .then((res) => {
       if (res.status === 401) {
@@ -1135,15 +1133,37 @@ function downloadExportMarkdown() {
   closeExportModal();
 }
 
-function exportDownloadUrl(sessionId, format = "json", jobId = null) {
-  const { base, token } = getApiConfig();
-  const params = new URLSearchParams();
-  if (token) params.set("token", token);
-  if (jobId) params.set("job_id", jobId);
+function apiUrl(path) {
+  const { base } = getApiConfig();
+  const rel = path.startsWith("/") ? path.slice(1) : path;
+  if (base) return `${base.replace(/\/$/, "")}/${rel}`;
+  const mount = getMountBase();
+  if (mount) return `${mount}/${rel}`;
+  return rel;
+}
+
+async function downloadSessionExport(sessionId, format = "json", jobId = null) {
   const ext = format === "md" ? "export.md" : "export.json";
-  const root = base ? `${base.replace(/\/$/, "")}` : "";
-  const qs = params.toString();
-  return `${root}/api/sessions/${encodeURIComponent(sessionId)}/${ext}${qs ? `?${qs}` : ""}`;
+  const params = new URLSearchParams();
+  if (jobId) params.set("job_id", jobId);
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  const url = apiUrl(`api/sessions/${encodeURIComponent(sessionId)}/${ext}${qs}`);
+  const res = await fetch(url, fetchOptions());
+  if (res.status === 401) {
+    showLoginOverlay();
+    throw new Error("login required");
+  }
+  if (!res.ok) throw new Error(`${res.status}`);
+  const blob = await res.blob();
+  const disp = res.headers.get("Content-Disposition") || "";
+  const match = disp.match(/filename="?([^";]+)"?/);
+  const fallback = `pivony-quality-loop-${String(sessionId).slice(0, 12)}.${format === "md" ? "md" : "json"}`;
+  const filename = match?.[1] || fallback;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 function downloadAllTurns(sessionId, jobId = null) {
@@ -1153,11 +1173,9 @@ function downloadAllTurns(sessionId, jobId = null) {
     exportContext?.meta?.session_id ||
     null;
   if (!sid) return;
-  const url = exportDownloadUrl(sid, "json", jobId || exportContext?.meta?.job_id || null);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "";
-  a.click();
+  downloadSessionExport(sid, "json", jobId || exportContext?.meta?.job_id || null).catch((err) =>
+    alert(`İndirilemedi: ${err.message}`)
+  );
 }
 
 function downloadActiveSessionJson() {
