@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from quality_loop.architecture import get_architecture
 from quality_loop.langsmith_tracing import langsmith_ui_url, observability_status
+from quality_loop.prompt_config import list_prompts_meta, read_prompt, write_prompt
 from quality_loop.vertex_resilience import resilience_status
 from quality_loop.run_manager import get_active_job, load_job, start_analyze, start_full_loop, stop_job
 from quality_loop.run_store import RUNS_DIR, list_runs, load_run, try_parse_json
@@ -231,6 +232,14 @@ class StartJobRequest(BaseModel):
     mode: Literal["full", "analyze"] = "full"
     iterations: int = Field(default=1, ge=1, le=5)
     session_id: str | None = None
+    sector: str | None = None
+
+
+class SavePromptRequest(BaseModel):
+    content: str = Field(min_length=1)
+
+
+_SPA_VIEWS = frozenset({"feedback", "architecture", "runs", "sessions", "qa", "improvements"})
 
 
 def _job_live_payload(job: dict[str, Any]) -> dict[str, Any]:
@@ -399,7 +408,7 @@ def api_start_job(body: StartJobRequest) -> dict[str, Any]:
                 raise HTTPException(status_code=400, detail="session_id required for analyze")
             job = start_analyze(body.session_id)
         else:
-            job = start_full_loop(iterations=body.iterations)
+            job = start_full_loop(iterations=body.iterations, sector=body.sector)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except FileNotFoundError as exc:
@@ -434,7 +443,29 @@ def api_observability() -> dict[str, Any]:
 def api_architecture() -> dict[str, Any]:
     arch = get_architecture()
     arch["observability_live"] = observability_status()
+    arch["prompts"] = list_prompts_meta()
     return arch
+
+
+@app.get("/api/prompts")
+def api_list_prompts() -> dict[str, Any]:
+    return list_prompts_meta()
+
+
+@app.get("/api/prompts/{agent_id}")
+def api_get_prompt(agent_id: str, sector: str = "default") -> dict[str, Any]:
+    try:
+        return read_prompt(agent_id, sector)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.put("/api/prompts/{agent_id}")
+def api_save_prompt(agent_id: str, body: SavePromptRequest, sector: str = "default") -> dict[str, Any]:
+    try:
+        return write_prompt(agent_id, sector, body.content)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/api/runs/{run_id}")
@@ -608,6 +639,13 @@ def get_analyze(name: str) -> dict[str, Any]:
 
 @app.get("/")
 def index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/{view_name}")
+def spa_shell(view_name: str) -> FileResponse:
+    if view_name not in _SPA_VIEWS:
+        raise HTTPException(status_code=404, detail="not found")
     return FileResponse(STATIC_DIR / "index.html")
 
 

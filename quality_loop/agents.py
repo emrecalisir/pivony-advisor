@@ -15,21 +15,20 @@ from quality_loop.tools.git_tool import (
     ReadFileTool,
 )
 
-_CONFIG_DIR = Path(__file__).resolve().parent / "config"
-
-
-def _read_config(name: str) -> str:
-    path = _CONFIG_DIR / name
-    return path.read_text(encoding="utf-8")
-
-
 def _llm(env_key: str, default: str) -> str:
     return os.environ.get(env_key, default).strip() or default
 
 
-def create_agents():
-    cx_persona = _read_config("cx_director_persona.txt")
-    qa_rubric = _read_config("qa_rubric.txt")
+def _resolve_sector(sector: str | None = None) -> str:
+    return (sector or os.environ.get("QUALITY_LOOP_SECTOR") or "default").strip() or "default"
+
+
+def create_agents(sector: str | None = None):
+    from quality_loop.prompt_config import read_prompt
+
+    resolved = _resolve_sector(sector)
+    cx_persona = read_prompt("cx_director", resolved)["content"]
+    qa_rubric = read_prompt("qa", resolved)["content"]
 
     cx_director = Agent(
         role="CX Director",

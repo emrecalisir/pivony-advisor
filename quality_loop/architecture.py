@@ -78,6 +78,8 @@ def get_architecture() -> dict:
                 ],
                 "outputs": ["scores", "issues", "overall_verdict", "priority_fix", "fix_hint"],
                 "decision_maker": True,
+                "prompt_file": "config/qa_rubric.txt",
+                "prompt_agent_id": "qa",
             },
             {
                 "id": "coding_agent",
@@ -112,7 +114,8 @@ def get_architecture() -> dict:
                 "agent": "QA Agent",
                 "phase": "qa",
                 "context": ["conversation_task"],
-                "rubric": "config/qa_rubric.txt",
+                "rubric": "config/qa_rubric.txt (sector override: config/sectors/<sector>/qa_rubric.txt)",
+                "editable": True,
             },
             {
                 "id": "coding_task",

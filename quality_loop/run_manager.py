@@ -120,7 +120,13 @@ def _python_executable() -> str:
     return sys.executable
 
 
-def _spawn_job(*, mode: str, iterations: int = 1, session_id: str | None = None) -> dict[str, Any]:
+def _spawn_job(
+    *,
+    mode: str,
+    iterations: int = 1,
+    session_id: str | None = None,
+    sector: str | None = None,
+) -> dict[str, Any]:
     global _active_job_id
     with _lock:
         reconcile_stale_jobs()
@@ -157,6 +163,7 @@ def _spawn_job(*, mode: str, iterations: int = 1, session_id: str | None = None)
                 "mode": mode,
                 "iterations": iterations,
                 "session_id": session_id,
+                "sector": sector or os.environ.get("QUALITY_LOOP_SECTOR", "default"),
                 "started_at": _utcnow_iso(),
                 "message": "Kuyruğa alındı",
                 "log_file": str(log_path),
@@ -165,6 +172,8 @@ def _spawn_job(*, mode: str, iterations: int = 1, session_id: str | None = None)
 
         env = os.environ.copy()
         env["PYTHONPATH"] = str(_REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+        if sector:
+            env["QUALITY_LOOP_SECTOR"] = sector
 
         log_fh = open(log_path, "w", encoding="utf-8")
         proc = subprocess.Popen(
@@ -218,8 +227,8 @@ def _spawn_job(*, mode: str, iterations: int = 1, session_id: str | None = None)
         return load_job(job_id)
 
 
-def start_full_loop(iterations: int = 1) -> dict[str, Any]:
-    return _spawn_job(mode="full", iterations=iterations)
+def start_full_loop(iterations: int = 1, sector: str | None = None) -> dict[str, Any]:
+    return _spawn_job(mode="full", iterations=iterations, sector=sector)
 
 
 def start_analyze(session_id: str) -> dict[str, Any]:

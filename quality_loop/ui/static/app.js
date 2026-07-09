@@ -1,6 +1,23 @@
 const views = ["feedback", "architecture", "runs", "sessions", "qa", "improvements"];
+const VIEW_SEGMENTS = {
+  feedback: "",
+  architecture: "architecture",
+  runs: "runs",
+  sessions: "sessions",
+  qa: "qa",
+  improvements: "improvements",
+};
+const VIEW_SUBTITLES = {
+  feedback: "Konuşmalar · QA değerlendirmeleri · kod iyileştirmeleri · tam feedback döngüsü",
+  architecture: "CrewAI mimarisi · agent promptları · veri akışı",
+  runs: "Tüm quality loop run geçmişi",
+  sessions: "Advisor konuşma kayıtları",
+  qa: "QA Agent değerlendirme raporları",
+  improvements: "Coding Agent iyileştirme önerileri",
+};
 let exportContext = null;
 let pollTimer = null;
+let promptEditorWired = false;
 
 function esc(text) {
   return String(text ?? "")
@@ -90,11 +107,60 @@ async function api(path) {
   return res.json();
 }
 
-function setView(name) {
+function getMountBase() {
+  const path = window.location.pathname;
+  const marker = "/quality-loop";
+  const idx = path.indexOf(marker);
+  if (idx >= 0) return path.slice(0, idx + marker.length);
+  return "";
+}
+
+function viewFromLocation() {
+  const base = getMountBase();
+  let rest = window.location.pathname;
+  if (base) rest = rest.slice(base.length);
+  rest = rest.replace(/^\/+/, "").replace(/\/+$/, "");
+  if (!rest) return "feedback";
+  return views.find((v) => VIEW_SEGMENTS[v] === rest || v === rest) || "feedback";
+}
+
+function buildViewUrl(view) {
+  const base = getMountBase();
+  const seg = VIEW_SEGMENTS[view];
+  const path = seg ? `${base}/${seg}` : `${base || ""}/`;
+  const token = new URLSearchParams(window.location.search).get("token");
+  return token ? `${path}?token=${encodeURIComponent(token)}` : path;
+}
+
+function setView(name, { replace = false, syncUrl = true } = {}) {
   views.forEach((v) => {
     document.getElementById(`view-${v}`).classList.toggle("hidden", v !== name);
     document.querySelector(`.nav-btn[data-view="${v}"]`)?.classList.toggle("active", v === name);
   });
+  if (syncUrl) {
+    const url = buildViewUrl(name);
+    const state = { view: name };
+    if (replace) history.replaceState(state, "", url);
+    else history.pushState(state, "", url);
+  }
+  const subtitle = document.getElementById("subtitle");
+  if (subtitle && VIEW_SUBTITLES[name]) subtitle.textContent = VIEW_SUBTITLES[name];
+}
+
+async function navigateToView(view, { syncUrl = true } = {}) {
+  setView(view, { replace: !syncUrl, syncUrl });
+  if (view === "feedback") await loadFeedback();
+  if (view === "architecture") await loadArchitecture();
+  if (view === "runs") await loadRuns();
+  if (view === "sessions") await loadSessions();
+  if (view === "qa") await loadQaBoard();
+  if (view === "improvements") await loadImprovements();
+}
+
+function selectedPromptSector() {
+  const custom = document.getElementById("prompt-sector-custom")?.value?.trim();
+  if (custom) return custom;
+  return document.getElementById("prompt-sector")?.value || localStorage.getItem("ql_run_sector") || "default";
 }
 
 function severityChip(sev) {
@@ -782,6 +848,20 @@ async function apiPost(path, body) {
   return res.json();
 }
 
+async function apiPut(path, body) {
+  const { base, token } = getApiConfig();
+  const rel = path.startsWith("/") ? path.slice(1) : path;
+  const url = base ? `${base.replace(/\/$/, "")}/${rel}` : rel;
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers["X-Quality-Loop-Token"] = token;
+  const res = await fetch(url, { method: "PUT", headers, body: JSON.stringify(body) });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `${url} → ${res.status}`);
+  }
+  return res.json();
+}
+
 function renderFlowSteps(flow) {
   return `<div class="flow-steps">${(flow || [])
     .map(
@@ -1040,6 +1120,86 @@ async function stopRun() {
 }
 window.stopRun = stopRun;
 
+async function loadPromptIntoEditor() {
+  const sector = selectedPromptSector();
+  const agent = document.getElementById("prompt-agent")?.value || "qa";
+  const data = await api(`/api/prompts/${agent}?sector=${encodeURIComponent(sector)}`);
+  const textarea = document.getElementById("prompt-content");
+  if (textarea) textarea.value = data.content;
+  const meta = document.getElementById("prompt-meta");
+  if (meta) {
+    let hint = data.path || "";
+    if (data.uses_default) hint += " · varsayılan kullanılıyor (bu sektör için override yok)";
+    if (data.is_override) hint += " · sektör override aktif";
+    meta.textContent = hint;
+  }
+  localStorage.setItem("ql_run_sector", sector);
+}
+
+async function savePrompt() {
+  const sector = selectedPromptSector();
+  const agent = document.getElementById("prompt-agent")?.value || "qa";
+  const content = document.getElementById("prompt-content")?.value || "";
+  const status = document.getElementById("prompt-save-status");
+  if (!content.trim()) {
+    if (status) status.textContent = "Prompt boş olamaz";
+    return;
+  }
+  if (status) status.textContent = "Kaydediliyor…";
+  try {
+    const data = await apiPut(`/api/prompts/${agent}?sector=${encodeURIComponent(sector)}`, { content });
+    if (status) status.textContent = `Kaydedildi · ${data.path}`;
+    localStorage.setItem("ql_run_sector", sector);
+    await loadPromptIntoEditor();
+  } catch (err) {
+    if (status) status.textContent = `Hata: ${err.message}`;
+  }
+}
+
+function renderPromptEditor(meta) {
+  const sectors = meta?.sectors || [{ id: "default", label: "Varsayılan (genel)" }];
+  const agents = meta?.agents || [];
+  const savedSector = localStorage.getItem("ql_run_sector") || "default";
+  return `
+    <div class="prompt-editor">
+      <div class="panel-header panel-header-split">
+        <h3>Agent Promptları</h3>
+        <span id="prompt-save-status" class="muted-small"></span>
+      </div>
+      <p class="flow-desc">Run başlatırken seçilen sektörün QA rubric ve CX persona dosyaları kullanılır.</p>
+      <div class="prompt-controls">
+        <label>Sektör
+          <select id="prompt-sector">${sectors
+            .map(
+              (s) =>
+                `<option value="${esc(s.id)}"${s.id === savedSector ? " selected" : ""}>${esc(s.label)}</option>`
+            )
+            .join("")}</select>
+        </label>
+        <label>Yeni sektör slug
+          <input id="prompt-sector-custom" type="text" placeholder="örn. insurance" />
+        </label>
+        <label>Agent
+          <select id="prompt-agent">${agents
+            .map((a) => `<option value="${esc(a.id)}">${esc(a.label)}</option>`)
+            .join("")}</select>
+        </label>
+        <button id="prompt-save-btn" class="btn primary btn-sm" type="button">Kaydet</button>
+      </div>
+      <p id="prompt-meta" class="muted-small"></p>
+      <textarea id="prompt-content" class="prompt-textarea" rows="18" spellcheck="false"></textarea>
+    </div>`;
+}
+
+function wirePromptEditor() {
+  if (promptEditorWired) return;
+  promptEditorWired = true;
+  document.getElementById("prompt-sector")?.addEventListener("change", () => loadPromptIntoEditor());
+  document.getElementById("prompt-sector-custom")?.addEventListener("input", () => loadPromptIntoEditor());
+  document.getElementById("prompt-agent")?.addEventListener("change", () => loadPromptIntoEditor());
+  document.getElementById("prompt-save-btn")?.addEventListener("click", () => savePrompt());
+}
+
 async function loadArchitecture() {
   const arch = await api("/api/architecture");
   const obs = arch.observability_live || arch.observability || {};
@@ -1111,7 +1271,12 @@ async function loadArchitecture() {
     </div>
 
     ${renderLangSmithBlock(obs)}
+
+    ${renderPromptEditor(arch.prompts)}
   `;
+  promptEditorWired = false;
+  wirePromptEditor();
+  await loadPromptIntoEditor();
 }
 
 async function startRun() {
@@ -1121,7 +1286,8 @@ async function startRun() {
   try {
     setView("feedback");
     setWorkbenchTab("live");
-    const job = await apiPost("/api/jobs/start", { mode: "full", iterations: 1 });
+    const sector = localStorage.getItem("ql_run_sector") || "default";
+    const job = await apiPost("/api/jobs/start", { mode: "full", iterations: 1, sector });
     renderLiveRun(job);
     if (!pollTimer) pollTimer = setInterval(pollActiveJob, 4000);
   } catch (err) {
@@ -1208,23 +1374,30 @@ async function boot() {
 
   document.querySelectorAll(".nav-btn").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      const view = btn.dataset.view;
-      setView(view);
       try {
-        if (view === "feedback") await loadFeedback();
-        if (view === "architecture") await loadArchitecture();
-        if (view === "runs") await loadRuns();
-        if (view === "sessions") await loadSessions();
-        if (view === "qa") await loadQaBoard();
-        if (view === "improvements") await loadImprovements();
+        await navigateToView(btn.dataset.view);
       } catch (err) {
         console.error(err);
       }
     });
   });
 
+  window.addEventListener("popstate", () => {
+    navigateToView(viewFromLocation(), { syncUrl: false }).catch(console.error);
+  });
+
   try {
-    await refreshAll();
+    const initialView = viewFromLocation();
+    setView(initialView, { replace: true, syncUrl: false });
+    if (initialView === "feedback") {
+      await refreshAll();
+    } else {
+      const overview = await api("/api/overview");
+      renderStats(overview);
+      await navigateToView(initialView, { syncUrl: false });
+      await pollActiveJob();
+      updateSourceBadge();
+    }
   } catch (err) {
     document.getElementById("subtitle").textContent = `Bağlantı hatası: ${err.message}`;
   }

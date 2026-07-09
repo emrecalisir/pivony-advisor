@@ -937,6 +937,49 @@ header p { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.84rem; }
   border-bottom: 1px solid var(--border);
   font-size: 0.86rem;
 }
+
+.prompt-editor {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.prompt-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem 1rem;
+  align-items: flex-end;
+  margin: 0.75rem 0;
+}
+.prompt-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.prompt-controls select,
+.prompt-controls input {
+  min-width: 180px;
+  padding: 0.45rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(11, 16, 24, 0.65);
+  color: var(--text);
+  font: inherit;
+}
+.prompt-textarea {
+  width: 100%;
+  min-height: 320px;
+  padding: 0.75rem 0.85rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(8, 12, 18, 0.85);
+  color: var(--text);
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  resize: vertical;
+}
 .muted-small { color: var(--muted); font-size: 0.76rem; margin-top: 0.3rem; }
 
 .flow-steps {
