@@ -50,12 +50,19 @@ _DASHBOARD_ARG_TOOLS = frozenset(
 
 
 def should_expose_list_dashboards(state: HardAgentState) -> bool:
-    """Hide list_dashboards when scope already pins a dashboard or org-wide mode."""
-    if state.dashboard_locked or state.has_dashboard:
-        return False
-    if state.org_wide:
-        return False
-    return True
+    """
+    Hide list_dashboards when scope already pins a dashboard and it's locked.
+    It should only be exposed if there is no dashboard selected or it's not locked.
+    This acts as a guardrail to prevent the agent from repeatedly listing dashboards
+    when one has already been explicitly selected and locked by the user.
+    The agent's prompt should instruct it to use the locked dashboard and only list
+    others if the user explicitly requests a change.
+    """
+    # If a dashboard is locked, we should generally not expose list_dashboards
+    # unless the user's intent to change dashboard is clear (which this function cannot determine).
+    # This guardrail prevents the agent from calling list_dashboards unnecessarily
+    # after a dashboard has been explicitly selected and locked.
+    return not (state.dashboard_locked and state.has_dashboard)
 
 
 def filter_tools_for_state(
@@ -112,7 +119,8 @@ def sanitize_function_calls(
     function_calls: list[Any],
     state: HardAgentState,
 ) -> list[Any]:
-    """Streaming path: filter GenAI FunctionCall objects."""
+    """
+    Streaming path: filter GenAI FunctionCall objects."""
     if should_expose_list_dashboards(state) or not function_calls:
         return function_calls
     names = [getattr(fc, "name", None) for fc in function_calls]
@@ -156,7 +164,10 @@ def validated_tool_invoke(
     state: HardAgentState | None = None,
     user_id: str | None = None,
 ) -> str:
-    """Validate tool args with Pydantic before invoke; return JSON error on bad schema."""
+    """
+    Validate tool args with Pydantic before invoke; return JSON error on bad schema.
+    Catch and return general tool execution errors in a structured format.
+    """
     args = dict(raw_args or {})
     if state is not None:
         args = pin_tool_args_for_state(tool.name, args, state)
@@ -173,39 +184,60 @@ def validated_tool_invoke(
         )
         args.pop("_pivot_resolution", None)
     schema = getattr(tool, "args_schema", None)
-    if schema is not None:
-        try:
-            parsed = schema.model_validate(args)
-            args = parsed.model_dump(exclude_none=True)
-        except ValidationError as exc:
-            logger.warning("Tool %s arg validation failed: %s", tool.name, exc)
-            return json.dumps(
-                {
-                    "error": "invalid_tool_arguments",
-                    "tool": tool.name,
-                    "detail": exc.errors(),
-                    "instruction": "Fix arguments and retry the tool once.",
-                },
-                ensure_ascii=False,
-            )
-    return tool.invoke(args)
+    try:
+        if schema is not None:
+            try:
+                parsed = schema.model_validate(args)
+                args = parsed.model_dump(exclude_none=True)
+            except ValidationError as exc:
+                logger.warning("Tool %s arg validation failed: %s", tool.name, exc)
+                return json.dumps(
+                    {
+                        "error": "invalid_tool_arguments",
+                        "tool": tool.name,
+                        "detail": exc.errors(),
+                        "instruction": "Fix arguments and retry the tool once.",
+                    },
+                    ensure_ascii=False,
+                )
+        return tool.invoke(args)
+    except Exception as e:
+        logger.error("Tool %s execution failed: %s", tool.name, e)
+        return json.dumps(
+            {
+                "error": "tool_execution_failed",
+                "tool": tool.name,
+                "detail": str(e),
+                "instruction": f"The tool '{tool.name}' failed to execute. "
+                               "Consider its arguments or if the requested resource is accessible.",
+            },
+            ensure_ascii=False,
+        )
 
 
 def blocked_tool_result(tool_name: str, state: HardAgentState) -> str | None:
-    """Return a synthetic tool result when a call is blocked by routing rules."""
+    """
+    Return a synthetic tool result when a call is blocked by routing rules.
+
+    This function now explicitly checks `should_expose_list_dashboards`.
+    If `list_dashboards` is blocked, a synthetic result is returned to guide the agent.
+    """
     if tool_name not in _DASHBOARD_LISTING_TOOLS:
         return None
-    if should_expose_list_dashboards(state):
-        return None
-    return json.dumps(
-        {
-            "skipped": True,
-            "tool": tool_name,
-            "dashboard_id": state.dashboard_id,
-            "instruction": (
-                f"Dashboard scope is already locked to id={state.dashboard_id}. "
-                "Do not call list_dashboards. Use get_pivony_metrics and other analysis tools."
-            ),
-        },
-        ensure_ascii=False,
-    )
+    
+    # If the tool is list_dashboards and it should not be exposed according to state,
+    # then return a synthetic blocked result.
+    if not should_expose_list_dashboards(state):
+        return json.dumps(
+            {
+                "skipped": True,
+                "tool": tool_name, # Changed from tool.name to tool_name
+                "dashboard_id": state.dashboard_id,
+                "instruction": (
+                    f"Dashboard scope is already locked to id={state.dashboard_id}. "
+                    "Do not call list_dashboards. Use analysis tools like get_pivony_metrics or list_reviews."
+                ),
+            },
+            ensure_ascii=False,
+        )
+    return None

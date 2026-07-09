@@ -147,8 +147,8 @@ def scope_prompt_block(scope: EstablishedAnalyticsScope | None) -> str:
         elif scope.days:
             parts.append(f"Look-back: last {scope.days} days.")
         parts.append(
-            "Follow-up questions MUST reuse this dashboard and period — do NOT call "
-            "list_dashboards or ask the user to pick a dashboard again."
+            "Follow-up questions SHOULD reuse this dashboard and period if relevant. "
+            "If the user asks to change or list dashboards, you MAY call list_dashboards."
         )
         return " ".join(parts)
     if scope.org_wide:

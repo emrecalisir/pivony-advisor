@@ -37,6 +37,7 @@ class HardAgentState:
     """Resolved analytics scope for tool routing and prompt injection."""
 
     dashboard_id: int | None = None
+    dashboard_name: str | None = None  # Added dashboard_name
     org_wide: bool = False
     since: str | None = None
     until: str | None = None
@@ -82,7 +83,7 @@ def resolve_hard_agent_state(
 
     Priority:
       1. page_context.dashboard_id (UI pin — locked)
-      2. page_context.dashboard_selection (picker / explicit user choice)
+      2. _dashboard_from_picker_context (explicit user choice from current or last turn)
       3. page_context.analytics_scope
       4. inferred established scope from prior turns (dates/org-wide only;
          dashboard_id never inferred from model output)
@@ -93,19 +94,33 @@ def resolve_hard_agent_state(
     if days_pc is None:
         days_pc = _int_or_none(pc.get("selectedDaysRange"))
 
-    if pc.get("fresh_session") is True:
-        selection = pc.get("dashboard_selection")
+    # Determine explicit dashboard selection from UI (picker or last session) early
+    user_explicit_dashboard_id = None
+    user_explicit_dashboard_name = None
+    user_explicit_dashboard_locked = False
+    for key in ("dashboard_selection", "last_dashboard_selection"):
+        selection = pc.get(key)
         if isinstance(selection, dict):
             sel_id = _int_or_none(selection.get("id"))
+            sel_name = selection.get("name")
             if sel_id is not None:
-                return HardAgentState(
-                    dashboard_id=sel_id,
-                    since=since_pc,
-                    until=until_pc,
-                    days=days_pc,
-                    dashboard_locked=True,
-                    source="dashboard_selection",
-                )
+                user_explicit_dashboard_id = sel_id
+                user_explicit_dashboard_name = str(sel_name) if sel_name else None
+                user_explicit_dashboard_locked = True  # If user selected, it's locked until changed
+                break  # Use the first one found (dashboard_selection > last_dashboard_selection)
+
+    if pc.get("fresh_session") is True:
+        # For a fresh session, if a dashboard was just selected, respect it.
+        if user_explicit_dashboard_id is not None:
+            return HardAgentState(
+                dashboard_id=user_explicit_dashboard_id,
+                dashboard_name=user_explicit_dashboard_name,  # Pass name
+                since=since_pc,
+                until=until_pc,
+                days=days_pc,
+                dashboard_locked=user_explicit_dashboard_locked,
+                source="dashboard_selection_fresh_session",
+            )
         return HardAgentState(
             since=since_pc,
             until=until_pc,
@@ -113,46 +128,18 @@ def resolve_hard_agent_state(
             source="fresh_session",
         )
 
-    raw_scope = pc.get("analytics_scope")
-    if isinstance(raw_scope, dict):
-        scope_dash = _int_or_none(raw_scope.get("dashboard_id"))
-        scope_days = _int_or_none(raw_scope.get("days"))
-        scope_since = raw_scope.get("since")
-        scope_until = raw_scope.get("until")
-        if scope_dash is not None:
-            return HardAgentState(
-                dashboard_id=scope_dash,
-                since=str(scope_since).strip() if scope_since else since_pc,
-                until=str(scope_until).strip() if scope_until else until_pc,
-                days=scope_days if scope_days is not None else days_pc,
-                dashboard_locked=True,
-                source="analytics_scope",
-            )
-        if raw_scope.get("org_wide"):
-            picker_dash = _dashboard_from_picker_context(pc)
-            page_dash = _int_or_none(pc.get("dashboard_id"))
-            locked = picker_dash or page_dash
-            if locked is not None:
-                return HardAgentState(
-                    dashboard_id=locked,
-                    since=str(scope_since).strip() if scope_since else since_pc,
-                    until=str(scope_until).strip() if scope_until else until_pc,
-                    days=scope_days or days_pc or 7,
-                    dashboard_locked=True,
-                    source="last_dashboard_selection" if picker_dash else "page_dashboard_id",
-                )
-            return HardAgentState(
-                org_wide=True,
-                since=str(scope_since).strip() if scope_since else since_pc,
-                until=str(scope_until).strip() if scope_until else until_pc,
-                days=scope_days or 7,
-                source="analytics_scope",
-            )
-
-    locked_dash = _int_or_none(pc.get("dashboard_id"))
-    if locked_dash is not None:
+    # 1. Highest priority: UI pinned dashboard_id (e.g., from URL or persistent UI state)
+    locked_dash_from_ui_pin = _int_or_none(pc.get("dashboard_id"))
+    if locked_dash_from_ui_pin is not None:
+        # Try to get the name from the explicit selection if it matches the pinned ID
+        resolved_dashboard_name = (
+            user_explicit_dashboard_name
+            if user_explicit_dashboard_id == locked_dash_from_ui_pin
+            else None
+        )
         return HardAgentState(
-            dashboard_id=locked_dash,
+            dashboard_id=locked_dash_from_ui_pin,
+            dashboard_name=resolved_dashboard_name,  # Pass name if available
             since=since_pc,
             until=until_pc,
             days=days_pc,
@@ -160,31 +147,83 @@ def resolve_hard_agent_state(
             source="page_dashboard_id",
         )
 
-    selection = pc.get("dashboard_selection")
-    if isinstance(selection, dict):
-        sel_id = _int_or_none(selection.get("id"))
-        if sel_id is not None:
+    # 2. Next priority: Analytics scope (model-inferred or persistent from backend)
+    raw_scope = pc.get("analytics_scope")
+    if isinstance(raw_scope, dict):
+        scope_dash = _int_or_none(raw_scope.get("dashboard_id"))
+        scope_days = _int_or_none(raw_scope.get("days"))
+        scope_since = raw_scope.get("since")
+        scope_until = raw_scope.get("until")
+
+        if scope_dash is not None:
+            resolved_dashboard_name = (
+                user_explicit_dashboard_name
+                if user_explicit_dashboard_id == scope_dash
+                else None
+            )
             return HardAgentState(
-                dashboard_id=sel_id,
-                since=since_pc,
-                until=until_pc,
-                days=days_pc,
-                dashboard_locked=True,
-                source="dashboard_selection",
+                dashboard_id=scope_dash,
+                dashboard_name=resolved_dashboard_name,  # Pass name if available
+                since=str(scope_since).strip() if scope_since else since_pc,
+                until=str(scope_until).strip() if scope_until else until_pc,
+                days=scope_days if scope_days is not None else days_pc,
+                # Locked if it matches user's explicit selection, otherwise not necessarily locked
+                dashboard_locked=scope_dash == user_explicit_dashboard_id,
+                source="analytics_scope",
+            )
+        if raw_scope.get("org_wide"):
+            # If org_wide, but user selected a specific dashboard, carry that dashboard along
+            # as a primary focus within the org-wide context, but it's not "locked"
+            # in the sense of overriding org-wide.
+            dash_id_for_org_wide = (
+                user_explicit_dashboard_id
+                if user_explicit_dashboard_id is not None
+                else None
+            )
+            resolved_dashboard_name = (
+                user_explicit_dashboard_name
+                if dash_id_for_org_wide == user_explicit_dashboard_id
+                else None
+            )
+            return HardAgentState(
+                dashboard_id=dash_id_for_org_wide,
+                dashboard_name=resolved_dashboard_name, # Pass name if available
+                org_wide=True,
+                since=str(scope_since).strip() if scope_since else since_pc,
+                until=str(until_pc).strip() if until_pc else until_pc,
+                days=scope_days or 7,
+                dashboard_locked=False,  # Org-wide is generally not "locked" to a specific dashboard
+                source="analytics_scope_org_wide",
             )
 
+    # 3. Next priority: User's explicit dashboard selection from picker context
+    # This ensures that an explicit user selection persists if not overridden by higher priority sources.
+    if user_explicit_dashboard_id is not None:
+        return HardAgentState(
+            dashboard_id=user_explicit_dashboard_id,
+            dashboard_name=user_explicit_dashboard_name,  # Pass name
+            since=since_pc,
+            until=until_pc,
+            days=days_pc,
+            dashboard_locked=user_explicit_dashboard_locked,
+            source="dashboard_selection_persistent",
+        )
+
+    # 4. Fallback: Inferred established scope from prior turns
     established = infer_established_analytics_scope(turns, page_context)
     if established is not None:
+        # No dashboard name available from inferred scope reliably
         return HardAgentState(
             dashboard_id=established.dashboard_id,
             org_wide=established.org_wide,
             since=established.since or since_pc,
             until=established.until or until_pc,
             days=established.days,
-            dashboard_locked=established.dashboard_id is not None,
+            dashboard_locked=False,
             source="established",
         )
 
+    # Default: no dashboard, just time scope if any
     return HardAgentState(since=since_pc, until=until_pc, days=days_pc, source="none")
 
 
@@ -200,17 +239,19 @@ def hard_context_prompt_block(state: HardAgentState) -> str:
     base = scope_prompt_block(state.as_established())
     if state.dashboard_locked and state.dashboard_id is not None:
         parts = [
-            f"HARD CONTEXT (authoritative, do not ignore): dashboard_id={state.dashboard_id} "
-            "is locked for this turn.",
+            f"HARD CONTEXT (authoritative, do not ignore): dashboard_id={state.dashboard_id}"
         ]
+        if state.dashboard_name:
+            parts[0] += f" (name='{state.dashboard_name}')"
+        parts[0] += " is locked for this turn."
         if state.since and state.until:
             parts.append(f"Date window: {state.since} to {state.until}.")
         elif state.days:
             parts.append(f"Look-back: last {state.days} days.")
         parts.append(
-            "Do NOT call list_dashboards. Do NOT ask the user to pick a dashboard again. "
-            "Proceed directly with get_pivony_metrics and other analysis tools "
-            "(dashboard_id is injected server-side from the user's selection)."
+            "You SHOULD primarily use this locked dashboard for analysis. However, if the user "
+            "explicitly asks to list other dashboards or change the current dashboard, "
+            "you MAY call list_dashboards to assist them."
         )
         return " ".join(parts)
     if base:
