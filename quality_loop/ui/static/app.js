@@ -88,7 +88,11 @@ function clipText(text, max = 100) {
 
 function getApiConfig() {
   const base = (localStorage.getItem("ql_api_base") || "").replace(/\/$/, "");
-  const token = localStorage.getItem("ql_api_token") || "";
+  const token =
+    sessionStorage.getItem("ql_session_token") ||
+    localStorage.getItem("ql_api_token") ||
+    new URLSearchParams(window.location.search).get("token") ||
+    "";
   return { base, token, remote: Boolean(base) };
 }
 
@@ -105,11 +109,19 @@ function updateRemoteTokenVisibility() {
 
 function fetchOptions(extra = {}) {
   const { base, token, remote } = getApiConfig();
-  const opts = { credentials: remote ? "omit" : "same-origin", ...extra };
+  const opts = { credentials: remote ? "omit" : "include", ...extra };
   const headers = { ...(extra.headers || {}) };
-  if (remote && token) headers["X-Quality-Loop-Token"] = token;
+  // Same-origin: cookie session. Header fallback for ?token= URL and cookie-blocked browsers.
+  if (token) headers["X-Quality-Loop-Token"] = token;
   if (Object.keys(headers).length) opts.headers = headers;
   return opts;
+}
+
+function formatApiErrorDetail(detail) {
+  if (!detail) return "Giriş başarısız";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) return detail.map((d) => d.msg || d).join(", ");
+  return String(detail);
 }
 
 function showLoginOverlay(message = "") {
@@ -150,9 +162,16 @@ async function loginWithPassword(password) {
   );
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || "Giriş başarısız");
+    throw new Error(formatApiErrorDetail(err.detail) || "Giriş başarısız");
   }
   return res.json();
+}
+
+async function establishSession(password) {
+  const data = await loginWithPassword(password);
+  // Cookie set by server; also keep header fallback in sessionStorage (not localStorage).
+  sessionStorage.setItem("ql_session_token", password.trim());
+  return data;
 }
 
 async function logoutSession() {
@@ -1582,7 +1601,7 @@ async function refreshAll() {
 
 async function boot() {
   const urlToken = new URLSearchParams(window.location.search).get("token");
-  if (urlToken) localStorage.setItem("ql_api_token", urlToken);
+  if (urlToken) sessionStorage.setItem("ql_session_token", urlToken.trim());
 
   const { base, token } = getApiConfig();
   document.getElementById("api-base").value = base;
@@ -1595,18 +1614,21 @@ async function boot() {
     e.preventDefault();
     const password = document.getElementById("login-password")?.value || "";
     try {
-      await loginWithPassword(password);
+      await establishSession(password);
       hideLoginOverlay();
       document.getElementById("login-password").value = "";
       document.getElementById("logout-btn")?.classList.remove("hidden");
+      const cleanUrl = window.location.pathname + window.location.hash;
+      history.replaceState(history.state, "", cleanUrl);
       await refreshAll();
     } catch (err) {
-      showLoginOverlay(err.message || "Giriş başarısız");
+      showLoginOverlay(formatApiErrorDetail(err.message) || "Giriş başarısız");
     }
   });
 
   document.getElementById("logout-btn")?.addEventListener("click", async () => {
     await logoutSession();
+    sessionStorage.removeItem("ql_session_token");
     document.getElementById("logout-btn")?.classList.add("hidden");
   });
 
@@ -1675,11 +1697,27 @@ async function boot() {
 
   const auth = await checkAuthStatus();
   if (auth.auth_required && !auth.authenticated && !getApiConfig().remote) {
-    showLoginOverlay();
-    document.getElementById("logout-btn")?.classList.add("hidden");
-    return;
-  }
-  if (auth.authenticated) {
+    const urlToken =
+      new URLSearchParams(window.location.search).get("token") ||
+      sessionStorage.getItem("ql_session_token");
+    if (urlToken) {
+      try {
+        await establishSession(urlToken);
+        hideLoginOverlay();
+        document.getElementById("logout-btn")?.classList.remove("hidden");
+        const cleanUrl = window.location.pathname + window.location.hash;
+        history.replaceState(history.state, "", cleanUrl);
+      } catch {
+        showLoginOverlay("Şifre hatalı veya oturum açılamadı");
+        document.getElementById("logout-btn")?.classList.add("hidden");
+        return;
+      }
+    } else {
+      showLoginOverlay();
+      document.getElementById("logout-btn")?.classList.add("hidden");
+      return;
+    }
+  } else if (auth.authenticated || getApiConfig().token) {
     document.getElementById("logout-btn")?.classList.remove("hidden");
   }
 
