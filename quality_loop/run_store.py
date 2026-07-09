@@ -23,21 +23,40 @@ def new_run_id() -> str:
     return f"run_{stamp}_{uuid.uuid4().hex[:8]}"
 
 
+def _strip_code_fence(text: str) -> str:
+    s = text.strip()
+    if not s.startswith("```"):
+        return s
+    lines = s.splitlines()
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
+def _repair_json_text(text: str) -> str:
+    # LLMs often emit invalid JSON escapes such as \' inside strings.
+    return re.sub(r"(?<!\\)\\'", "'", text)
+
+
 def try_parse_json(text: str | None) -> Any | None:
     if not text:
         return None
-    stripped = str(text).strip()
+    stripped = _strip_code_fence(str(text))
+    candidates = [stripped]
     if stripped.startswith("{") or stripped.startswith("["):
-        try:
-            return json.loads(stripped)
-        except json.JSONDecodeError:
-            pass
+        candidates.insert(0, stripped)
     match = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", stripped)
-    if match:
-        try:
-            return json.loads(match.group(1))
-        except json.JSONDecodeError:
-            return None
+    if match and match.group(1) not in candidates:
+        candidates.append(match.group(1))
+
+    for candidate in candidates:
+        for attempt in (candidate, _repair_json_text(candidate)):
+            try:
+                return json.loads(attempt)
+            except json.JSONDecodeError:
+                continue
     return None
 
 
@@ -80,6 +99,9 @@ def _qa_from_phases(phases: list[dict[str, Any]]) -> dict[str, Any] | None:
         parsed = phase.get("parsed_output")
         if isinstance(parsed, dict):
             return parsed
+        reparsed = try_parse_json(phase.get("raw_output"))
+        if isinstance(reparsed, dict):
+            return reparsed
     return None
 
 
@@ -90,6 +112,9 @@ def _fixes_from_phases(phases: list[dict[str, Any]]) -> dict[str, Any] | None:
         parsed = phase.get("parsed_output")
         if isinstance(parsed, dict):
             return parsed
+        reparsed = try_parse_json(phase.get("raw_output"))
+        if isinstance(reparsed, dict):
+            return reparsed
     return None
 
 
