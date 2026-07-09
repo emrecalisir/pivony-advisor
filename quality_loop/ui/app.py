@@ -34,6 +34,7 @@ OUTPUT_DIR = _PACKAGE_ROOT / "outputs"
 SESSIONS_DIR = OUTPUT_DIR / "sessions"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 _UI_TOKEN = os.environ.get("QUALITY_LOOP_UI_TOKEN", "").strip()
+_SPA_VIEWS = frozenset({"feedback", "architecture", "runs", "sessions", "qa", "improvements"})
 
 app = FastAPI(title="Pivony Quality Loop UI", version="2.0.0")
 
@@ -56,11 +57,14 @@ def _app_relative_path(path: str) -> str:
 
 
 def _is_public_asset(path: str) -> bool:
-    """Allow shell page + static assets without token (API stays protected)."""
+    """Allow SPA shell + static assets without token (API routes stay protected)."""
     rel = _app_relative_path(path)
     if rel in ("/", ""):
         return True
     if rel.startswith("/static") or "/static/" in path:
+        return True
+    view = rel.strip("/").split("/")[0] if rel.strip("/") else ""
+    if view in _SPA_VIEWS:
         return True
     return rel.endswith((".css", ".js", ".ico", ".png", ".svg", ".woff2"))
 
@@ -244,9 +248,6 @@ class SavePromptRequest(BaseModel):
 class SaveRepoScopeRequest(BaseModel):
     write_repo: str = Field(min_length=1)
     read_repos: list[str] = Field(default_factory=list)
-
-
-_SPA_VIEWS = frozenset({"feedback", "architecture", "runs", "sessions", "qa", "improvements"})
 
 
 def _job_live_payload(job: dict[str, Any]) -> dict[str, Any]:
