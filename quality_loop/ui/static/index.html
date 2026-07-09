@@ -42,11 +42,28 @@
       API adresi (boş = bu sayfa)
       <input id="api-base" type="text" placeholder="boş bırakın" />
     </label>
-    <label>
-      Token (opsiyonel)
+    <label id="remote-token-wrap" class="hidden">
+      Uzak API token (yalnızca farklı API adresi)
       <input id="api-token" type="password" placeholder="QUALITY_LOOP_UI_TOKEN" />
     </label>
     <button id="settings-save" class="btn">Kaydet ve yenile</button>
+    <button id="logout-btn" class="btn ghost hidden" type="button">Çıkış yap</button>
+  </div>
+
+  <div id="login-overlay" class="login-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="login-title">
+    <div class="login-card">
+      <img src="static/pivony-icon.svg" alt="" width="40" height="40" />
+      <h2 id="login-title">Quality Loop Girişi</h2>
+      <p class="muted-small">Sunucu şifresi ile oturum açın. Tek seferlik — tarayıcı cookie ile hatırlar.</p>
+      <form id="login-form">
+        <label>
+          Şifre
+          <input id="login-password" type="password" autocomplete="current-password" required />
+        </label>
+        <p id="login-error" class="login-error hidden"></p>
+        <button id="login-submit" class="btn primary" type="submit">Giriş yap</button>
+      </form>
+    </div>
   </div>
 
   <div class="layout">

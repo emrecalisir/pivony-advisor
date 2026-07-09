@@ -118,7 +118,7 @@ Advisor dev API (8011) zaten dışarıdan açık. UI'ı ona mount et:
 ```bash
 # .env
 QUALITY_LOOP_UI_MOUNT=true
-QUALITY_LOOP_UI_TOKEN=your-secret   # önerilir
+QUALITY_LOOP_UI_TOKEN=your-secret   # önerilir — UI giriş şifresi (cookie oturumu)
 ```
 
 ```bash
@@ -127,7 +127,7 @@ sudo systemctl restart pivony-advisor-dev.service
 
 Tarayıcı: **http://104.198.55.230:8011/quality-loop/**
 
-Token zorunluysa UI → **Ayarlar** → Token alanına `QUALITY_LOOP_UI_TOKEN` değerini gir.
+Token set ise ilk ziyarette **giriş ekranı** çıkar; şifre doğruysa tarayıcı cookie ile hatırlar (7 gün). Uzak API adresi kullanıyorsanız Ayarlar'dan header token girebilirsiniz.
 
 ### Alternatif: ayrı port 8020
 

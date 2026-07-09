@@ -89,21 +89,95 @@ function clipText(text, max = 100) {
 function getApiConfig() {
   const base = (localStorage.getItem("ql_api_base") || "").replace(/\/$/, "");
   const token = localStorage.getItem("ql_api_token") || "";
-  return { base, token };
+  return { base, token, remote: Boolean(base) };
 }
 
 function setApiConfig(base, token) {
   localStorage.setItem("ql_api_base", base.trim());
   localStorage.setItem("ql_api_token", token.trim());
+  updateRemoteTokenVisibility();
+}
+
+function updateRemoteTokenVisibility() {
+  const { remote } = getApiConfig();
+  document.getElementById("remote-token-wrap")?.classList.toggle("hidden", !remote);
+}
+
+function fetchOptions(extra = {}) {
+  const { base, token, remote } = getApiConfig();
+  const opts = { credentials: remote ? "omit" : "same-origin", ...extra };
+  const headers = { ...(extra.headers || {}) };
+  if (remote && token) headers["X-Quality-Loop-Token"] = token;
+  if (Object.keys(headers).length) opts.headers = headers;
+  return opts;
+}
+
+function showLoginOverlay(message = "") {
+  const overlay = document.getElementById("login-overlay");
+  const err = document.getElementById("login-error");
+  overlay?.classList.remove("hidden");
+  if (err) {
+    if (message) {
+      err.textContent = message;
+      err.classList.remove("hidden");
+    } else {
+      err.textContent = "";
+      err.classList.add("hidden");
+    }
+  }
+  document.getElementById("login-password")?.focus();
+}
+
+function hideLoginOverlay() {
+  document.getElementById("login-overlay")?.classList.add("hidden");
+  document.getElementById("login-error")?.classList.add("hidden");
+}
+
+async function checkAuthStatus() {
+  const res = await fetch("api/auth/status", fetchOptions());
+  if (!res.ok) return { auth_required: false, authenticated: true };
+  return res.json();
+}
+
+async function loginWithPassword(password) {
+  const res = await fetch(
+    "api/auth/login",
+    fetchOptions({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    })
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Giriş başarısız");
+  }
+  return res.json();
+}
+
+async function logoutSession() {
+  await fetch("api/auth/logout", fetchOptions({ method: "POST" }));
+  showLoginOverlay();
 }
 
 async function api(path) {
-  const { base, token } = getApiConfig();
+  const { base } = getApiConfig();
   const rel = path.startsWith("/") ? path.slice(1) : path;
   const url = base ? `${base.replace(/\/$/, "")}/${rel}` : rel;
-  const headers = {};
-  if (token) headers["X-Quality-Loop-Token"] = token;
-  const res = await fetch(url, { headers });
+  const res = await fetch(url, fetchOptions());
+  if (res.status === 401) {
+    const data = await res.json().catch(() => ({}));
+    if (!getApiConfig().remote) {
+      const msg =
+        data.detail === "invalid password"
+          ? "Şifre hatalı"
+          : data.detail === "login required"
+            ? "Oturum gerekli"
+            : "Giriş gerekli";
+      showLoginOverlay(msg);
+    }
+    throw new Error(`${url} → 401`);
+  }
   if (!res.ok) throw new Error(`${url} → ${res.status}`);
   return res.json();
 }
@@ -304,13 +378,15 @@ async function openSessionFromImprovement(sessionId, runId = null) {
 }
 
 function downloadImprovementsExport(runId) {
-  const { base, token } = getApiConfig();
+  const { base } = getApiConfig();
   const rel = `api/runs/${encodeURIComponent(runId)}/improvements/export.json`;
   const url = base ? `${base.replace(/\/$/, "")}/${rel}` : rel;
-  const headers = {};
-  if (token) headers["X-Quality-Loop-Token"] = token;
-  fetch(url, { headers })
+  fetch(url, fetchOptions())
     .then((res) => {
+      if (res.status === 401) {
+        showLoginOverlay();
+        throw new Error("401");
+      }
       if (!res.ok) throw new Error(`${res.status}`);
       return res.blob();
     })
@@ -922,12 +998,21 @@ async function loadImprovements() {
 }
 
 async function apiPost(path, body) {
-  const { base, token } = getApiConfig();
+  const { base } = getApiConfig();
   const rel = path.startsWith("/") ? path.slice(1) : path;
   const url = base ? `${base.replace(/\/$/, "")}/${rel}` : rel;
-  const headers = { "Content-Type": "application/json" };
-  if (token) headers["X-Quality-Loop-Token"] = token;
-  const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+  const res = await fetch(
+    url,
+    fetchOptions({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+  );
+  if (res.status === 401) {
+    if (!getApiConfig().remote) showLoginOverlay();
+    throw new Error("login required");
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `${url} → ${res.status}`);
@@ -936,12 +1021,21 @@ async function apiPost(path, body) {
 }
 
 async function apiPut(path, body) {
-  const { base, token } = getApiConfig();
+  const { base } = getApiConfig();
   const rel = path.startsWith("/") ? path.slice(1) : path;
   const url = base ? `${base.replace(/\/$/, "")}/${rel}` : rel;
-  const headers = { "Content-Type": "application/json" };
-  if (token) headers["X-Quality-Loop-Token"] = token;
-  const res = await fetch(url, { method: "PUT", headers, body: JSON.stringify(body) });
+  const res = await fetch(
+    url,
+    fetchOptions({
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+  );
+  if (res.status === 401) {
+    if (!getApiConfig().remote) showLoginOverlay();
+    throw new Error("login required");
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `${url} → ${res.status}`);
@@ -1488,15 +1582,33 @@ async function refreshAll() {
 
 async function boot() {
   const urlToken = new URLSearchParams(window.location.search).get("token");
-  if (urlToken) {
-    localStorage.setItem("ql_api_token", urlToken);
-  }
+  if (urlToken) localStorage.setItem("ql_api_token", urlToken);
 
   const { base, token } = getApiConfig();
   document.getElementById("api-base").value = base;
   document.getElementById("api-token").value = token;
+  updateRemoteTokenVisibility();
   document.getElementById("sync-command").textContent =
     "cd pivony-advisor && bash scripts/sync_quality_loop_outputs.sh";
+
+  document.getElementById("login-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const password = document.getElementById("login-password")?.value || "";
+    try {
+      await loginWithPassword(password);
+      hideLoginOverlay();
+      document.getElementById("login-password").value = "";
+      document.getElementById("logout-btn")?.classList.remove("hidden");
+      await refreshAll();
+    } catch (err) {
+      showLoginOverlay(err.message || "Giriş başarısız");
+    }
+  });
+
+  document.getElementById("logout-btn")?.addEventListener("click", async () => {
+    await logoutSession();
+    document.getElementById("logout-btn")?.classList.add("hidden");
+  });
 
   document.getElementById("settings-btn").addEventListener("click", () => {
     document.getElementById("settings-panel").classList.toggle("hidden");
@@ -1560,6 +1672,16 @@ async function boot() {
   window.addEventListener("popstate", () => {
     navigateToView(viewFromLocation(), { syncUrl: false }).catch(console.error);
   });
+
+  const auth = await checkAuthStatus();
+  if (auth.auth_required && !auth.authenticated && !getApiConfig().remote) {
+    showLoginOverlay();
+    document.getElementById("logout-btn")?.classList.add("hidden");
+    return;
+  }
+  if (auth.authenticated) {
+    document.getElementById("logout-btn")?.classList.remove("hidden");
+  }
 
   try {
     const initialView = viewFromLocation();

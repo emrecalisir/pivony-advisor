@@ -23,6 +23,12 @@ from quality_loop.vertex_resilience import resilience_status
 from quality_loop.fix_snapshots import enrich_fixes
 from quality_loop.run_manager import get_active_job, load_job, start_analyze, start_full_loop, stop_job
 from quality_loop.run_store import RUNS_DIR, list_runs, load_run, try_parse_json
+from quality_loop.ui.auth import (
+    auth_required,
+    clear_session_cookie,
+    request_authenticated,
+    set_session_cookie,
+)
 from quality_loop.ui.export_builder import (
     build_conversation_export_markdown,
     export_filename,
@@ -57,11 +63,13 @@ def _app_relative_path(path: str) -> str:
 
 
 def _is_public_asset(path: str) -> bool:
-    """Allow SPA shell + static assets without token (API routes stay protected)."""
+    """Allow SPA shell + static assets + auth endpoints without session."""
     rel = _app_relative_path(path)
     if rel in ("/", ""):
         return True
     if rel.startswith("/static") or "/static/" in path:
+        return True
+    if rel.startswith("/api/auth/"):
         return True
     view = rel.strip("/").split("/")[0] if rel.strip("/") else ""
     if view in _SPA_VIEWS:
@@ -71,15 +79,14 @@ def _is_public_asset(path: str) -> bool:
 
 @app.middleware("http")
 async def optional_token_guard(request: Request, call_next):
-    if not _UI_TOKEN:
+    if not auth_required():
         return await call_next(request)
     path = request.url.path
     if _is_public_asset(path):
         return await call_next(request)
-    token = request.headers.get("x-quality-loop-token") or request.query_params.get("token")
-    if token != _UI_TOKEN:
-        return JSONResponse(status_code=401, content={"detail": "invalid or missing token"})
-    return await call_next(request)
+    if request_authenticated(request):
+        return await call_next(request)
+    return JSONResponse(status_code=401, content={"detail": "login required"})
 
 
 def _file_mtime(path: Path) -> str | None:
@@ -248,6 +255,36 @@ class SavePromptRequest(BaseModel):
 class SaveRepoScopeRequest(BaseModel):
     write_repo: str = Field(min_length=1)
     read_repos: list[str] = Field(default_factory=list)
+
+
+class LoginRequest(BaseModel):
+    password: str = Field(min_length=1)
+
+
+@app.get("/api/auth/status")
+def api_auth_status(request: Request) -> dict[str, Any]:
+    return {
+        "auth_required": auth_required(),
+        "authenticated": request_authenticated(request),
+    }
+
+
+@app.post("/api/auth/login")
+def api_auth_login(request: Request, body: LoginRequest) -> Response:
+    if not auth_required():
+        return JSONResponse({"authenticated": True, "auth_required": False})
+    if body.password != _UI_TOKEN:
+        raise HTTPException(status_code=401, detail="invalid password")
+    response = JSONResponse({"authenticated": True, "auth_required": True})
+    set_session_cookie(response, request)
+    return response
+
+
+@app.post("/api/auth/logout")
+def api_auth_logout(request: Request) -> Response:
+    response = JSONResponse({"authenticated": False, "auth_required": auth_required()})
+    clear_session_cookie(response, request)
+    return response
 
 
 def _job_live_payload(job: dict[str, Any]) -> dict[str, Any]:
