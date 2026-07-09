@@ -530,3 +530,8 @@ async def advisor_query(
     except Exception as exc:
         logger.exception("Advisor query failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"Advisor query failed: {exc}") from exc
+
+
+from api.quality_loop_mount import mount_quality_loop_ui
+
+mount_quality_loop_ui(app)

@@ -16,7 +16,8 @@ def create_tasks(
             description=(
                 "Pivony Advisor ile tam bir analiz konuşması gerçekleştir.\n\n"
                 "Adımlar:\n"
-                "1. create_advisor_session tool'u ile yeni session oluştur\n"
+                "1. create_advisor_session tool'u ile yeni session oluştur "
+                "(user_id/user_email GEÇME — sunucu .env'deki gerçek kullanıcıyı kullanır)\n"
                 "2. pivony_advisor_chat tool'u ile mesaj gönder, yanıt al\n"
                 "3. En az 6, en fazla 10 tur konuş\n"
                 "4. Her turda bir önceki yanıta göre daha derine in\n"

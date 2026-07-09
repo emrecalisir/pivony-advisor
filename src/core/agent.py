@@ -16,7 +16,7 @@ from langchain_core.messages import (
 )
 from langchain_core.tools import StructuredTool
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from qdrant_client import QdrantClient
 
 from core.config import AGENT_MAX_TOOL_ITERATIONS, DEFAULT_SECTOR, sector_slugify
@@ -82,6 +82,12 @@ class SearchReviewsArgs(BaseModel):
             "topic and hotel from the prior conversation (e.g. 'temizlik şikayetleri X Otel')."
         ),
     )
+
+
+class ListDashboardsArgs(BaseModel):
+    """list_dashboards takes no parameters; ignore spurious LLM-invented fields."""
+
+    model_config = ConfigDict(extra="ignore")
 
 
 class DashboardPivotsArgs(BaseModel):
@@ -286,6 +292,16 @@ class MetricsArgs(BaseModel):
         ),
     )
 
+    @field_validator("dashboard_id", mode="before")
+    @classmethod
+    def _coerce_dashboard_id(cls, value: Any) -> int | None:
+        if value is None or value == "":
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return value
+
 
 def _build_tools(
     *,
@@ -359,7 +375,7 @@ def _build_tools(
             return semantic_search_pivot_redirect()
         return search_reviews(query, slug, embeddings=embeddings, client=client)
 
-    def _list_dashboards() -> str:
+    def _list_dashboards(**_kwargs: Any) -> str:
         data = fetch_dashboards(user_id)
         if data is None:
             return json.dumps(
@@ -1031,6 +1047,7 @@ def _build_tools(
             "Call this first when a metrics question does not yet name a dashboard, "
             "then ask the user which one they mean."
         ),
+        args_schema=ListDashboardsArgs,
     )
     dashboard_pivots_tool = StructuredTool.from_function(
         func=_dashboard_pivots,

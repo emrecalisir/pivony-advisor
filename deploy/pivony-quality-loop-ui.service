@@ -1,0 +1,18 @@
+[Unit]
+Description=Pivony Quality Loop inspection UI
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/pivony-advisor-dev
+EnvironmentFile=-/home/ubuntu/pivony-advisor-dev/.env
+Environment=QUALITY_LOOP_UI_HOST=0.0.0.0
+Environment=QUALITY_LOOP_UI_PORT=8020
+Environment=QUALITY_LOOP_UI_CORS=true
+ExecStart=/home/ubuntu/pivony-advisor-dev/scripts/run_quality_loop_ui.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

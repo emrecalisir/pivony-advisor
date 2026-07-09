@@ -166,9 +166,14 @@ class CreateSessionTool(BaseTool):
     ) -> str:
         import os
 
+        env_uid = os.environ.get("QUALITY_LOOP_USER_ID", "").strip()
+        env_email = os.environ.get("QUALITY_LOOP_USER_EMAIL", "").strip()
+        effective_user_id = env_uid or user_id
+        effective_user_email = env_email or user_email
+
         session = create_session(
-            user_id=user_id or os.environ.get("QUALITY_LOOP_USER_ID"),
-            user_email=user_email or os.environ.get("QUALITY_LOOP_USER_EMAIL"),
+            user_id=effective_user_id,
+            user_email=effective_user_email,
             sector=sector,
             advisor_mode=advisor_mode,
         )

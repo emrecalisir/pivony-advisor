@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pivony Quality Loop — Feedback Transparency</title>
+  <link rel="icon" type="image/svg+xml" href="static/pivony-icon.svg" />
+  <link rel="apple-touch-icon" href="static/pivony-icon.svg" />
+  <script>
+    (function () {
+      var p = window.location.pathname;
+      var base = p.indexOf("/quality-loop") >= 0 ? "/quality-loop/" : "/";
+      document.write('<base href="' + base + '">');
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="static/styles.css" />
+</head>
+<body>
+  <header>
+    <div class="header-brand">
+      <img src="static/pivony-icon.svg" alt="" class="brand-icon" width="32" height="32" />
+      <div>
+        <h1>Quality Loop Transparency</h1>
+        <p id="subtitle">Konuşmalar · QA değerlendirmeleri · kod iyileştirmeleri · tam feedback döngüsü</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button id="start-run-btn" class="btn primary">▶ Run Başlat</button>
+      <button id="stop-run-btn" class="btn danger hidden">■ Durdur</button>
+      <button id="export-btn" class="btn ghost hidden" title="Export conversation">↓ Export</button>
+      <button id="sync-hint-btn" class="btn ghost" title="Sunucudan veri çekme komutu">↻ Sync</button>
+      <button id="settings-btn" class="btn ghost">⚙ Ayarlar</button>
+      <div class="badge" id="source-badge">Kaynak: local</div>
+    </div>
+  </header>
+
+  <div id="settings-panel" class="settings hidden">
+    <label>
+      API adresi (boş = bu sayfa)
+      <input id="api-base" type="text" placeholder="boş bırakın" />
+    </label>
+    <label>
+      Token (opsiyonel)
+      <input id="api-token" type="password" placeholder="QUALITY_LOOP_UI_TOKEN" />
+    </label>
+    <button id="settings-save" class="btn">Kaydet ve yenile</button>
+  </div>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <h2>Görünüm</h2>
+      <button class="nav-btn active" data-view="feedback">Feedback Loop</button>
+      <button class="nav-btn" data-view="architecture">Mimari</button>
+      <button class="nav-btn" data-view="runs">Tüm Run'lar</button>
+      <button class="nav-btn" data-view="sessions">Konuşmalar</button>
+      <button class="nav-btn" data-view="qa">QA Raporları</button>
+      <button class="nav-btn" data-view="improvements">İyileştirmeler</button>
+    </aside>
+
+    <main class="content">
+      <section id="view-feedback">
+        <div class="stats" id="stats"></div>
+
+        <div id="live-run-panel" class="panel hidden">
+          <div class="panel-header">
+            <h3 id="live-run-title">Canlı Run</h3>
+            <span id="live-run-status" class="badge">—</span>
+          </div>
+          <div class="panel-body" id="live-run-body"></div>
+        </div>
+
+        <div class="panel" style="margin-top:1rem">
+          <div class="panel-header">
+            <h3>Feedback Loop — Son Run</h3>
+            <span id="feedback-run-meta" class="muted"></span>
+          </div>
+          <div id="feedback-detail" class="panel-body run-detail-panel empty">Henüz run yok — <strong>Run Başlat</strong> ile başlayın</div>
+        </div>
+      </section>
+
+      <section id="view-architecture" class="hidden">
+        <div class="panel">
+          <div class="panel-header"><h3>CrewAI Architecture</h3></div>
+          <div id="architecture-board" class="panel-body"></div>
+        </div>
+      </section>
+
+      <section id="view-runs" class="hidden">
+        <div class="detail-grid">
+          <div class="panel">
+            <div class="panel-header"><h3>Run Geçmişi</h3></div>
+            <div id="run-list"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-header"><h3 id="run-title">Detay</h3></div>
+            <div id="run-detail" class="panel-body empty">Bir run seçin</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-sessions" class="hidden">
+        <div class="detail-grid">
+          <div class="panel">
+            <div class="panel-header"><h3>Konuşmalar</h3></div>
+            <div id="session-list"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-header panel-header-split">
+              <h3 id="session-title">Detay</h3>
+              <button id="session-export-btn" class="btn ghost hidden" type="button">↓ Export</button>
+            </div>
+            <div id="session-detail" class="panel-body empty">Bir session seçin</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-qa" class="hidden">
+        <div class="panel">
+          <div class="panel-header"><h3>QA Değerlendirmeleri</h3></div>
+          <div id="qa-board" class="panel-body"></div>
+        </div>
+      </section>
+
+      <section id="view-improvements" class="hidden">
+        <div class="panel">
+          <div class="panel-header"><h3>Coding Agent — Uygulanan / Atlanan Fix'ler</h3></div>
+          <div id="improvements-board" class="panel-body"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="export-modal" class="modal hidden">
+    <div class="modal-card export-modal-card">
+      <h3>Export Conversation</h3>
+      <p class="muted-small" id="export-modal-subtitle"></p>
+      <div class="export-actions">
+        <button id="export-json-btn" class="btn primary" type="button">Download as JSON</button>
+        <button id="export-md-btn" class="btn outline" type="button">Download as Markdown</button>
+      </div>
+      <p class="muted-small export-hint">Power user shortcut: <span id="export-shortcut-hint">⌘⇧E</span></p>
+      <button id="export-close" class="btn ghost" type="button">Kapat</button>
+    </div>
+  </div>
+
+  <div id="sync-modal" class="modal hidden">
+    <div class="modal-card">
+      <h3>Sunucudan veri çek (SSH tüneli gerekmez)</h3>
+      <p>Mac'inde bir kez çalıştır; UI yerel dosyalardan okur:</p>
+      <pre id="sync-command"></pre>
+      <button id="sync-close" class="btn">Kapat</button>
+    </div>
+  </div>
+
+  <script src="static/exportConversation.js"></script>
+  <script src="static/app.js"></script>
+</body>
+</html>

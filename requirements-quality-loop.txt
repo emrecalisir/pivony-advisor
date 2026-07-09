@@ -1,7 +1,22 @@
-# CrewAI quality loop (optional — pip install -r requirements-quality-loop.txt)
-crewai>=0.80.0
+# CrewAI quality loop (optional)
+#
+# Python: >=3.10 and <3.14 (CrewAI constraint). Do NOT install into advisor venv
+# if it uses Python 3.14+. Use scripts/bootstrap-quality-loop-venv.sh instead.
+#
+#   bash scripts/bootstrap-quality-loop-venv.sh
+#   bash scripts/run_quality_loop.sh
+crewai>=1.14.0,<1.16
 crewai-tools>=0.20.0
 litellm>=1.55.0
+google-auth>=2.29.0
+google-cloud-aiplatform>=1.60.0
 requests>=2.31.0
 sqlalchemy>=2.0.0
 psycopg2-binary>=2.9.0
+python-dotenv>=1.0.0
+fastapi>=0.110.0
+uvicorn>=0.28.0
+# LangSmith runtime tracing (optional — set LANGSMITH_API_KEY)
+langsmith>=0.3.0
+opentelemetry-instrumentation-crewai>=0.1.0
+opentelemetry-instrumentation-openai>=0.1.0

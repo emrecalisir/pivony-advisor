@@ -19,10 +19,20 @@ There is **no** `/chat` or `/session/create` on advisor — the loop uses:
 
 ## Install
 
+CrewAI requires **Python >=3.10 and <3.14**. Advisor venv may use 3.14+ — keep quality loop in its own venv:
+
 ```bash
 cd pivony-advisor
-pip install -r requirements-quality-loop.txt
+bash scripts/bootstrap-quality-loop-venv.sh
 cp .env.example .env   # fill QUALITY_LOOP_* and LLM keys
+```
+
+This creates `.venv-quality-loop` with uv-managed Python 3.12 and installs `requirements-quality-loop.txt`.
+
+Manual install (only if you already have a compatible Python):
+
+```bash
+pip install -r requirements-quality-loop.txt
 ```
 
 Advisor must be running (e.g. `curl http://127.0.0.1:8000/health`).
@@ -33,13 +43,13 @@ For real metrics/tools, set `PIVONY_API_METRICS_URL` and `PIVONY_API_WORKER_SECR
 
 ```bash
 # Full loop: CX Director → QA → Coding
-python -m quality_loop.crew
+bash scripts/run_quality_loop.sh
 
 # 5 iterations
-python -m quality_loop.crew --iterations 5
+bash scripts/run_quality_loop.sh --iterations 5
 
 # Analyze existing session (local sess_* or Postgres session id)
-python -m quality_loop.crew --mode analyze --session sess_abc123
+bash scripts/run_quality_loop.sh --mode analyze --session sess_abc123
 ```
 
 ## Environment
@@ -78,6 +88,56 @@ DEPLOY_CMD=systemctl restart pivony-advisor
 
 - `quality_loop/outputs/iteration_*.json` — crew results
 - `quality_loop/outputs/sessions/*.json` — per-conversation message history
+
+## Inspection UI (SSH tüneli gerekmez)
+
+### Yerel mod (önerilen)
+
+Sunucudan veriyi bir kez çek, Mac'inde UI aç:
+
+```bash
+# 1) Sunucudan outputs sync et (scp, tunnel yok)
+bash scripts/sync_quality_loop_outputs.sh
+
+# 2) Yerel UI
+bash scripts/bootstrap-quality-loop-ui.sh   # ilk sefer
+bash scripts/run_quality_loop_ui.sh
+open http://127.0.0.1:8020
+```
+
+UI şunları şeffaf gösterir:
+- **Feedback Loop** — CX konuşma → QA → coding pipeline
+- **Konuşmalar** — tur tur tool/reasoning/QA issue overlay
+- **QA Raporları** — skorlar, severity, kanıt, fix_hint
+- **İyileştirmeler** — fixes_applied / fixes_skipped
+
+### Uzak erişim (dış IP — firewall değişikliği gerekmez)
+
+Advisor dev API (8011) zaten dışarıdan açık. UI'ı ona mount et:
+
+```bash
+# .env
+QUALITY_LOOP_UI_MOUNT=true
+QUALITY_LOOP_UI_TOKEN=your-secret   # önerilir
+```
+
+```bash
+sudo systemctl restart pivony-advisor-dev.service
+```
+
+Tarayıcı: **http://104.198.55.230:8011/quality-loop/**
+
+Token zorunluysa UI → **Ayarlar** → Token alanına `QUALITY_LOOP_UI_TOKEN` değerini gir.
+
+### Alternatif: ayrı port 8020
+
+GCP firewall'da tcp:8020 açman gerekir:
+
+```bash
+QUALITY_LOOP_UI_HOST=0.0.0.0
+QUALITY_LOOP_UI_PORT=8020
+bash scripts/run_quality_loop_ui.sh
+```
 
 ## Key source files (for QA / coding hints)
 

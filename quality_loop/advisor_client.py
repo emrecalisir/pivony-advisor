@@ -45,8 +45,13 @@ def build_page_context(
 ) -> dict[str, Any]:
     """Mirror pivony-web-platform → pivony-api page_context shape."""
     pc: dict[str, Any] = {}
+    dash_id: int | None = None
     if dashboard_id is not None:
-        pc["dashboard_id"] = dashboard_id
+        try:
+            dash_id = int(dashboard_id)
+            pc["dashboard_id"] = dash_id
+        except (TypeError, ValueError):
+            pc["dashboard_id"] = dashboard_id
     if since:
         pc["since"] = since
     if until:
@@ -69,7 +74,7 @@ def build_page_context(
             if val is not None:
                 asc[out_key] = val
     elif dashboard_id is not None:
-        asc["dashboard_id"] = dashboard_id
+        asc["dashboard_id"] = dash_id if dash_id is not None else dashboard_id
         asc["org_wide"] = False
 
     if asc:
@@ -80,8 +85,18 @@ def build_page_context(
             "id": int(last_dashboard_selection["id"]),
             "name": last_dashboard_selection.get("name"),
         }
-    if dashboard_id is not None and dashboard_name:
-        pc["dashboard_selection"] = {"id": dashboard_id, "name": dashboard_name}
+    if dashboard_id is not None:
+        sel_id = dash_id
+        if sel_id is None:
+            try:
+                sel_id = int(dashboard_id)
+            except (TypeError, ValueError):
+                sel_id = None
+        if sel_id is not None:
+            pc["dashboard_selection"] = {
+                "id": sel_id,
+                "name": dashboard_name or f"Dashboard {sel_id}",
+            }
 
     return pc
 
