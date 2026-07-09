@@ -46,8 +46,24 @@ class ApplyAndDeployTool(BaseTool):
             return f"Refusing to write outside repo: {file_path}"
 
         full_path.parent.mkdir(parents=True, exist_ok=True)
+        before = ""
+        if full_path.exists():
+            before = full_path.read_text(encoding="utf-8")
         full_path.write_text(new_content, encoding="utf-8")
         results = [f"✓ wrote {file_path}"]
+
+        job_id = os.environ.get("QUALITY_LOOP_JOB_ID", "").strip()
+        if job_id:
+            try:
+                from quality_loop.fix_snapshots import record_fix_snapshot
+
+                snap = record_fix_snapshot(job_id, file_path, before, new_content)
+                if snap.get("diff"):
+                    results.append(
+                        f"Δ snapshot +{snap.get('lines_added', 0)}/-{snap.get('lines_removed', 0)}"
+                    )
+            except Exception as exc:
+                results.append(f"⚠ snapshot failed: {exc}")
 
         if not _git_allowed():
             results.append(

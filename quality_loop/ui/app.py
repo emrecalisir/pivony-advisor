@@ -19,6 +19,7 @@ from quality_loop.architecture import get_architecture
 from quality_loop.langsmith_tracing import langsmith_ui_url, observability_status
 from quality_loop.prompt_config import list_prompts_meta, read_prompt, write_prompt
 from quality_loop.vertex_resilience import resilience_status
+from quality_loop.fix_snapshots import enrich_fixes
 from quality_loop.run_manager import get_active_job, load_job, start_analyze, start_full_loop, stop_job
 from quality_loop.run_store import RUNS_DIR, list_runs, load_run, try_parse_json
 from quality_loop.ui.export_builder import (
@@ -490,7 +491,42 @@ def api_get_run(run_id: str) -> dict[str, Any]:
             }
             _attach_qa_to_turns(turns, run.get("qa_report") if isinstance(run.get("qa_report"), dict) else None)
 
-    return {**run, "session_detail": session_detail}
+    fixes = enrich_fixes(
+        run.get("fixes") if isinstance(run.get("fixes"), dict) else None,
+        job_id=run.get("job_id"),
+    )
+    return {**run, "fixes": fixes, "session_detail": session_detail}
+
+
+@app.get("/api/runs/{run_id}/improvements/export.json")
+def export_improvements_json(run_id: str) -> Response:
+    try:
+        run = load_run(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="run not found") from exc
+    fixes = enrich_fixes(
+        run.get("fixes") if isinstance(run.get("fixes"), dict) else None,
+        job_id=run.get("job_id"),
+    )
+    payload = {
+        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "product": "pivony-quality-loop-improvements",
+        "run_id": run.get("run_id"),
+        "created_at": run.get("created_at"),
+        "session_id": run.get("session_id"),
+        "job_id": run.get("job_id"),
+        "sector": (run.get("session_detail") or {}).get("sector") if isinstance(run.get("session_detail"), dict) else None,
+        "qa_report": run.get("qa_report"),
+        "fixes": fixes,
+        "summary": run.get("summary"),
+    }
+    body = json.dumps(payload, ensure_ascii=False, indent=2)
+    filename = f"pivony-quality-loop-{run_id}-improvements.json"
+    return Response(
+        content=body,
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/sessions")

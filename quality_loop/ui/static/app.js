@@ -231,7 +231,7 @@ function renderIssues(issues, { compact = false } = {}) {
     .join("")}</div>`;
 }
 
-function renderFixes(fixes, { showScenarios = true } = {}) {
+function renderFixes(fixes, { showScenarios = true, showDiffs = false } = {}) {
   const applied = fixes?.fixes_applied || [];
   const skipped = fixes?.fixes_skipped || [];
   const scenarios = fixes?.next_test_scenarios || [];
@@ -242,21 +242,44 @@ function renderFixes(fixes, { showScenarios = true } = {}) {
       const deployChip =
         deploy === "skipped" || deploy === "not_applied"
           ? `<span class="chip warn">öneri — uygulanmadı</span>`
-          : deploy === "deployed" || deploy === "applied"
+          : deploy === "success" || deploy === "deployed" || deploy === "applied"
             ? `<span class="chip success">uygulandı</span>`
             : `<span class="chip">${esc(f.deploy_status || "unknown")}</span>`;
+      const stats =
+        f.lines_added != null || f.lines_removed != null
+          ? `<span class="muted-small fix-stats">+${f.lines_added || 0} / -${f.lines_removed || 0} satır</span>`
+          : "";
+      const diffBlock =
+        showDiffs && f.diff
+          ? `<details class="fix-diff-fold"><summary>Kod değişikliği</summary><pre class="fix-diff">${esc(f.diff)}</pre></details>`
+          : "";
       return `
     <article class="fix-card">
       <div class="fix-card-head">
         ${deployChip}
         <code class="fix-file">${esc(f.file || "?")}</code>
+        ${stats}
       </div>
       <p class="fix-desc">${esc(f.issue_fixed || "")}</p>
+      ${diffBlock}
     </article>`;
     })
     .join("");
   const skippedHtml = skipped
-    .map((s) => `<div class="chip skip">${esc(s)}</div>`)
+    .map((s) => {
+      const file = typeof s === "string" ? "N/A" : s.file || "N/A";
+      const issue = typeof s === "string" ? s : s.issue || "";
+      const reason = typeof s === "string" ? "" : s.reason || "";
+      return `
+      <article class="fix-card fix-card-skipped">
+        <div class="fix-card-head">
+          <span class="chip warn">atlandı</span>
+          <code class="fix-file">${esc(file)}</code>
+        </div>
+        <p class="fix-desc">${esc(issue)}</p>
+        ${reason ? `<p class="muted-small">${esc(reason)}</p>` : ""}
+      </article>`;
+    })
     .join("");
   const scenarioHtml =
     showScenarios && scenarios.length
@@ -269,8 +292,38 @@ function renderFixes(fixes, { showScenarios = true } = {}) {
     applied.some((f) => String(f.deploy_status || "").toLowerCase() === "skipped")
       ? `<p class="fix-note muted-small">Coding Agent fix önerdi; sunucuda <code>QUALITY_LOOP_ALLOW_GIT_PUSH</code> kapalı olduğu için dosyalara yazılmadı.</p>`
       : "";
-  return `${note}${appliedHtml}${skipped.length ? `<div class="meta-block"><h4>Atlanan</h4><div class="chips">${skippedHtml}</div></div>` : ""}${scenarioHtml}`;
+  return `${note}${appliedHtml}${skipped.length ? `<div class="meta-block"><h4>Atlanan</h4><div class="fix-skipped-list">${skippedHtml}</div></div>` : ""}${scenarioHtml}`;
 }
+
+async function openSessionFromImprovement(sessionId, runId = null) {
+  if (!sessionId) return;
+  await navigateToView("sessions");
+  await selectSessionById(sessionId, { runId, listContainerId: "session-list" });
+  autoSelectSessionItem("session-list", sessionId);
+}
+
+function downloadImprovementsExport(runId) {
+  const { base, token } = getApiConfig();
+  const rel = `api/runs/${encodeURIComponent(runId)}/improvements/export.json`;
+  const url = base ? `${base.replace(/\/$/, "")}/${rel}` : rel;
+  const headers = {};
+  if (token) headers["X-Quality-Loop-Token"] = token;
+  fetch(url, { headers })
+    .then((res) => {
+      if (!res.ok) throw new Error(`${res.status}`);
+      return res.blob();
+    })
+    .then((blob) => {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `pivony-quality-loop-${runId}-improvements.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    })
+    .catch((err) => alert(`İndirilemedi: ${err.message}`));
+}
+window.downloadImprovementsExport = downloadImprovementsExport;
+window.openSessionFromImprovement = openSessionFromImprovement;
 
 function renderFixesSummary(fixes) {
   const applied = fixes?.fixes_applied || [];
@@ -815,23 +868,56 @@ async function loadQaBoard() {
 
 async function loadImprovements() {
   const runs = await api("/api/runs");
-  if (!runs.length) {
+  const withFixes = runs.filter(
+    (r) => (r.summary?.fixes_applied || 0) > 0 || (r.summary?.fixes_skipped || 0) > 0
+  );
+  if (!withFixes.length) {
     document.getElementById("improvements-board").innerHTML = `<div class="empty">Fix kaydı yok</div>`;
     return;
   }
   const blocks = await Promise.all(
-    runs.slice(0, 20).map((r) => api(`/api/runs/${encodeURIComponent(r.run_id)}`))
+    withFixes.slice(0, 20).map((r) => api(`/api/runs/${encodeURIComponent(r.run_id)}`))
   );
   document.getElementById("improvements-board").innerHTML = blocks
-    .map(
-      (run) => `
-    <div class="meta-block" style="margin-bottom:0.75rem;border:1px solid var(--border);border-radius:12px">
-      <h4>${esc(run.run_id)} · session ${esc(run.session_id || "—")}</h4>
-      ${renderFixes(run.fixes || {})}
-      ${run.fixes?.next_test_scenarios?.length ? `<div class="chips">${run.fixes.next_test_scenarios.map((s) => `<span class="chip">${esc(s)}</span>`).join("")}</div>` : ""}
-    </div>`
-    )
+    .map((run) => {
+      const sessionId = run.session_id || "";
+      const sessionLink = sessionId
+        ? `<button type="button" class="link-btn session-link" data-open-session="${esc(sessionId)}" data-run-id="${esc(run.run_id)}">${esc(shortSessionId(sessionId))}</button>`
+        : `<span class="muted-small">—</span>`;
+      const verdict = run.qa_report?.overall_verdict;
+      const verdictChip = verdict
+        ? `<span class="verdict ${esc(verdict)}">${esc(verdict)}</span>`
+        : "";
+      return `
+    <article class="improvement-card">
+      <div class="improvement-card-head">
+        <div>
+          <h4 class="improvement-run-id">${esc(run.run_id)}</h4>
+          <p class="improvement-meta">
+            <span>${esc(fmtDateTime(run.created_at))}</span>
+            · Konuşma: ${sessionLink}
+            · ${esc(run.summary?.issue_count ?? 0)} QA issue
+          </p>
+        </div>
+        <div class="improvement-card-actions">
+          ${verdictChip}
+          <button type="button" class="btn ghost btn-sm improvement-download" data-run-id="${esc(run.run_id)}">↓ İndir</button>
+        </div>
+      </div>
+      ${renderFixes(run.fixes || {}, { showScenarios: true, showDiffs: true })}
+    </article>`;
+    })
     .join("");
+
+  const board = document.getElementById("improvements-board");
+  board.querySelectorAll("[data-open-session]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      openSessionFromImprovement(btn.dataset.openSession, btn.dataset.runId || null);
+    });
+  });
+  board.querySelectorAll(".improvement-download").forEach((btn) => {
+    btn.addEventListener("click", () => downloadImprovementsExport(btn.dataset.runId));
+  });
 }
 
 async function apiPost(path, body) {

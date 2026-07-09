@@ -186,6 +186,7 @@ def run_loop(iterations: int = 1) -> None:
             final_result=result,
             iteration=i,
             advisor_url=_advisor_url(),
+            job_id=_JOB_ID,
         )
 
         run_data = json.loads(run_path.read_text(encoding="utf-8"))
@@ -242,6 +243,7 @@ def run_analyze(session_id: str) -> None:
         final_result=result,
         session_id=session_id,
         advisor_url=_advisor_url(),
+        job_id=_JOB_ID,
     )
 
     run_data = json.loads(run_path.read_text(encoding="utf-8"))

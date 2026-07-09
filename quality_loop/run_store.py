@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import os
+
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = _PACKAGE_ROOT / "outputs"
 RUNS_DIR = OUTPUT_DIR / "runs"
@@ -127,14 +129,20 @@ def save_run(
     session_id: str | None = None,
     advisor_url: str | None = None,
     run_id: str | None = None,
+    job_id: str | None = None,
 ) -> Path:
     """Write canonical run manifest under outputs/runs/."""
+    from quality_loop.fix_snapshots import enrich_fixes
+
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     rid = run_id or new_run_id()
     phases = [_task_output(task, phase=phase, agent=agent) for task, phase, agent in tasks]
     linked_session = session_id or _extract_session_id(phases)
     qa_report = _qa_from_phases(phases)
-    fixes = _fixes_from_phases(phases)
+    fixes = enrich_fixes(
+        _fixes_from_phases(phases),
+        job_id=job_id or os.environ.get("QUALITY_LOOP_JOB_ID"),
+    )
     final_text = str(getattr(final_result, "raw", None) or final_result)
 
     payload: dict[str, Any] = {
@@ -144,6 +152,7 @@ def save_run(
         "created_at": _utcnow_iso(),
         "session_id": linked_session,
         "advisor_url": advisor_url,
+        "job_id": job_id or os.environ.get("QUALITY_LOOP_JOB_ID"),
         "phases": phases,
         "qa_report": qa_report,
         "fixes": fixes,

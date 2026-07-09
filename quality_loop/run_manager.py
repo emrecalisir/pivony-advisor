@@ -172,6 +172,7 @@ def _spawn_job(
 
         env = os.environ.copy()
         env["PYTHONPATH"] = str(_REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+        env["QUALITY_LOOP_JOB_ID"] = job_id
         if sector:
             env["QUALITY_LOOP_SECTOR"] = sector
 

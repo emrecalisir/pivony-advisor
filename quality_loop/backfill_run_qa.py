@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from quality_loop.run_store import RUNS_DIR, _fixes_from_phases, _qa_from_phases
+from quality_loop.fix_snapshots import enrich_fixes
 
 if __name__ == "__main__":
     target = Path(sys.argv[1]) if len(sys.argv) > 1 else None
@@ -18,8 +19,12 @@ if __name__ == "__main__":
         data = json.loads(path.read_text(encoding="utf-8"))
         phases = data.get("phases") or []
         qa = _qa_from_phases(phases)
-        fixes = _fixes_from_phases(phases)
-        if qa == data.get("qa_report") and fixes == data.get("fixes"):
+        fixes = enrich_fixes(_fixes_from_phases(phases), job_id=data.get("job_id"))
+        enriched_same = (
+            qa == data.get("qa_report")
+            and json.dumps(fixes, sort_keys=True) == json.dumps(data.get("fixes"), sort_keys=True)
+        )
+        if enriched_same:
             continue
         data["qa_report"] = qa
         data["fixes"] = fixes
