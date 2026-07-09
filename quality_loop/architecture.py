@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from quality_loop.repo_scope import get_masterr_root, get_write_repo_root, scope_summary
+
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 _REPO_ROOT = _PACKAGE_ROOT.parent
 
@@ -86,13 +88,16 @@ def get_architecture() -> dict:
                 "role": "Coding Agent",
                 "llm_env": "QUALITY_LOOP_CODING_LLM",
                 "llm_default": "anthropic/claude-sonnet-4-20250514",
-                "goal": "QA raporundaki fix_hint'lere göre pivony-advisor kodunu düzeltir",
+                "goal": "QA fix'leri + brief'teki API↔MCP parity talimatlarını uygular",
                 "tools": [
-                    {"name": "read_project_file", "desc": "Kaynak dosya okur"},
-                    {"name": "list_project_files", "desc": "Proje yapısı"},
-                    {"name": "apply_fix_and_deploy", "desc": "Fix yazar (git/deploy env flag)"},
+                    {"name": "read_project_file", "desc": "<repo-slug>/path ile scoped repoları okur"},
+                    {"name": "list_project_files", "desc": "Write + seçili read repoları listeler"},
+                    {"name": "apply_fix_and_deploy", "desc": "Yalnızca write repo'ya yazar"},
                 ],
                 "outputs": ["fixes_applied", "fixes_skipped", "next_test_scenarios"],
+                "prompt_file": "config/coding_agent_brief.txt",
+                "prompt_agent_id": "coding_agent",
+                "env": ["QUALITY_LOOP_MASTERR_ROOT"],
             },
         ],
         "tasks": [
@@ -122,6 +127,8 @@ def get_architecture() -> dict:
                 "agent": "Coding Agent",
                 "phase": "coding",
                 "context": ["qa_task"],
+                "brief": "config/coding_agent_brief.txt (sector override: config/sectors/<sector>/coding_agent_brief.txt)",
+                "editable": True,
             },
         ],
         "flow": [
@@ -135,7 +142,9 @@ def get_architecture() -> dict:
             "QUALITY_LOOP_QA_LLM": os.environ.get("QUALITY_LOOP_QA_LLM", "anthropic/claude-sonnet-4-20250514"),
             "QUALITY_LOOP_CODING_LLM": os.environ.get("QUALITY_LOOP_CODING_LLM", "anthropic/claude-sonnet-4-20250514"),
         },
-        "repo_root": os.environ.get("PIVONY_REPO_ROOT", str(_REPO_ROOT)),
+        "repo_root": str(get_write_repo_root()),
+        "masterr_root": str(get_masterr_root()),
+        "repo_scope": scope_summary(),
         "observability": {
             "provider": "LangSmith",
             "role": "Runtime trace — agent reasoning, tool calls, token/cost tree",

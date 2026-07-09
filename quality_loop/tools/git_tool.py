@@ -11,9 +11,16 @@ from typing import Type
 from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 
+from quality_loop.repo_scope import (
+    get_write_repo_root,
+    list_scoped_repos,
+    resolve_read_path,
+    resolve_write_path,
+)
+
 
 def _repo_root() -> Path:
-    return Path(os.environ.get("PIVONY_REPO_ROOT", Path(__file__).resolve().parents[2]))
+    return get_write_repo_root()
 
 
 def _git_allowed() -> bool:
@@ -25,7 +32,9 @@ def _deploy_allowed() -> bool:
 
 
 class ApplyFixInput(BaseModel):
-    file_path: str = Field(description="Path relative to repo root, e.g. src/core/agent_state.py")
+    file_path: str = Field(
+        description="Path under write repo, e.g. src/core/agent_state.py or pivony-advisor/src/..."
+    )
     new_content: str = Field(description="Full new file content")
     commit_message: str = Field(description="Short commit message (quality-loop prefix added)")
 
@@ -33,15 +42,21 @@ class ApplyFixInput(BaseModel):
 class ApplyAndDeployTool(BaseTool):
     name: str = "apply_fix_and_deploy"
     description: str = (
-        "Write a file, optionally git add/commit/push and restart advisor. "
+        "Write a file in the configured write repo, optionally git add/commit/push and restart advisor. "
         "Requires QUALITY_LOOP_ALLOW_GIT_PUSH=true and QUALITY_LOOP_AUTO_DEPLOY=true. "
-        "Without those flags, only writes the file locally (dry-run safe)."
+        "Read-only scoped repos cannot be written."
     )
     args_schema: Type[BaseModel] = ApplyFixInput
 
     def _run(self, file_path: str, new_content: str, commit_message: str) -> str:
-        repo = _repo_root()
-        full_path = (repo / file_path).resolve()
+        resolved = resolve_write_path(file_path)
+        if resolved is None:
+            return (
+                f"Refusing to write outside write repo: {file_path}. "
+                "Only the Mimari'de seçilen write repo'ya yazılabilir."
+            )
+        repo, rel = resolved
+        full_path = (repo / rel).resolve()
         if not str(full_path).startswith(str(repo.resolve())):
             return f"Refusing to write outside repo: {file_path}"
 
@@ -50,14 +65,14 @@ class ApplyAndDeployTool(BaseTool):
         if full_path.exists():
             before = full_path.read_text(encoding="utf-8")
         full_path.write_text(new_content, encoding="utf-8")
-        results = [f"✓ wrote {file_path}"]
+        results = [f"✓ wrote {rel}"]
 
         job_id = os.environ.get("QUALITY_LOOP_JOB_ID", "").strip()
         if job_id:
             try:
                 from quality_loop.fix_snapshots import record_fix_snapshot
 
-                snap = record_fix_snapshot(job_id, file_path, before, new_content)
+                snap = record_fix_snapshot(job_id, rel, before, new_content)
                 if snap.get("diff"):
                     results.append(
                         f"Δ snapshot +{snap.get('lines_added', 0)}/-{snap.get('lines_removed', 0)}"
@@ -73,7 +88,7 @@ class ApplyAndDeployTool(BaseTool):
 
         commit_msg = f"[quality-loop] {commit_message.strip()}"
         cmds = [
-            ["git", "-C", str(repo), "add", file_path],
+            ["git", "-C", str(repo), "add", rel],
             ["git", "-C", str(repo), "commit", "-m", commit_msg],
             ["git", "-C", str(repo), "push"],
         ]
@@ -107,16 +122,25 @@ class ApplyAndDeployTool(BaseTool):
 
 
 class ReadFileInput(BaseModel):
-    file_path: str = Field(description="Relative path under repo root")
+    file_path: str = Field(description="Path: <repo-slug>/relative/path or prefixsiz write repo path")
 
 
 class ReadFileTool(BaseTool):
     name: str = "read_project_file"
-    description: str = "Read a project file from PIVONY_REPO_ROOT (default: pivony-advisor root)."
+    description: str = (
+        "Read a scoped repo file. Use <repo-slug>/path (örn. pivony-api-dev/api/...) "
+        "or prefixsiz path for write repo. Mimari sayfasındaki repo seçimine göre."
+    )
     args_schema: Type[BaseModel] = ReadFileInput
 
     def _run(self, file_path: str) -> str:
-        full_path = _repo_root() / file_path
+        resolved = resolve_read_path(file_path)
+        if resolved is None:
+            return f"Invalid path: {file_path}"
+        repo, rel = resolved
+        full_path = (repo / rel).resolve()
+        if not str(full_path).startswith(str(repo.resolve())):
+            return f"Refusing to read outside repo: {file_path}"
         try:
             return full_path.read_text(encoding="utf-8")
         except FileNotFoundError:
@@ -125,10 +149,9 @@ class ReadFileTool(BaseTool):
 
 class ListProjectFilesTool(BaseTool):
     name: str = "list_project_files"
-    description: str = "List Python/config files in the repo (excludes venv, .git, quality_loop outputs)."
+    description: str = "List Python/config files for write repo + Mimari'de seçilen read-only repolar."
 
-    def _run(self) -> str:
-        repo = _repo_root()
+    def _list_repo(self, repo: Path, prefix: str = "") -> list[str]:
         patterns = ["**/*.py", "**/*.txt", "**/*.yaml", "**/*.yml", "**/*.md"]
         ignore = {".git", "__pycache__", "node_modules", ".venv", "venv", "quality_loop/outputs"}
         files: list[str] = []
@@ -139,5 +162,24 @@ class ListProjectFilesTool(BaseTool):
                     continue
                 if "quality_loop/outputs" in rel:
                     continue
-                files.append(rel)
-        return "\n".join(sorted(set(files))[:80])
+                label = f"{prefix}{rel}" if prefix else rel
+                files.append(label)
+        return files
+
+    def _run(self) -> str:
+        files: list[str] = []
+        scoped = list_scoped_repos()
+        if not scoped:
+            files.extend(self._list_repo(_repo_root()))
+        else:
+            write_root = _repo_root().resolve()
+            seen_roots: set[str] = set()
+            for slug, root in scoped:
+                key = str(root.resolve())
+                if key in seen_roots:
+                    continue
+                seen_roots.add(key)
+                is_write = root.resolve() == write_root
+                prefix = "" if is_write else f"{slug}/"
+                files.extend(self._list_repo(root, prefix=prefix))
+        return "\n".join(sorted(set(files))[:160])

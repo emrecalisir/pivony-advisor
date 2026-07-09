@@ -21,6 +21,11 @@ PROMPT_AGENTS: dict[str, dict[str, str]] = {
         "label": "CX Director Persona",
         "description": "CX Director test persona'sı — hangi sektörden konuştuğunu belirler.",
     },
+    "coding_agent": {
+        "file": "coding_agent_brief.txt",
+        "label": "Coding Agent Brief",
+        "description": "Coding Agent görev kapsamı — QA fix'leri, API↔MCP parity, repo talimatları.",
+    },
 }
 
 _SECTOR_LABELS: dict[str, str] = {

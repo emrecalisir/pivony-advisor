@@ -967,6 +967,15 @@ header p { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.84rem; }
   color: var(--text);
   font: inherit;
 }
+.repo-scope-editor {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.repo-read-multi {
+  min-width: 240px;
+  min-height: 140px;
+}
 .prompt-textarea {
   width: 100%;
   min-height: 320px;

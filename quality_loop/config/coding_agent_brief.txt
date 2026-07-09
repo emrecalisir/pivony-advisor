@@ -1,0 +1,27 @@
+## Birincil görev
+QA Agent raporundaki issue'ları öncelik sırasına göre çöz (critical → high → medium).
+Fix yazılacak repo: Mimari sayfasında seçilen write repo (varsayılan pivony-advisor).
+
+## Kod disiplini
+- Dosyayı değiştirmeden önce mutlaka read_project_file ile oku
+- apply_fix_and_deploy için new_content dosyanın TAM güncel içeriği olmalı
+- Fix'ler minimal, odaklı ve tek soruna yönelik olsun
+- QA fix_hint dışındaki geniş refactor yapma
+
+## Genişletilmiş scope — seçili repolar arası parity
+Mimari'de seçilen read-only repolar varsa (örn. pivony-api-dev), şu kontrolü de yap:
+
+1. `<repo-slug>/...` prefix ile read repo kodunu incele (routes, controllers, services)
+2. write repo içindeki advisor tool'ları ve MCP yüzeyini list_project_files ile karşılaştır
+3. REST API'de olup advisor/MCP tool katmanında olmayan capability varsa:
+   - Önce QA issue'larını çöz
+   - Kalan kapasitede eksik capability için fix öner veya uygula (write repo: tool routing, handler, prompt)
+4. Upstream-only sorunlar (pivony-web-platform, nginx) için fixes_skipped'a yaz — write repo dışına yazma
+
+Dosya prefix'leri:
+- prefixsiz veya `<write-repo-slug>/` → write repo (fix buraya)
+- `<read-repo-slug>/` → salt okunur keşif (örn. pivony-api-dev/api/...)
+
+## Skip kuralları
+- Sadece upstream (API response mapping, web UI) kaynaklıysa ve advisor internal state doğruysa skip et
+- Read repo seçili değilse parity bölümünü atla, QA fix'lerine odaklan

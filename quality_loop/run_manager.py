@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from quality_loop.repo_scope import apply_scope_to_env
+
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = _PACKAGE_ROOT / "outputs"
 JOBS_DIR = OUTPUT_DIR / "jobs"
@@ -170,7 +172,7 @@ def _spawn_job(
             },
         )
 
-        env = os.environ.copy()
+        env = apply_scope_to_env(os.environ.copy())
         env["PYTHONPATH"] = str(_REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
         env["QUALITY_LOOP_JOB_ID"] = job_id
         if sector:

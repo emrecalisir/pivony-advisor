@@ -21,6 +21,12 @@ if sys.version_info >= (3, 14):
 _ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(_ROOT / ".env", override=False)
 
+from quality_loop.repo_scope import apply_scope_to_env
+
+for _key, _val in apply_scope_to_env().items():
+    if _key in ("PIVONY_REPO_ROOT", "QUALITY_LOOP_REPO_SCOPE", "QUALITY_LOOP_API_REPO"):
+        os.environ[_key] = _val
+
 from quality_loop.langsmith_tracing import configure_langsmith_tracing
 from quality_loop.vertex_resilience import (
     configure_vertex_resilience,
@@ -34,7 +40,7 @@ configure_vertex_resilience()
 
 from crewai import Crew, Process
 
-from quality_loop.agents import create_agents
+from quality_loop.agents import _resolve_sector, create_agents
 from quality_loop.run_store import save_run
 from quality_loop.tasks import create_analyze_tasks, create_tasks
 
@@ -145,9 +151,10 @@ def run_loop(iterations: int = 1) -> None:
             message=f"İterasyon {i}: CX Director Advisor ile konuşuyor (6-10 tur)",
         )
 
-        cx_director, qa_agent, coding_agent = create_agents()
+        sector = _resolve_sector()
+        cx_director, qa_agent, coding_agent = create_agents(sector)
         conversation_task, qa_task, coding_task = create_tasks(
-            cx_director, qa_agent, coding_agent
+            cx_director, qa_agent, coding_agent, sector=sector
         )
 
         tasks = [t for t in (conversation_task, qa_task, coding_task) if t is not None]
@@ -225,8 +232,11 @@ def run_analyze(session_id: str) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     _update_job(phase="qa", message="QA Agent mevcut session'ı değerlendiriyor", session_id=session_id)
 
-    _, qa_agent, coding_agent = create_agents()
-    qa_task, coding_task = create_analyze_tasks(session_id, qa_agent, coding_agent)
+    sector = _resolve_sector()
+    _, qa_agent, coding_agent = create_agents(sector)
+    qa_task, coding_task = create_analyze_tasks(
+        session_id, qa_agent, coding_agent, sector=sector
+    )
 
     crew = Crew(
         agents=[qa_agent, coding_agent],

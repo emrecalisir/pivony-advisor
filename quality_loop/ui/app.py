@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from quality_loop.architecture import get_architecture
 from quality_loop.langsmith_tracing import langsmith_ui_url, observability_status
 from quality_loop.prompt_config import list_prompts_meta, read_prompt, write_prompt
+from quality_loop.repo_scope import read_scope, scope_summary, write_scope
 from quality_loop.vertex_resilience import resilience_status
 from quality_loop.fix_snapshots import enrich_fixes
 from quality_loop.run_manager import get_active_job, load_job, start_analyze, start_full_loop, stop_job
@@ -240,6 +241,11 @@ class SavePromptRequest(BaseModel):
     content: str = Field(min_length=1)
 
 
+class SaveRepoScopeRequest(BaseModel):
+    write_repo: str = Field(min_length=1)
+    read_repos: list[str] = Field(default_factory=list)
+
+
 _SPA_VIEWS = frozenset({"feedback", "architecture", "runs", "sessions", "qa", "improvements"})
 
 
@@ -445,7 +451,21 @@ def api_architecture() -> dict[str, Any]:
     arch = get_architecture()
     arch["observability_live"] = observability_status()
     arch["prompts"] = list_prompts_meta()
+    arch["repo_scope"] = scope_summary()
     return arch
+
+
+@app.get("/api/repos")
+def api_list_repos() -> dict[str, Any]:
+    return scope_summary()
+
+
+@app.put("/api/repos/scope")
+def api_save_repo_scope(body: SaveRepoScopeRequest) -> dict[str, Any]:
+    try:
+        return write_scope(body.write_repo, body.read_repos)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/prompts")

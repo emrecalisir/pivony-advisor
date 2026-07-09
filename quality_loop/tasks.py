@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
+import os
+
 from crewai import Agent, Task
+
+
+def _coding_brief(sector: str | None = None) -> str:
+    from quality_loop.prompt_config import read_prompt
+
+    resolved = (sector or os.environ.get("QUALITY_LOOP_SECTOR") or "default").strip() or "default"
+    return read_prompt("coding_agent", resolved)["content"]
 
 
 def create_tasks(
     cx_director: Agent | None,
     qa_agent: Agent,
     coding_agent: Agent,
+    sector: str | None = None,
 ) -> tuple[Task | None, Task, Task]:
     conversation_task = None
     if cx_director is not None:
@@ -74,18 +84,20 @@ def create_tasks(
 
     coding_task = Task(
         description=(
-            "QA Agent'ın raporundaki sorunları pivony-advisor projesinde düzelt.\n\n"
+            "QA Agent'ın raporundaki sorunları düzelt (önce pivony-advisor, brief'teki geniş scope varsa onu da uygula).\n\n"
             "Adımlar:\n"
             "1. list_project_files ile proje yapısını gör\n"
             "2. QA raporundaki fix_hint'lere göre read_project_file ile dosyaları oku\n"
             "3. Sorunu tam olarak anla\n"
             "4. Fix'i yaz — minimal, odaklı\n"
-            "5. apply_fix_and_deploy ile dosyayı güncelle (git/deploy env flag'leri gerekir)\n"
+            "5. apply_fix_and_deploy ile dosyayı güncelle (yalnızca PIVONY_REPO_ROOT altı; git/deploy env flag'leri gerekir)\n"
             "6. Kritik severity sorunlardan başla\n\n"
             "ÖNEMLİ:\n"
             "- Dosyayı değiştirmeden önce MUTLAKA oku\n"
             "- new_content dosyanın TAM güncel içeriği olmalı\n"
-            "- Her fix ayrı commit\n"
+            "- api/ prefix read-only keşif içindir; yazma yalnızca advisor dosyalarına\n\n"
+            "--- Coding Agent Brief ---\n"
+            f"{_coding_brief(sector)}"
         ),
         expected_output=(
             "JSON formatında:\n"
@@ -104,7 +116,9 @@ def create_tasks(
     return conversation_task, qa_task, coding_task
 
 
-def create_analyze_tasks(session_id: str, qa_agent: Agent, coding_agent: Agent) -> tuple[Task, Task]:
+def create_analyze_tasks(
+    session_id: str, qa_agent: Agent, coding_agent: Agent, sector: str | None = None
+) -> tuple[Task, Task]:
     """QA + coding only, for an existing session id."""
     import json
 
@@ -119,8 +133,9 @@ def create_analyze_tasks(session_id: str, qa_agent: Agent, coding_agent: Agent) 
     )
     coding_task = Task(
         description=(
-            "QA raporundaki kritik sorunları pivony-advisor'da düzelt. "
-            "Önce dosyaları oku, sonra apply_fix_and_deploy."
+            "QA raporundaki kritik sorunları düzelt. Önce dosyaları oku, sonra apply_fix_and_deploy.\n\n"
+            "--- Coding Agent Brief ---\n"
+            f"{_coding_brief(sector)}"
         ),
         expected_output="fixes_applied / fixes_skipped JSON özeti.",
         agent=coding_agent,

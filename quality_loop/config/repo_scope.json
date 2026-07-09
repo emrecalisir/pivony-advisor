@@ -1,0 +1,4 @@
+{
+  "write_repo": "pivony-advisor",
+  "read_repos": ["pivony-api-dev"]
+}

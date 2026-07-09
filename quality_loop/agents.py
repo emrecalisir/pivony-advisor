@@ -29,6 +29,7 @@ def create_agents(sector: str | None = None):
     resolved = _resolve_sector(sector)
     cx_persona = read_prompt("cx_director", resolved)["content"]
     qa_rubric = read_prompt("qa", resolved)["content"]
+    coding_brief = read_prompt("coding_agent", resolved)["content"]
 
     cx_director = Agent(
         role="CX Director",
@@ -72,10 +73,8 @@ def create_agents(sector: str | None = None):
         ),
         backstory=(
             "Kıdemli bir Python geliştiricisisin. AI agent sistemleri, "
-            "tool call implementasyonu ve prompt engineering konusunda uzmanlaşmışsın. "
-            "Değişiklik yapmadan önce mutlaka mevcut kodu okursun. "
-            "Fix'lerin minimal, odaklı ve test edilebilir olmasına özen gösterirsin. "
-            "Her commit mesajı '[quality-loop] <sorun özeti>' formatındadır."
+            "tool call implementasyonu ve prompt engineering konusunda uzmanlaşmışsın.\n\n"
+            + coding_brief
         ),
         tools=[
             ReadFileTool(),

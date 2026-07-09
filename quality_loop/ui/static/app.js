@@ -18,6 +18,7 @@ const VIEW_SUBTITLES = {
 let exportContext = null;
 let pollTimer = null;
 let promptEditorWired = false;
+let repoEditorWired = false;
 
 function esc(text) {
   return String(text ?? "")
@@ -1242,6 +1243,91 @@ async function savePrompt() {
   }
 }
 
+function renderRepoScopeEditor(scope) {
+  const repos = scope?.repos || [];
+  const writeRepo = scope?.write_repo || "pivony-advisor";
+  const readRepos = new Set(scope?.read_repos || []);
+  const readOptions = repos
+    .filter((r) => r.id !== writeRepo)
+    .map(
+      (r) =>
+        `<option value="${esc(r.id)}"${readRepos.has(r.id) ? " selected" : ""}>${esc(r.label)}</option>`
+    )
+    .join("");
+  return `
+    <div class="repo-scope-editor">
+      <div class="panel-header panel-header-split">
+        <h3>Coding Agent Repoları</h3>
+        <span id="repo-save-status" class="muted-small"></span>
+      </div>
+      <p class="flow-desc">masterr altındaki repolar. <strong>Write</strong> = fix yazılır; <strong>Read</strong> = salt okunur keşif.</p>
+      <p class="muted-small">Kök: ${esc(scope?.masterr_root || "—")}</p>
+      <div class="prompt-controls">
+        <label>Fix yazılacak repo
+          <select id="repo-write">${repos
+            .map(
+              (r) =>
+                `<option value="${esc(r.id)}"${r.id === writeRepo ? " selected" : ""}>${esc(r.label)}</option>`
+            )
+            .join("")}</select>
+        </label>
+        <label>İncelenecek repolar
+          <select id="repo-read" class="repo-read-multi" multiple size="8">${readOptions || '<option disabled>—</option>'}</select>
+        </label>
+        <button id="repo-save-btn" class="btn primary btn-sm" type="button">Kaydet</button>
+      </div>
+      <p class="muted-small">${esc(scope?.prefix_help || "")}</p>
+    </div>`;
+}
+
+function selectedReadRepos() {
+  const el = document.getElementById("repo-read");
+  if (!el) return [];
+  return Array.from(el.selectedOptions).map((o) => o.value);
+}
+
+async function saveRepoScope() {
+  const writeRepo = document.getElementById("repo-write")?.value || "";
+  const readRepos = selectedReadRepos();
+  const status = document.getElementById("repo-save-status");
+  if (!writeRepo) {
+    if (status) status.textContent = "Write repo seçin";
+    return;
+  }
+  if (status) status.textContent = "Kaydediliyor…";
+  try {
+    const data = await apiPut("/api/repos/scope", { write_repo: writeRepo, read_repos: readRepos });
+    if (status) {
+      status.textContent = `Kaydedildi · write: ${data.write_repo}, read: ${(data.read_repos || []).join(", ") || "—"}`;
+    }
+    localStorage.setItem("ql_write_repo", data.write_repo);
+    localStorage.setItem("ql_read_repos", JSON.stringify(data.read_repos || []));
+  } catch (err) {
+    if (status) status.textContent = `Hata: ${err.message}`;
+  }
+}
+
+function wireRepoScopeEditor() {
+  if (repoEditorWired) return;
+  repoEditorWired = true;
+  document.getElementById("repo-write")?.addEventListener("change", () => {
+    const writeRepo = document.getElementById("repo-write")?.value;
+    const readEl = document.getElementById("repo-read");
+    if (!readEl || !writeRepo) return;
+    const selected = new Set(selectedReadRepos());
+    Array.from(readEl.options).forEach((opt) => {
+      if (opt.value === writeRepo) {
+        opt.selected = false;
+        opt.disabled = true;
+      } else {
+        opt.disabled = false;
+        opt.selected = selected.has(opt.value);
+      }
+    });
+  });
+  document.getElementById("repo-save-btn")?.addEventListener("click", () => saveRepoScope());
+}
+
 function renderPromptEditor(meta) {
   const sectors = meta?.sectors || [{ id: "default", label: "Varsayılan (genel)" }];
   const agents = meta?.agents || [];
@@ -1358,9 +1444,12 @@ async function loadArchitecture() {
 
     ${renderLangSmithBlock(obs)}
 
+    ${renderRepoScopeEditor(arch.repo_scope)}
     ${renderPromptEditor(arch.prompts)}
   `;
   promptEditorWired = false;
+  repoEditorWired = false;
+  wireRepoScopeEditor();
   wirePromptEditor();
   await loadPromptIntoEditor();
 }
