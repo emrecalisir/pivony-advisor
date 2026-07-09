@@ -208,14 +208,52 @@ def build_conversation_export_markdown(
     return "\n".join(lines).strip() + "\n"
 
 
-def export_filename(session_id: str, ext: str) -> str:
+def build_qa_export_json(
+    *,
+    session_id: str,
+    meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    meta = meta or {}
+    qa = meta.get("qa_report")
+    body: dict[str, Any] = {
+        "exported_at": datetime.now(tz=timezone.utc).isoformat(),
+        "product": "pivony-quality-loop-qa",
+        "session_id": session_id,
+        "sector": meta.get("sector"),
+        "user_email": meta.get("user_email"),
+        "user_id": meta.get("user_id"),
+        "job_id": meta.get("job_id"),
+        "run_id": meta.get("run_id"),
+        "turn_count": meta.get("turn_count"),
+    }
+    if isinstance(qa, dict):
+        body["qa_report"] = {
+            "overall_verdict": qa.get("overall_verdict"),
+            "priority_fix": qa.get("priority_fix"),
+            "scores": qa.get("scores"),
+            "issues": qa.get("issues") or [],
+            "summary": qa.get("summary"),
+            "fixes": qa.get("fixes"),
+        }
+    else:
+        body["qa_report"] = None
+    return body
+
+
+def export_filename(session_id: str, ext: str, *, kind: str = "conversation") -> str:
     date = datetime.now().strftime("%Y-%m-%d")
     slug = _slugify_filename(session_id)
-    return f"pivony-quality-loop-{slug}-{date}.{ext}"
+    labels = {
+        "qa": "pivony-quality-loop-qa",
+        "conversation": "pivony-quality-loop-conversation",
+        "all": "pivony-quality-loop-full",
+    }
+    prefix = labels.get(kind, "pivony-quality-loop")
+    return f"{prefix}-{slug}-{date}.{ext}"
 
 
 def export_payload_from_session_detail(
-    detail: dict[str, Any], extra: dict[str, Any] | None = None
+    detail: dict[str, Any], extra: dict[str, Any] | None = None, *, scope: str = "all"
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     extra = extra or {}
     turns = detail.get("turns") or []
@@ -234,10 +272,16 @@ def export_payload_from_session_detail(
         "qa_report": detail.get("qa_report") or extra.get("qa_report"),
     }
     title = session_id[:18] + "…" if len(session_id) > 20 else session_id
+    if scope == "qa":
+        payload = build_qa_export_json(session_id=session_id, meta=meta)
+        return payload, messages
+    conversation_meta = dict(meta)
+    if scope == "conversation":
+        conversation_meta["qa_report"] = None
     payload = build_conversation_export_json(
         session_id=session_id,
         title=title,
         messages=messages,
-        meta=meta,
+        meta=conversation_meta,
     )
     return payload, messages

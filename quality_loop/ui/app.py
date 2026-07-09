@@ -630,10 +630,15 @@ def _load_session_detail(session_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/sessions/{session_id}/export.json")
-def export_session_json(session_id: str, job_id: str | None = None) -> Response:
+def export_session_json(
+    session_id: str,
+    job_id: str | None = None,
+    scope: Literal["conversation", "qa", "all"] = "conversation",
+) -> Response:
     detail = _load_session_detail(session_id)
-    payload, _ = export_payload_from_session_detail(detail, {"job_id": job_id})
-    filename = export_filename(session_id, "json")
+    payload, _ = export_payload_from_session_detail(detail, {"job_id": job_id}, scope=scope)
+    kind = "qa" if scope == "qa" else "conversation" if scope == "conversation" else "all"
+    filename = export_filename(session_id, "json", kind=kind)
     body = json.dumps(payload, ensure_ascii=False, indent=2)
     return Response(
         content=body,
@@ -643,26 +648,58 @@ def export_session_json(session_id: str, job_id: str | None = None) -> Response:
 
 
 @app.get("/api/sessions/{session_id}/export.md")
-def export_session_markdown(session_id: str, job_id: str | None = None) -> Response:
+def export_session_markdown(
+    session_id: str,
+    job_id: str | None = None,
+    scope: Literal["conversation", "qa", "all"] = "conversation",
+) -> Response:
     detail = _load_session_detail(session_id)
-    _, messages = export_payload_from_session_detail(detail, {"job_id": job_id})
     session_id_str = str(detail.get("session_id") or session_id)
     title = session_id_str[:18] + "…" if len(session_id_str) > 20 else session_id_str
-    markdown = build_conversation_export_markdown(
-        title=title,
-        messages=messages,
-        meta={
-            "session_id": session_id_str,
-            "sector": detail.get("sector"),
-            "user_email": detail.get("user_email"),
-            "user_id": detail.get("user_id"),
-            "run_id": detail.get("run_id"),
-            "job_id": job_id,
-            "turn_count": detail.get("turn_count"),
-            "qa_report": detail.get("qa_report"),
-        },
-    )
-    filename = export_filename(session_id_str, "md")
+    meta = {
+        "session_id": session_id_str,
+        "sector": detail.get("sector"),
+        "user_email": detail.get("user_email"),
+        "user_id": detail.get("user_id"),
+        "run_id": detail.get("run_id"),
+        "job_id": job_id,
+        "turn_count": detail.get("turn_count"),
+        "qa_report": detail.get("qa_report") if scope != "conversation" else None,
+    }
+    if scope == "qa":
+        from quality_loop.ui.export_builder import build_qa_export_json
+
+        qa_payload = build_qa_export_json(session_id=session_id_str, meta=meta)
+        lines = [
+            f"# Pivony Quality Loop — QA Report",
+            f"Session: {session_id_str}",
+            f"Exported: {datetime.utcnow().strftime('%d %B %Y %H:%M')} UTC",
+        ]
+        if meta.get("run_id"):
+            lines.append(f"Run: {meta['run_id']}")
+        qa = qa_payload.get("qa_report") or {}
+        if qa.get("overall_verdict"):
+            lines.append(f"Verdict: {qa['overall_verdict']}")
+        if qa.get("priority_fix"):
+            lines.append(f"Priority fix: {qa['priority_fix']}")
+        if qa.get("scores"):
+            lines.append("", "**Scores:**")
+            for k, v in (qa.get("scores") or {}).items():
+                lines.append(f"- {k}: {v}")
+        if qa.get("issues"):
+            lines.append("", "**Issues:**")
+            for issue in qa["issues"]:
+                sev = issue.get("severity")
+                prefix = f"[{sev}] " if sev else ""
+                lines.append(f"- {prefix}{issue.get('category', 'issue')}: {issue.get('description', '')}")
+                if issue.get("fix_hint"):
+                    lines.append(f"  - Fix: {issue['fix_hint']}")
+        markdown = "\n".join(lines).strip() + "\n"
+        filename = export_filename(session_id_str, "md", kind="qa")
+    else:
+        _, messages = export_payload_from_session_detail(detail, {"job_id": job_id}, scope="conversation")
+        markdown = build_conversation_export_markdown(title=title, messages=messages, meta=meta)
+        filename = export_filename(session_id_str, "md", kind="conversation")
     return Response(
         content=markdown,
         media_type="text/markdown; charset=utf-8",

@@ -98,7 +98,8 @@
               </div>
               <div class="workbench-toolbar-right header-toolbar">
                 <button id="toolbar-stop-btn" class="btn danger btn-sm hidden" type="button">■ Durdur</button>
-                <button id="toolbar-json-btn" class="btn primary btn-sm hidden" type="button">↓ JSON</button>
+                <button id="toolbar-conversation-json-btn" class="btn primary btn-sm hidden" type="button">↓ Konuşma</button>
+                <button id="toolbar-qa-json-btn" class="btn secondary btn-sm hidden" type="button">↓ QA</button>
                 <button id="toolbar-export-btn" class="btn ghost btn-sm hidden" type="button">↓ Export</button>
                 <a id="toolbar-langsmith-link" class="btn secondary btn-sm hidden" href="#" target="_blank" rel="noopener">LangSmith ↗</a>
               </div>
@@ -163,7 +164,8 @@
             <div class="panel-header panel-header-split">
               <h3 id="session-title">Detay</h3>
               <div id="session-toolbar" class="header-toolbar hidden">
-                <button id="session-json-btn" class="btn primary btn-sm" type="button">↓ JSON</button>
+                <button id="session-conversation-json-btn" class="btn primary btn-sm" type="button">↓ Konuşma</button>
+                <button id="session-qa-json-btn" class="btn secondary btn-sm" type="button">↓ QA</button>
                 <button id="session-export-btn" class="btn ghost btn-sm hidden" type="button">↓ Export</button>
               </div>
             </div>
@@ -193,8 +195,10 @@
       <h3>Export Conversation</h3>
       <p class="muted-small" id="export-modal-subtitle"></p>
       <div class="export-actions">
-        <button id="export-json-btn" class="btn primary" type="button">Download as JSON</button>
-        <button id="export-md-btn" class="btn outline" type="button">Download as Markdown</button>
+        <button id="export-conversation-json-btn" class="btn primary" type="button">Konuşma — JSON</button>
+        <button id="export-conversation-md-btn" class="btn outline" type="button">Konuşma — Markdown</button>
+        <button id="export-qa-json-btn" class="btn secondary" type="button">QA — JSON</button>
+        <button id="export-qa-md-btn" class="btn ghost" type="button">QA — Markdown</button>
       </div>
       <p class="muted-small export-hint">Power user shortcut: <span id="export-shortcut-hint">⌘⇧E</span></p>
       <button id="export-close" class="btn ghost" type="button">Kapat</button>

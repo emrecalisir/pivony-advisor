@@ -174,23 +174,63 @@
       run_id: meta.run_id || null,
       messages: normalizeMessages(messages),
     };
-    if (meta.qa_report) {
-      const qa = meta.qa_report;
-      body.qa_report = {
-        overall_verdict: qa.overall_verdict || null,
-        priority_fix: qa.priority_fix || null,
-        scores: qa.scores || null,
-        issues: (qa.issues || []).map((issue) => ({
-          category: issue.category,
-          severity: issue.severity,
-          description: issue.description,
-          evidence: issue.evidence,
-          fix_hint: issue.fix_hint,
-          message_index: issue.message_index,
-        })),
-      };
-    }
     return body;
+  }
+
+  function buildQaExportJson({ sessionId, meta = {} }) {
+    const qa = meta.qa_report;
+    const body = {
+      exported_at: new Date().toISOString(),
+      product: "pivony-quality-loop-qa",
+      session_id: sessionId || "",
+      sector: meta.sector || null,
+      user_email: meta.user_email || null,
+      user_id: meta.user_id || null,
+      job_id: meta.job_id || null,
+      run_id: meta.run_id || null,
+      turn_count: meta.turn_count || null,
+      qa_report: qa
+        ? {
+            overall_verdict: qa.overall_verdict || null,
+            priority_fix: qa.priority_fix || null,
+            scores: qa.scores || null,
+            issues: (qa.issues || []).map((issue) => ({
+              category: issue.category,
+              severity: issue.severity,
+              description: issue.description,
+              evidence: issue.evidence,
+              fix_hint: issue.fix_hint,
+              message_index: issue.message_index,
+            })),
+          }
+        : null,
+    };
+    return body;
+  }
+
+  function buildQaExportMarkdown({ sessionId, meta = {} }) {
+    const qa = meta.qa_report || {};
+    const lines = [
+      `# Pivony Quality Loop — QA Report`,
+      `Session: ${sessionId || "—"}`,
+      `Exported: ${new Date().toLocaleString("tr-TR")}`,
+    ];
+    if (meta.run_id) lines.push(`Run: ${meta.run_id}`);
+    if (qa.overall_verdict) lines.push(`Verdict: ${qa.overall_verdict}`);
+    if (qa.priority_fix) lines.push(`Priority fix: ${qa.priority_fix}`);
+    if (qa.scores) {
+      lines.push("", "**Scores:**");
+      Object.entries(qa.scores).forEach(([k, v]) => lines.push(`- ${k}: ${v}`));
+    }
+    if (qa.issues?.length) {
+      lines.push("", "**Issues:**");
+      qa.issues.forEach((issue) => {
+        const sev = issue.severity ? `[${issue.severity}] ` : "";
+        lines.push(`- ${sev}${issue.category || "issue"}: ${issue.description || ""}`);
+        if (issue.fix_hint) lines.push(`  - Fix: ${issue.fix_hint}`);
+      });
+    }
+    return lines.join("\n").trimEnd() + "\n";
   }
 
   const roleLabel = (role) => {
@@ -228,12 +268,6 @@
     if (meta.user_email) lines.push(`User: ${meta.user_email}`);
     if (meta.job_id) lines.push(`Job: ${meta.job_id}`);
     if (meta.run_id) lines.push(`Run: ${meta.run_id}`);
-    if (meta.qa_report?.overall_verdict) {
-      lines.push(`QA verdict: ${meta.qa_report.overall_verdict}`);
-    }
-    if (meta.qa_report?.priority_fix) {
-      lines.push(`Priority fix: ${meta.qa_report.priority_fix}`);
-    }
     lines.push("", "---", "");
 
     normalized.forEach((msg) => {
@@ -326,7 +360,22 @@
     const date = new Date().toISOString().slice(0, 10);
     triggerDownload(
       blob,
-      `pivony-quality-loop-${slugifyFilename(payload.title || payload.sessionId)}-${date}.json`
+      `pivony-quality-loop-conversation-${slugifyFilename(payload.title || payload.sessionId)}-${date}.json`
+    );
+  }
+
+  function downloadQaJson(payload) {
+    const body = buildQaExportJson({
+      sessionId: payload.sessionId,
+      meta: payload.meta || {},
+    });
+    const blob = new Blob([JSON.stringify(body, null, 2)], {
+      type: "application/json;charset=utf-8",
+    });
+    const date = new Date().toISOString().slice(0, 10);
+    triggerDownload(
+      blob,
+      `pivony-quality-loop-qa-${slugifyFilename(payload.sessionId || "qa")}-${date}.json`
     );
   }
 
@@ -336,7 +385,20 @@
     const date = new Date().toISOString().slice(0, 10);
     triggerDownload(
       blob,
-      `pivony-quality-loop-${slugifyFilename(payload.title || payload.sessionId)}-${date}.md`
+      `pivony-quality-loop-conversation-${slugifyFilename(payload.title || payload.sessionId)}-${date}.md`
+    );
+  }
+
+  function downloadQaMarkdown(payload) {
+    const markdown = buildQaExportMarkdown({
+      sessionId: payload.sessionId,
+      meta: payload.meta || {},
+    });
+    const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+    const date = new Date().toISOString().slice(0, 10);
+    triggerDownload(
+      blob,
+      `pivony-quality-loop-qa-${slugifyFilename(payload.sessionId || "qa")}-${date}.md`
     );
   }
 
@@ -351,8 +413,12 @@
     turnsToMessages,
     buildConversationExportJson,
     buildConversationExportMarkdown,
+    buildQaExportJson,
+    buildQaExportMarkdown,
     downloadConversationJson,
     downloadConversationMarkdown,
+    downloadQaJson,
+    downloadQaMarkdown,
     exportShortcutLabel,
   };
 })();
