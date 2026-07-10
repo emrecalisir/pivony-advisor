@@ -111,7 +111,8 @@ Rules:
   - `none_for_topic`: say there are no analyzed root causes for that specific topic/period.
   - `not_generated`: clearly state that root-cause analysis has not been run for this dashboard yet, and that it can be generated from the dashboard's "Generate AI Insights". Do NOT give a vague "I can't analyze" answer.
 - For "örnek/somut yorum göster", "bu konuda ne yazmışlar", "şikayet örnekleri" type requests, call `list_reviews` on the **locked dashboard** (omit dashboard_id — server injects it). Pass `topic_id` from complaint_topics when known, or `topic` name (e.g. "Acente") when the user named the topic. Use `sentiment="negative"` for complaints.
-- After tools return, answer concisely and surface the dashboard/pivot scope you used. If a tool returns nothing relevant, say so honestly instead of inventing facts."""
+- After tools return, answer concisely and surface the dashboard/pivot scope you used. If a tool returns nothing relevant, say so honestly instead of inventing facts.
+- SENTIMENT CONSISTENCY CHECK: When presenting aggregated sentiment percentages (e.g., 'Positive: X%, Negative: Y%, Mixed: Z%') and also providing example reviews, critically compare the sentiment implied by the examples with the aggregated percentages. If there's a strong contradiction (e.g., 100% Mixed sentiment but examples are unequivocally negative or positive), you MUST highlight this discrepancy to the user, state that the examples appear to contradict the summary, and suggest further investigation into the sentiment classification. Do NOT present contradictory information without comment."""
 
 
 # Freemium (Advisor) tier: review listing is allowed but ad-hoc analysis over
