@@ -1,4 +1,4 @@
-"""Streaming advisor agent with Gemini thinking tokens (Vertex AI)."""
+\"\"\"Streaming advisor agent with Gemini thinking tokens (Vertex AI).\"\"\"
 
 from __future__ import annotations
 
@@ -376,56 +376,37 @@ def _run_agent_stream_loop(
         if not model_content.parts:
             break
 
-        contents.append(model_content)
+        # Store the original function calls from the model before sanitization
+        raw_function_calls_from_model = list(function_calls)
+        # Sanitize function calls: this list will contain only executable calls.
+        function_calls_after_sanitization = sanitize_function_calls(function_calls, _hard)
+        executable_ids = {id(fc) for fc in function_calls_after_sanitization}
 
-        if not function_calls:
-            for part in model_content.parts:
-                if part.text:
-                    yield {"type": "content", "delta": part.text}
-            final_text = "".join(
-                p.text for p in model_content.parts if p.text
-            ).strip()
-            break
+        # Collect function responses here; only responses for actually executed/allowed calls will be added.
+        responses_to_send_back = []
+        num_suppressed_by_sanitization = 0
 
-        if step == limit - 1:
-            no_tool_config = types.GenerateContentConfig(
-                system_instruction=base_config.system_instruction,
-                thinking_config=base_config.thinking_config,
-                temperature=LLM_TEMPERATURE,
-            )
-            retry_status, retry_events, model_content, _ = (
-                _collect_turn_with_rate_limit_status(
-                    lambda: _stream_model_turn(
-                        client=genai_client,
-                        model=ADVISOR_LLM_MODEL,
-                        contents=contents,
-                        config=no_tool_config,
-                        emit_content=True,
-                    )
-                )
-            )
-            for event in _yield_turn_events(retry_status, retry_events):
-                yield event
-            contents.append(model_content)
-            final_text = "".join(
-                p.text for p in model_content.parts if p.text
-            ).strip()
-            break
+        for fc_model_output in raw_function_calls_from_model:
+            name = fc_model_output.name or ""
+            current_tool_id = id(fc_model_output)
 
-        raw_function_calls = list(function_calls)
-        function_calls = sanitize_function_calls(function_calls, _hard)
-        executable_ids = {id(fc) for fc in function_calls}
-        for fc in raw_function_calls:
-            name = fc.name or ""
             if name:
                 tools_called.add(name)
+
+            if current_tool_id not in executable_ids:
+                # This call was suppressed by sanitize_function_calls. Do NOT generate a FunctionResponse for it.
+                logger.info("Tool routing: suppressed tool call %s (id=%s). No response generated.", name, current_tool_id)
+                num_suppressed_by_sanitization += 1
+                continue # Skip to the next function call
+
+            # If we reach here, the call was NOT suppressed by sanitize_function_calls.
+            # Proceed to execute it or block it by other rules (e.g., blocked_tool_result).
             yield {"type": "status", "phase": "tool", "detail": name}
-            args = dict(fc.args or {})
+            args = dict(fc_model_output.args or {})
             tool = tool_map.get(name)
-            if id(fc) not in executable_ids:
-                blocked = blocked_tool_result(name, _hard) if name else None
-                result = blocked or f"Bilinmeyen araç: {name}"
-            elif blocked := blocked_tool_result(name, _hard) if name else None:
+            result = None
+
+            if blocked := blocked_tool_result(name, _hard) if name else None:
                 result = blocked
             elif tool is None:
                 result = f"Bilinmeyen araç: {name}"
@@ -433,35 +414,48 @@ def _run_agent_stream_loop(
                 try:
                     result = validated_tool_invoke(tool, args, _hard, user_id=user_id)
                 except Exception as exc:
-                    logger.warning("Tool %s failed: %s", name, exc)
+                    logger.warning("Tool %s invocation failed: %s", name, exc)
                     result = f"Araç hatası ({name}): {exc}"
-            built = _extract_dashboard_picker(name, result, default_dash)
-            if built:
-                picker = built
-                yield {"type": "dashboard_picker", "picker": picker}
-            new_charts = charts_from_tool_result(name, result)
-            if new_charts:
-                charts[:] = merge_chart_lists(charts, new_charts)
-                for chart in new_charts:
-                    yield {"type": "chart", "chart": chart}
-            contents.append(
-                types.Content(
-                    role="user",
-                    parts=[
-                        types.Part(
-                            function_response=types.FunctionResponse(
-                                name=name,
-                                response={"result": str(result)},
+            
+            # Append the response for this processed (executed or blocked by _tool_routing) call.
+            if result is not None:
+                responses_to_send_back.append(
+                    types.Content(
+                        role="user",
+                        parts=[
+                            types.Part(
+                                function_response=types.FunctionResponse(
+                                    name=name,
+                                    response={"result": str(result)},
+                                )
                             )
-                        )
-                    ],
+                        ],
+                    )
                 )
-            )
+
+                # Update UI elements for the executed/blocked tool
+                built = _extract_dashboard_picker(name, result, default_dash)
+                if built:
+                    picker = built
+                    yield {"type": "dashboard_picker", "picker": picker}
+                new_charts = charts_from_tool_result(name, result)
+                if new_charts:
+                    charts[:] = merge_chart_lists(charts, new_charts)
+                    for chart in new_charts:
+                        yield {"type": "chart", "chart": chart}
+
+        # After processing all raw_function_calls, append the collected responses to contents.
+        # This ensures that contents only contains responses for calls that were not suppressed
+        # by sanitize_function_calls, maintaining the expected count for the Gemini API.
+        contents.append(model_content)
+        contents.extend(responses_to_send_back)
+
         logger.info(
-            "Agent stream step %s: executed %s tool call(s) (%s suppressed)",
+            "Agent stream step %s: model proposed %s calls, %s suppressed, %s responses generated and sent back.",
             step + 1,
-            len(executable_ids),
-            len(raw_function_calls) - len(executable_ids),
+            len(raw_function_calls_from_model),
+            num_suppressed_by_sanitization,
+            len(responses_to_send_back),
         )
 
     if picker is None:
