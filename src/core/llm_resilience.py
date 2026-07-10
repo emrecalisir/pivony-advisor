@@ -9,7 +9,7 @@ from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
-MAX_STREAM_TURN_RETRIES = 1
+MAX_STREAM_TURN_RETRIES = 3
 MAX_RATE_LIMIT_RETRIES = 3
 RATE_LIMIT_BACKOFF_SEC = (2.0, 4.0, 8.0)
 
@@ -23,6 +23,11 @@ RATE_LIMIT_USER_MESSAGE = (
 )
 GENERIC_LLM_ERROR_MESSAGE = (
     "Yanıt oluşturulurken bir hata oluştu. Lütfen tekrar deneyin."
+)
+INVALID_FUNCTION_CALL_ARGUMENT_ERROR_MESSAGE = (
+    "Yapay zeka modelimizle iletişim sırasında bir sorun oluştu. "
+    "Komutlarınızın işlenmesinde beklenmedik bir hata meydana geldi. "
+    "Lütfen daha sonra tekrar deneyin veya farklı bir yaklaşımla sorunuzu tekrar sorun."
 )
 
 
@@ -45,7 +50,11 @@ def make_rate_limit_retry_status(attempt: int, max_attempts: int) -> dict[str, A
 def is_terminal_llm_user_message(text: str) -> bool:
     """True when follow-up LLM calls should be skipped (error replies)."""
     normalized = (text or "").strip()
-    return normalized in (RATE_LIMIT_USER_MESSAGE, GENERIC_LLM_ERROR_MESSAGE)
+    return normalized in (
+        RATE_LIMIT_USER_MESSAGE,
+        GENERIC_LLM_ERROR_MESSAGE,
+        INVALID_FUNCTION_CALL_ARGUMENT_ERROR_MESSAGE,
+    )
 
 
 class LlmTurnFailed(Exception):
@@ -86,6 +95,15 @@ def is_rate_limit_error(exc: BaseException) -> bool:
 def user_message_for_llm_error(exc: BaseException) -> str:
     if is_rate_limit_error(exc):
         return RATE_LIMIT_USER_MESSAGE
+
+    try:
+        from google.genai.errors import ClientError
+        if isinstance(exc, ClientError):
+            if exc.code == 400 and "function response parts is equal to the number of function call parts" in str(exc):
+                return INVALID_FUNCTION_CALL_ARGUMENT_ERROR_MESSAGE
+    except ImportError:
+        pass
+
     return GENERIC_LLM_ERROR_MESSAGE
 
 
