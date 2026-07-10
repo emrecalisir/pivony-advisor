@@ -202,6 +202,17 @@ def validated_tool_invoke(
             user_facing_error = "Maalesef, sistemlerimize erişirken geçici bir sorun oluştu. Lütfen kısa bir süre sonra tekrar deneyin."
         elif "permission denied" in detail_str or "unauthorized" in detail_str:
             user_facing_error = "Bu işlemi gerçekleştirmek için yetkiniz bulunmamaktadır. Lütfen yöneticinizle iletişime geçin."
+        elif "dashboard_not_accessible" in detail_str or "dashboard'a erişilemiyor" in detail_str:
+            user_facing_error = (
+                "Seçtiğiniz veya belirtilen dashboard'a erişim yetkiniz bulunmamaktadır "
+                "veya böyle bir dashboard mevcut değildir. Lütfen başka bir dashboard "
+                "seçmeyi deneyin veya erişim yetkilerinizi kontrol edin."
+            )
+        elif "invalid argument" in detail_str or "geçersiz argüman" in detail_str or "invalid dashboard id" in detail_str:
+            user_facing_error = (
+                "Araç çağrısı sırasında geçersiz bir argüman tespit edildi (örn. geçersiz dashboard ID'si). "
+                "Lütfen girdiğiniz bilgileri kontrol edin veya farklı bir sorgu deneyin."
+            )
 
 
         return json.dumps(
@@ -231,7 +242,7 @@ def blocked_tool_result(tool_name: str, state: HardAgentState) -> str | None:
     return json.dumps(
         {
             "skipped": True,
-            "tool": tool_name,
+            "tool": tool.name,
             "dashboard_id": state.dashboard_id,
             "instruction": (
                 f"Dashboard scope is already locked to id={state.dashboard_id}. "
