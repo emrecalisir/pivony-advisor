@@ -254,6 +254,7 @@ def _session_summary(
         "qa_verdict": perf["qa_verdict"],
         "issue_count": perf["issue_count"],
         "avg_score": perf["avg_score"],
+        "deletable": status["status"] != "ongoing",
         **status,
     }
 
@@ -781,6 +782,51 @@ def export_improvements_json(run_id: str) -> Response:
         media_type="application/json; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+class SessionDeleteRequest(BaseModel):
+    session_ids: list[str] = Field(default_factory=list)
+    select_all: bool = False
+
+
+def _protected_session_ids() -> set[str]:
+    """Sessions tied to an active quality-loop job must not be deleted."""
+    protected: set[str] = set()
+    active_job = get_active_job()
+    if not active_job or active_job.get("status") not in ("queued", "running"):
+        return protected
+    for key in ("session_id", "cycle_id"):
+        sid = str(active_job.get(key) or "").strip()
+        if sid:
+            protected.add(sid)
+    live_sid = _best_live_session_id(active_job)
+    if live_sid:
+        protected.add(live_sid)
+    return protected
+
+
+@app.post("/api/sessions/delete")
+def delete_sessions_bulk(body: SessionDeleteRequest) -> dict[str, Any]:
+    from quality_loop.session_store import delete_session_files, list_all_session_ids
+
+    protected = _protected_session_ids()
+    if body.select_all:
+        requested = [sid for sid in list_all_session_ids() if sid not in protected]
+    else:
+        requested = [str(sid).strip() for sid in body.session_ids if str(sid).strip()]
+
+    if not requested and not body.select_all and not body.session_ids:
+        raise HTTPException(status_code=400, detail="session_ids required")
+
+    skipped = sorted({sid for sid in (body.session_ids if not body.select_all else []) if sid in protected})
+    allowed = [sid for sid in requested if sid not in protected]
+    result = delete_session_files(allowed)
+    return {
+        **result,
+        "skipped_protected": skipped,
+        "protected_session_ids": sorted(protected),
+        "requested_count": len(requested),
+    }
 
 
 @app.get("/api/sessions")

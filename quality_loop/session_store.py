@@ -11,6 +11,7 @@ from typing import Any
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = _PACKAGE_ROOT / "outputs"
 SESSIONS_DIR = OUTPUT_DIR / "sessions"
+RUNS_DIR = OUTPUT_DIR / "runs"
 
 
 def _utcnow_iso() -> str:
@@ -155,6 +156,78 @@ def list_recent_session_ids(limit: int = 10) -> list[str]:
                 ids.append(sid)
         except (json.JSONDecodeError, OSError):
             continue
+    return ids
+
+
+def _safe_session_stem(session_id: str) -> str:
+    return "".join(c if c.isalnum() or c in "-_" else "_" for c in session_id)
+
+
+def _delete_run_mirrors(session_id: str) -> list[str]:
+    removed: list[str] = []
+    if not RUNS_DIR.exists():
+        return removed
+    stem = _safe_session_stem(session_id)
+    paths: list[Path] = []
+    direct = RUNS_DIR / f"{stem}.json"
+    if direct.exists():
+        paths.append(direct)
+    for path in RUNS_DIR.glob("*.json"):
+        if path in paths:
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        linked = str(data.get("session_id") or data.get("cycle_id") or "")
+        if linked == session_id:
+            paths.append(path)
+    for path in paths:
+        try:
+            path.unlink()
+            removed.append(path.name)
+        except OSError:
+            continue
+    return removed
+
+
+def delete_session_files(session_ids: list[str]) -> dict[str, Any]:
+    """Delete session JSON files and matching legacy run mirrors."""
+    deleted: list[str] = []
+    missing: list[str] = []
+    run_files_removed: list[str] = []
+    for session_id in session_ids:
+        sid = str(session_id or "").strip()
+        if not sid:
+            continue
+        path = _session_path(sid)
+        if not path.exists():
+            missing.append(sid)
+            continue
+        try:
+            path.unlink()
+            deleted.append(sid)
+            run_files_removed.extend(_delete_run_mirrors(sid))
+        except OSError:
+            missing.append(sid)
+    return {
+        "deleted": deleted,
+        "missing": missing,
+        "run_files_removed": run_files_removed,
+    }
+
+
+def list_all_session_ids() -> list[str]:
+    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    ids: list[str] = []
+    for path in SESSIONS_DIR.glob("*.json"):
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            sid = str(data.get("session_id") or path.stem)
+            ids.append(sid)
+        except (json.JSONDecodeError, OSError):
+            ids.append(path.stem)
     return ids
 
 

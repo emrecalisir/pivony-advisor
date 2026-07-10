@@ -1044,6 +1044,173 @@ function renderStats(overview) {
     .join("");
 }
 
+const SESSION_BULK_TARGETS = {
+  "feedback-session-list": {
+    selectAllId: "feedback-session-select-all",
+    deleteBtnId: "feedback-session-delete-btn",
+  },
+  "session-list": {
+    selectAllId: "session-select-all",
+    deleteBtnId: "session-delete-btn",
+  },
+};
+
+const sessionItemsByContainer = {};
+const selectedSessionIds = new Set();
+
+function isSessionDeletable(item) {
+  return item?.deletable !== false && item?.status !== "ongoing";
+}
+
+function deletableSessionIds(items) {
+  return items.filter(isSessionDeletable).map((item) => item.session_id);
+}
+
+function syncSessionBulkToolbar(containerId, items = sessionItemsByContainer[containerId] || []) {
+  const cfg = SESSION_BULK_TARGETS[containerId];
+  if (!cfg) return;
+  const selectAll = document.getElementById(cfg.selectAllId);
+  const deleteBtn = document.getElementById(cfg.deleteBtnId);
+  const deletable = deletableSessionIds(items);
+  const selectedDeletable = deletable.filter((sid) => selectedSessionIds.has(sid));
+  if (deleteBtn) {
+    deleteBtn.disabled = selectedDeletable.length === 0;
+    deleteBtn.textContent = selectedDeletable.length ? `Sil (${selectedDeletable.length})` : "Sil";
+  }
+  if (selectAll) {
+    const allSelected = deletable.length > 0 && selectedDeletable.length === deletable.length;
+    const someSelected = selectedDeletable.length > 0 && !allSelected;
+    selectAll.checked = allSelected;
+    selectAll.indeterminate = someSelected;
+    selectAll.disabled = deletable.length === 0;
+  }
+}
+
+function syncAllSessionBulkToolbars() {
+  Object.keys(SESSION_BULK_TARGETS).forEach((containerId) => {
+    syncSessionBulkToolbar(containerId);
+  });
+}
+
+function setSelectAllSessions(containerId, checked) {
+  const items = sessionItemsByContainer[containerId] || [];
+  deletableSessionIds(items).forEach((sid) => {
+    if (checked) selectedSessionIds.add(sid);
+    else selectedSessionIds.delete(sid);
+  });
+  containerId &&
+    document
+      .getElementById(containerId)
+      ?.querySelectorAll(".session-select-cb:not(:disabled)")
+      .forEach((cb) => {
+        cb.checked = checked;
+      });
+  syncAllSessionBulkToolbars();
+}
+
+function renderSelectableSessionList(
+  containerId,
+  items,
+  onClick,
+  labelFn,
+  metaFn,
+  { idKey = "session_id", labelHtmlFn = null } = {}
+) {
+  const el = document.getElementById(containerId);
+  sessionItemsByContainer[containerId] = items;
+  if (!items.length) {
+    el.innerHTML = `<div class="empty">Kayıt yok</div>`;
+    syncSessionBulkToolbar(containerId, items);
+    return;
+  }
+  el.innerHTML = items
+    .map((item, idx) => {
+      const sid = item[idKey];
+      const ongoing = !isSessionDeletable(item);
+      const checked = selectedSessionIds.has(sid) ? "checked" : "";
+      const disabled = ongoing ? "disabled" : "";
+      const protectTitle = ongoing ? ' title="Devam eden session silinemez"' : "";
+      return `
+    <div class="list-item list-item-selectable${ongoing ? " list-item-protected" : ""}" data-idx="${idx}" data-session-id="${esc(sid)}">
+      <label class="list-item-check"${protectTitle}>
+        <input type="checkbox" class="session-select-cb" data-session-id="${esc(sid)}" ${checked} ${disabled} />
+      </label>
+      <div class="list-item-body">
+        <div class="title">${labelHtmlFn ? labelHtmlFn(item) : esc(labelFn(item))}</div>
+        <div class="meta">${esc(metaFn ? metaFn(item) : fmtDateTime(item.created_at || item.modified_at))}</div>
+      </div>
+    </div>`;
+    })
+    .join("");
+
+  el.querySelectorAll(".session-select-cb").forEach((cb) => {
+    cb.addEventListener("click", (e) => e.stopPropagation());
+    cb.addEventListener("change", () => {
+      const sid = cb.dataset.sessionId;
+      if (cb.checked) selectedSessionIds.add(sid);
+      else selectedSessionIds.delete(sid);
+      syncAllSessionBulkToolbars();
+    });
+  });
+
+  el.querySelectorAll(".list-item-selectable").forEach((node) => {
+    node.addEventListener("click", (e) => {
+      if (e.target.closest(".list-item-check")) return;
+      el.querySelectorAll(".list-item").forEach((n) => n.classList.remove("selected"));
+      node.classList.add("selected");
+      onClick(items[Number(node.dataset.idx)]);
+    });
+  });
+  syncSessionBulkToolbar(containerId, items);
+}
+
+async function deleteSelectedSessions(containerId) {
+  const items = sessionItemsByContainer[containerId] || [];
+  const ids = deletableSessionIds(items).filter((sid) => selectedSessionIds.has(sid));
+  if (!ids.length) return;
+
+  const deletableCount = deletableSessionIds(items).length;
+  const useSelectAll = ids.length === deletableCount && deletableCount > 0;
+  const msg = useSelectAll
+    ? `${deletableCount} session silinecek. Bu işlem geri alınamaz. Devam?`
+    : `${ids.length} session silinecek. Bu işlem geri alınamaz. Devam?`;
+  if (!window.confirm(msg)) return;
+
+  const deleteBtn = document.getElementById(SESSION_BULK_TARGETS[containerId]?.deleteBtnId);
+  const prevLabel = deleteBtn?.textContent;
+  if (deleteBtn) {
+    deleteBtn.disabled = true;
+    deleteBtn.textContent = "Siliniyor…";
+  }
+
+  try {
+    const result = await apiPost("/api/sessions/delete", {
+      session_ids: useSelectAll ? [] : ids,
+      select_all: useSelectAll,
+    });
+    ids.forEach((sid) => selectedSessionIds.delete(sid));
+    if (result.skipped_protected?.length) {
+      alert(
+        `${result.deleted?.length || 0} session silindi. ` +
+          `${result.skipped_protected.length} devam eden session korundu.`
+      );
+    }
+    if (result.deleted?.includes(activeSessionId)) {
+      activeSessionId = null;
+      activeRunDetail = null;
+    }
+    await refreshAll();
+  } catch (err) {
+    alert(`Silme hatası: ${err.message}`);
+  } finally {
+    if (deleteBtn) {
+      deleteBtn.disabled = selectedSessionIds.size === 0;
+      deleteBtn.textContent = prevLabel || "Sil";
+      syncAllSessionBulkToolbars();
+    }
+  }
+}
+
 function renderList(containerId, items, onClick, labelFn, metaFn, { idKey = null, labelHtmlFn = null } = {}) {
   const el = document.getElementById(containerId);
   if (!items.length) {
@@ -1248,7 +1415,7 @@ async function loadFeedback({ preserveActiveJob = false } = {}) {
     document.getElementById("feedback-session-list").innerHTML =
       `<div class="empty">Henüz konuşma yok</div>`;
   } else {
-    renderList(
+    renderSelectableSessionList(
       "feedback-session-list",
       sessions,
       async (item) => {
@@ -1317,7 +1484,7 @@ async function loadRuns() {
 
 async function loadSessions() {
   const sessions = await api("/api/sessions");
-  renderList(
+  renderSelectableSessionList(
     "session-list",
     sessions,
     async (item) => {
@@ -2347,6 +2514,18 @@ async function boot() {
   document.getElementById("session-export-btn")?.addEventListener("click", openExportModal);
   document.getElementById("toolbar-export-btn")?.addEventListener("click", openExportModal);
   document.getElementById("toolbar-stop-btn")?.addEventListener("click", stopRun);
+  document.getElementById("feedback-session-select-all")?.addEventListener("change", (e) => {
+    setSelectAllSessions("feedback-session-list", e.target.checked);
+  });
+  document.getElementById("session-select-all")?.addEventListener("change", (e) => {
+    setSelectAllSessions("session-list", e.target.checked);
+  });
+  document.getElementById("feedback-session-delete-btn")?.addEventListener("click", () => {
+    deleteSelectedSessions("feedback-session-list").catch(console.error);
+  });
+  document.getElementById("session-delete-btn")?.addEventListener("click", () => {
+    deleteSelectedSessions("session-list").catch(console.error);
+  });
   initWorkbenchTabs();
   document.getElementById("export-conversation-json-btn")?.addEventListener("click", downloadExportConversationJson);
   document.getElementById("export-conversation-md-btn")?.addEventListener("click", downloadExportConversationMarkdown);

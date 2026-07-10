@@ -480,6 +480,57 @@ header p { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.84rem; }
   border-bottom: 1px solid var(--border);
   cursor: pointer;
 }
+.list-item-selectable {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+}
+.list-item-check {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding-top: 0.1rem;
+  cursor: pointer;
+}
+.list-item-check input {
+  width: 0.95rem;
+  height: 0.95rem;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.list-item-check input:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.list-item-body {
+  flex: 1;
+  min-width: 0;
+}
+.list-item-protected {
+  opacity: 0.92;
+}
+.session-bulk-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.session-bulk-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+.bulk-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  user-select: none;
+}
+.bulk-select-all input {
+  accent-color: var(--accent);
+}
 .list-item:hover, .list-item.selected { background: rgba(91, 157, 255, 0.08); }
 .list-item .title {
   font-weight: 600;

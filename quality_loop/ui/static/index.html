@@ -83,9 +83,17 @@
 
         <div class="workbench" id="workbench">
           <aside class="workbench-sessions panel">
-            <div class="workbench-sessions-head panel-header">
-              <h3>Konuşmalar</h3>
-              <span class="badge" id="session-count-badge">0</span>
+            <div class="workbench-sessions-head panel-header panel-header-split">
+              <div class="session-bulk-left">
+                <h3>Konuşmalar</h3>
+                <span class="badge" id="session-count-badge">0</span>
+              </div>
+              <div class="session-bulk-toolbar header-toolbar">
+                <label class="bulk-select-all muted-small">
+                  <input type="checkbox" id="feedback-session-select-all" /> Tümü
+                </label>
+                <button id="feedback-session-delete-btn" class="btn danger btn-sm" type="button" disabled>Sil</button>
+              </div>
             </div>
             <div id="feedback-session-list" class="session-list-scroll"></div>
           </aside>
@@ -159,7 +167,15 @@
       <section id="view-sessions" class="hidden">
         <div class="detail-grid">
           <div class="panel">
-            <div class="panel-header"><h3>Konuşmalar</h3></div>
+            <div class="panel-header panel-header-split">
+              <h3>Konuşmalar</h3>
+              <div class="session-bulk-toolbar header-toolbar">
+                <label class="bulk-select-all muted-small">
+                  <input type="checkbox" id="session-select-all" /> Tümü
+                </label>
+                <button id="session-delete-btn" class="btn danger btn-sm" type="button" disabled>Sil</button>
+              </div>
+            </div>
             <div id="session-list"></div>
           </div>
           <div class="panel">
