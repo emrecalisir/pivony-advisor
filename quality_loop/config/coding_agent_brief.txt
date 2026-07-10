@@ -14,7 +14,9 @@ Coding task JSON çıktısında her fix için:
 - `file` — repo içi göreli yol (örn. src/core/prompts.py)
 - `qa_issue_index` — QA raporu `issues[]` dizisindeki 0-tabanlı indeks
 - `issue_fixed` / `issue` — kısa açıklama
-- `deploy_status` — success | skipped | failed (applied için)
+- `deploy_status` — success | skipped | failed (applied için; tool commit sonrası `committed_and_pushed` yazar)
+
+Git: `QUALITY_LOOP_ALLOW_GIT_PUSH=true` ise her fix sonrası otomatik commit+push yapılır; `commit_hash` ve `commit_message` snapshot'a kaydedilir ve İyileştirmeler UI'da gösterilir.
 
 Atlanan fix'lerde `reason` ile neden yazılamadığını belirt.
 

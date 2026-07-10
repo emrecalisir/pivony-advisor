@@ -876,6 +876,17 @@ header p { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.84rem; }
   color: #b8c9e8;
   border-color: rgba(184, 201, 232, 0.25);
 }
+.chip.commit {
+  background: rgba(62, 207, 142, 0.12);
+  color: var(--success);
+  border-color: rgba(62, 207, 142, 0.3);
+  font-family: ui-monospace, monospace;
+}
+.fix-commit-msg {
+  margin: 0.25rem 0 0;
+  font-family: ui-monospace, monospace;
+  font-size: 0.76rem;
+}
 .fix-card-head .chip.critical { color: var(--danger); border-color: rgba(255, 107, 122, 0.35); }
 .fix-card-head .chip.high { color: #ff9f6b; }
 .fix-card-head .chip.medium { color: var(--warning); }

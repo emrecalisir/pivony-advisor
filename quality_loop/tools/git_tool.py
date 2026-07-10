@@ -79,7 +79,7 @@ class ApplyAndDeployTool(BaseTool):
         job_id = os.environ.get("QUALITY_LOOP_JOB_ID", "").strip()
         if job_id:
             try:
-                from quality_loop.fix_snapshots import record_fix_snapshot
+                from quality_loop.fix_snapshots import annotate_fix_snapshot, record_fix_snapshot
 
                 snap = record_fix_snapshot(job_id, rel, before, new_content, repo=repo_slug)
                 if snap.get("diff"):
@@ -93,9 +93,25 @@ class ApplyAndDeployTool(BaseTool):
             results.append(
                 "⊘ git push skipped (set QUALITY_LOOP_ALLOW_GIT_PUSH=true to enable)"
             )
+            if job_id:
+                try:
+                    from quality_loop.fix_snapshots import annotate_fix_snapshot
+
+                    annotate_fix_snapshot(
+                        job_id,
+                        rel,
+                        repo=repo_slug,
+                        git_push_status="skipped",
+                        commit_hash=None,
+                        commit_message=None,
+                    )
+                except Exception:
+                    pass
             return "\n".join(results)
 
         commit_msg = f"[quality-loop] {commit_message.strip()}"
+        commit_hash: str | None = None
+        git_push_status = "failed"
         cmds = [
             ["git", "-C", str(repo), "add", rel],
             ["git", "-C", str(repo), "commit", "-m", commit_msg],
@@ -104,8 +120,50 @@ class ApplyAndDeployTool(BaseTool):
         for cmd in cmds:
             proc = subprocess.run(cmd, capture_output=True, text=True)
             if proc.returncode != 0:
+                if job_id:
+                    try:
+                        from quality_loop.fix_snapshots import annotate_fix_snapshot
+
+                        annotate_fix_snapshot(
+                            job_id,
+                            rel,
+                            repo=repo_slug,
+                            commit_hash=commit_hash,
+                            commit_message=commit_msg if commit_hash else None,
+                            git_push_status="failed",
+                        )
+                    except Exception:
+                        pass
                 return "\n".join(results) + f"\nGit error ({' '.join(cmd)}): {proc.stderr}"
             results.append(f"✓ {cmd[2]}")
+            if cmd[2] == "commit":
+                rev = subprocess.run(
+                    ["git", "-C", str(repo), "rev-parse", "--short", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                )
+                if rev.returncode == 0 and rev.stdout.strip():
+                    commit_hash = rev.stdout.strip()
+            if cmd[2] == "push":
+                git_push_status = "success"
+
+        if job_id:
+            try:
+                from quality_loop.fix_snapshots import annotate_fix_snapshot
+
+                annotate_fix_snapshot(
+                    job_id,
+                    rel,
+                    repo=repo_slug,
+                    commit_hash=commit_hash,
+                    commit_message=commit_msg,
+                    git_push_status=git_push_status,
+                )
+            except Exception as exc:
+                results.append(f"⚠ git metadata snapshot failed: {exc}")
+
+        if commit_hash:
+            results.append(f"✓ commit {commit_hash}")
 
         if not _deploy_allowed():
             results.append(

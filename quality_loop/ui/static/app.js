@@ -325,9 +325,34 @@ function renderIssues(issues, { compact = false } = {}) {
     .join("")}</div>`;
 }
 
+function deployStatusChip(status) {
+  const s = String(status || "unknown").toLowerCase();
+  const labels = {
+    committed_and_pushed: ["success", "commit + push"],
+    committed_not_pushed: ["warn", "commit (push yok)"],
+    commit_push_failed: ["warn", "push başarısız"],
+    file_written: ["success", "dosyaya yazıldı"],
+    success: ["success", "uygulandı"],
+    applied: ["success", "uygulandı"],
+    deployed: ["success", "uygulandı"],
+    skipped: ["warn", "öneri — uygulanmadı"],
+    not_applied: ["warn", "öneri — uygulanmadı"],
+  };
+  const entry = labels[s];
+  if (entry) {
+    return `<span class="chip ${entry[0]}">${esc(entry[1])}</span>`;
+  }
+  return `<span class="chip">${esc(status || "unknown")}</span>`;
+}
+
 function fixMetaChips(f) {
   const chips = [];
   if (f.repo) chips.push(`<span class="chip repo">${esc(f.repo)}</span>`);
+  if (f.commit_hash) {
+    chips.push(
+      `<span class="chip commit" title="${esc(f.commit_message || "")}">${esc(f.commit_hash)}</span>`
+    );
+  }
   if (f.qa_issue_index != null && f.qa_issue_index !== "") {
     const n = Number(f.qa_issue_index);
     chips.push(
@@ -346,13 +371,7 @@ function renderFixes(fixes, { showScenarios = true, showDiffs = false } = {}) {
   if (!applied.length && !skipped.length) return `<div class="empty">Fix kaydı yok</div>`;
   const appliedHtml = applied
     .map((f) => {
-      const deploy = String(f.deploy_status || "unknown").toLowerCase();
-      const deployChip =
-        deploy === "skipped" || deploy === "not_applied"
-          ? `<span class="chip warn">öneri — uygulanmadı</span>`
-          : deploy === "success" || deploy === "deployed" || deploy === "applied"
-            ? `<span class="chip success">uygulandı</span>`
-            : `<span class="chip">${esc(f.deploy_status || "unknown")}</span>`;
+      const deployChip = deployStatusChip(f.deploy_status);
       const stats =
         f.lines_added != null || f.lines_removed != null
           ? `<span class="muted-small fix-stats">+${f.lines_added || 0} / -${f.lines_removed || 0} satır</span>`
@@ -370,6 +389,7 @@ function renderFixes(fixes, { showScenarios = true, showDiffs = false } = {}) {
         ${stats}
       </div>
       <p class="fix-desc">${esc(f.issue_fixed || f.qa_issue_description || "")}</p>
+      ${f.commit_message ? `<p class="muted-small fix-commit-msg">${esc(f.commit_message)}</p>` : ""}
       ${diffBlock}
     </article>`;
     })
@@ -399,8 +419,13 @@ function renderFixes(fixes, { showScenarios = true, showDiffs = false } = {}) {
         </div>`
       : "";
   const note =
-    applied.some((f) => String(f.deploy_status || "").toLowerCase() === "skipped")
-      ? `<p class="fix-note muted-small">Coding Agent fix önerdi; sunucuda <code>QUALITY_LOOP_ALLOW_GIT_PUSH</code> kapalı olduğu için dosyalara yazılmadı.</p>`
+    applied.some(
+      (f) =>
+        ["skipped", "not_applied"].includes(String(f.deploy_status || "").toLowerCase()) &&
+        !f.commit_hash &&
+        !f.diff
+    )
+      ? `<p class="fix-note muted-small">Coding Agent fix önerdi; dosyaya yazılmadı veya git kapalı.</p>`
       : "";
   return `${note}${appliedHtml}${skipped.length ? `<div class="meta-block"><h4>Atlanan</h4><div class="fix-skipped-list">${skippedHtml}</div></div>` : ""}${scenarioHtml}`;
 }

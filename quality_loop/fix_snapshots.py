@@ -120,6 +120,42 @@ def record_fix_snapshot(
     return entry
 
 
+def annotate_fix_snapshot(
+    job_id: str,
+    file_path: str,
+    *,
+    repo: str | None = None,
+    **fields: Any,
+) -> dict[str, Any]:
+    """Merge git/commit metadata onto an existing snapshot entry."""
+    if not job_id or not fields:
+        return {}
+    inferred_repo, rel = split_repo_file(file_path)
+    repo_slug = repo or inferred_repo
+    rel_path = rel or file_path
+    path = _manifest_path(job_id)
+    if not path.exists():
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            rows = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    key = _snapshot_key(repo_slug, rel_path)
+    updated: dict[str, Any] = {}
+    for i, row in enumerate(rows):
+        row_key = _snapshot_key(row.get("repo"), str(row.get("file") or ""))
+        if row_key == key or (not row.get("repo") and row.get("file") == rel_path):
+            merged = {**row, **fields}
+            rows[i] = merged
+            updated = merged
+            break
+    if updated:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(rows, f, ensure_ascii=False, indent=2)
+    return updated
+
+
 def load_snapshots(job_id: str | None) -> dict[str, dict[str, Any]]:
     if not job_id:
         return {}
@@ -209,6 +245,20 @@ def _normalize_fix_row(row: dict[str, Any], qa_report: dict[str, Any] | None) ->
     return out
 
 
+def _infer_deploy_status(row: dict[str, Any]) -> str | None:
+    push = (row.get("git_push_status") or "").lower()
+    if row.get("commit_hash"):
+        if push == "success":
+            return "committed_and_pushed"
+        if push == "failed":
+            return "commit_push_failed"
+        if push == "skipped":
+            return "committed_not_pushed"
+    if row.get("diff") or row.get("lines_added"):
+        return "file_written"
+    return None
+
+
 def enrich_fixes(
     fixes: dict[str, Any] | None,
     *,
@@ -233,6 +283,9 @@ def enrich_fixes(
             row.setdefault("lines_added", snap.get("lines_added"))
             row.setdefault("lines_removed", snap.get("lines_removed"))
             row.setdefault("recorded_at", snap.get("recorded_at"))
+            row.setdefault("commit_hash", snap.get("commit_hash"))
+            row.setdefault("commit_message", snap.get("commit_message"))
+            row.setdefault("git_push_status", snap.get("git_push_status"))
         elif rel and not row.get("diff"):
             diff = git_diff_for_file(rel, repo=repo if isinstance(repo, str) else None)
             if diff:
@@ -241,6 +294,9 @@ def enrich_fixes(
                 row["lines_added"] = added
                 row["lines_removed"] = removed
                 row["diff_source"] = "git_worktree"
+        inferred = _infer_deploy_status(row)
+        if inferred:
+            row["deploy_status"] = inferred
         applied.append(row)
     out["fixes_applied"] = applied
     skipped = []
