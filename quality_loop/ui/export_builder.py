@@ -208,6 +208,86 @@ def build_conversation_export_markdown(
     return "\n".join(lines).strip() + "\n"
 
 
+def build_improvements_export_json(
+    *,
+    session_id: str,
+    meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    meta = meta or {}
+    fixes = meta.get("fixes") if isinstance(meta.get("fixes"), dict) else {}
+    applied = fixes.get("fixes_applied") or []
+    skipped = fixes.get("fixes_skipped") or []
+    return {
+        "exported_at": datetime.now(tz=timezone.utc).isoformat(),
+        "product": "pivony-quality-loop-improvements",
+        "session_id": session_id,
+        "sector": meta.get("sector"),
+        "user_email": meta.get("user_email"),
+        "user_id": meta.get("user_id"),
+        "job_id": meta.get("job_id"),
+        "run_id": meta.get("run_id"),
+        "turn_count": meta.get("turn_count"),
+        "summary": meta.get("summary"),
+        "qa_report": meta.get("qa_report") if isinstance(meta.get("qa_report"), dict) else None,
+        "fixes": fixes,
+        "stats": {
+            "applied_count": len(applied),
+            "skipped_count": len(skipped),
+            "next_test_scenarios": fixes.get("next_test_scenarios") or [],
+        },
+    }
+
+
+def build_improvements_export_markdown(
+    *,
+    session_id: str,
+    meta: dict[str, Any] | None = None,
+) -> str:
+    payload = build_improvements_export_json(session_id=session_id, meta=meta)
+    fixes = payload.get("fixes") or {}
+    applied = fixes.get("fixes_applied") or []
+    skipped = fixes.get("fixes_skipped") or []
+    lines = [
+        "# Pivony Quality Loop — Coding Agent",
+        f"Session: {session_id}",
+        f"Exported: {datetime.now().strftime('%d %B %Y %H:%M')}",
+    ]
+    if payload.get("run_id"):
+        lines.append(f"Run: {payload['run_id']}")
+    lines.append(f"Applied: {len(applied)} · Skipped: {len(skipped)}")
+    if applied:
+        lines.extend(["", "## Applied fixes"])
+        for i, fix in enumerate(applied):
+            lines.append(f"### {i + 1}. {fix.get('file', '?')}")
+            if fix.get("repo"):
+                lines.append(f"- Repo: {fix['repo']}")
+            if fix.get("deploy_status"):
+                lines.append(f"- Deploy: {fix['deploy_status']}")
+            if fix.get("qa_issue_index") is not None:
+                lines.append(f"- QA issue #: {int(fix['qa_issue_index']) + 1}")
+            if fix.get("issue_fixed"):
+                lines.append(f"- {fix['issue_fixed']}")
+            if fix.get("commit_hash"):
+                lines.append(f"- Commit: {fix['commit_hash']}")
+            if fix.get("lines_added") is not None or fix.get("lines_removed") is not None:
+                lines.append(f"- Diff: +{fix.get('lines_added', 0)} / -{fix.get('lines_removed', 0)} lines")
+    if skipped:
+        lines.extend(["", "## Skipped fixes"])
+        for i, skip in enumerate(skipped):
+            file = skip.get("file", "N/A") if isinstance(skip, dict) else "N/A"
+            issue = skip.get("issue", str(skip)) if isinstance(skip, dict) else str(skip)
+            reason = skip.get("reason", "") if isinstance(skip, dict) else ""
+            lines.append(f"### {i + 1}. {file}")
+            lines.append(f"- {issue}")
+            if reason:
+                lines.append(f"- Reason: {reason}")
+    scenarios = fixes.get("next_test_scenarios") or []
+    if scenarios:
+        lines.extend(["", "## Next test scenarios"])
+        lines.extend(f"- {s}" for s in scenarios)
+    return "\n".join(lines).strip() + "\n"
+
+
 def build_qa_export_json(
     *,
     session_id: str,
@@ -258,6 +338,7 @@ def export_filename(
     labels = {
         "qa": "pivony-quality-loop-qa",
         "conversation": "pivony-quality-loop-conversation",
+        "improvements": "pivony-quality-loop-improvements",
         "all": "pivony-quality-loop-full",
     }
     prefix = labels.get(kind, "pivony-quality-loop")
@@ -292,13 +373,23 @@ def export_payload_from_session_detail(
     if scope == "qa":
         payload = build_qa_export_json(session_id=session_id, meta=meta)
         return payload, messages
+    if scope == "improvements":
+        payload = build_improvements_export_json(session_id=session_id, meta=meta)
+        return payload, messages
     conversation_meta = dict(meta)
     if scope == "conversation":
         conversation_meta["qa_report"] = None
+        conversation_meta["fixes"] = None
+        conversation_meta["summary"] = None
     payload = build_conversation_export_json(
         session_id=session_id,
         title=title,
         messages=messages,
         meta=conversation_meta,
     )
+    if scope == "all":
+        if isinstance(meta.get("fixes"), dict):
+            payload["fixes"] = meta["fixes"]
+        if isinstance(meta.get("summary"), dict):
+            payload["summary"] = meta["summary"]
     return payload, messages

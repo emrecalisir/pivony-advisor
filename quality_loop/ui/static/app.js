@@ -1733,6 +1733,13 @@ function hasQaExportData(ctx = exportContext) {
   return Boolean(qa?.overall_verdict || qa?.issues?.length || qa?.priority_fix);
 }
 
+function hasFixesExportData(ctx = exportContext) {
+  const fixes = ctx?.meta?.fixes;
+  const applied = fixes?.fixes_applied || [];
+  const skipped = fixes?.fixes_skipped || [];
+  return Boolean(applied.length || skipped.length);
+}
+
 function getActiveWorkbenchTab() {
   const btn = document.querySelector(".workbench-tabs .tab-btn.active");
   return btn?.dataset?.tab || "conversation";
@@ -1763,6 +1770,8 @@ async function refreshExportContextForSession(sessionId) {
   const payload = buildExportPayloadFromDetail(detail, {
     run_id: detail.run_id,
     qa_report: detail.qa_report,
+    fixes: detail.fixes,
+    summary: detail.summary,
   });
   setExportContext(payload);
   return payload;
@@ -1770,7 +1779,7 @@ async function refreshExportContextForSession(sessionId) {
 
 async function refreshExportContext() {
   const tab = getActiveWorkbenchTab();
-  if (tab === "run-qa" && activeSessionId) {
+  if ((tab === "run-qa" || tab === "run-fixes") && activeSessionId) {
     const detail = await api(`/api/sessions/${encodeURIComponent(activeSessionId)}`);
     const runId = detail.run_id || detail.linked_runs?.[0]?.run_id || null;
     if (runId) {
@@ -1779,6 +1788,8 @@ async function refreshExportContext() {
     const payload = buildExportPayloadFromDetail(detail, {
       run_id: detail.run_id,
       qa_report: detail.qa_report,
+      fixes: detail.fixes,
+      summary: detail.summary,
     });
     setExportContext(payload);
     return payload;
@@ -1795,6 +1806,7 @@ async function refreshExportContext() {
 function updateExportModalState() {
   const hasConv = Boolean(exportContext?.messages?.length);
   const hasQa = hasQaExportData();
+  const hasFixes = hasFixesExportData();
   const qaHint = document.getElementById("export-qa-hint");
   if (qaHint) {
     if (hasQa) {
@@ -1811,8 +1823,22 @@ function updateExportModalState() {
           : "Bu session için QA raporu yok";
     }
   }
+  const fixesHint = document.getElementById("export-fixes-hint");
+  if (fixesHint) {
+    if (hasFixes) {
+      const applied = (exportContext?.meta?.fixes?.fixes_applied || []).length;
+      const skipped = (exportContext?.meta?.fixes?.fixes_skipped || []).length;
+      fixesHint.textContent = `${applied} uygulanan · ${skipped} atlanan`;
+    } else {
+      fixesHint.textContent =
+        getActiveWorkbenchTab() === "run-fixes"
+          ? "Coding agent çıktısı yüklenemedi"
+          : "Bu session için coding agent kaydı yok";
+    }
+  }
   document.getElementById("export-qa-section")?.classList.toggle("export-unavailable", !hasQa);
-  document.getElementById("export-full-section")?.classList.toggle("export-unavailable", !hasConv || !hasQa);
+  document.getElementById("export-fixes-section")?.classList.toggle("export-unavailable", !hasFixes);
+  document.getElementById("export-full-section")?.classList.toggle("export-unavailable", !hasConv);
   for (const id of [
     "export-conversation-json-btn",
     "export-conversation-md-btn",
@@ -1822,6 +1848,9 @@ function updateExportModalState() {
   }
   for (const id of ["export-qa-json-btn", "export-qa-md-btn"]) {
     document.getElementById(id)?.toggleAttribute("disabled", !hasQa);
+  }
+  for (const id of ["export-fixes-json-btn", "export-fixes-md-btn"]) {
+    document.getElementById(id)?.toggleAttribute("disabled", !hasFixes);
   }
 }
 
@@ -1862,6 +1891,7 @@ function setExportContext(ctx) {
     if (sid) parts.push(shortSessionId(sid));
     if (ctx?.messages?.length) parts.push(`${ctx.messages.length} mesaj`);
     if (hasQaExportData(ctx)) parts.push("QA raporu");
+    if (hasFixesExportData(ctx)) parts.push("Coding Agent");
     subtitle.textContent = parts.join(" · ");
   }
 }
@@ -1884,8 +1914,8 @@ function buildExportPayloadFromDetail(detail, extra = {}) {
       job_id: extra.job_id || null,
       turn_count: turns.length,
       qa_report: detail.qa_report || extra.qa_report || null,
-      fixes: extra.fixes || null,
-      summary: extra.summary || null,
+      fixes: detail.fixes || extra.fixes || null,
+      summary: detail.summary || extra.summary || null,
       ...extra,
     },
   };
@@ -1899,8 +1929,8 @@ async function openExportModal() {
     alert(`Export verisi yüklenemedi: ${err.message}`);
     return;
   }
-  if (!exportContext?.messages?.length && !hasQaExportData()) {
-    alert("İndirilebilir konuşma veya QA verisi yok.");
+  if (!exportContext?.messages?.length && !hasQaExportData() && !hasFixesExportData()) {
+    alert("İndirilebilir konuşma, QA veya Coding Agent verisi yok.");
     return;
   }
   updateExportModalState();
@@ -2000,6 +2030,56 @@ async function downloadExportQaMarkdown() {
   } catch (err) {
     alert(`QA indirilemedi: ${err.message}`);
   }
+}
+
+async function downloadExportFixesJson() {
+  const sid = currentExportSessionId();
+  const runId = currentExportRunId();
+  if (!sid) return;
+  try {
+    await downloadSessionImprovementsExport(sid, "json", runId);
+    closeExportModal();
+  } catch (err) {
+    alert(`Coding Agent indirilemedi: ${err.message}`);
+  }
+}
+
+async function downloadExportFixesMarkdown() {
+  const sid = currentExportSessionId();
+  const runId = currentExportRunId();
+  if (!sid) return;
+  try {
+    await downloadSessionImprovementsExport(sid, "md", runId);
+    closeExportModal();
+  } catch (err) {
+    alert(`Coding Agent indirilemedi: ${err.message}`);
+  }
+}
+
+async function downloadSessionImprovementsExport(sessionId, format = "json", runId = null) {
+  const ext = format === "md" ? "export.md" : "export.json";
+  const params = new URLSearchParams();
+  if (runId) params.set("run_id", runId);
+  const qs = params.toString();
+  const url = apiUrl(
+    `api/sessions/${encodeURIComponent(sessionId)}/improvements/${ext}${qs ? `?${qs}` : ""}`
+  );
+  const res = await fetch(url, fetchOptions());
+  if (res.status === 401) {
+    showLoginOverlay();
+    throw new Error("login required");
+  }
+  if (!res.ok) throw new Error(`${res.status}`);
+  const blob = await res.blob();
+  const disp = res.headers.get("Content-Disposition") || "";
+  const match = disp.match(/filename="?([^";]+)"?/);
+  const fallback = `pivony-quality-loop-improvements-${String(sessionId).slice(0, 24)}.${format === "md" ? "md" : "json"}`;
+  const filename = match?.[1] || fallback;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 async function downloadExportFullJson() {
@@ -2616,6 +2696,8 @@ async function boot() {
   document.getElementById("export-conversation-md-btn")?.addEventListener("click", downloadExportConversationMarkdown);
   document.getElementById("export-qa-json-btn")?.addEventListener("click", downloadExportQaJson);
   document.getElementById("export-qa-md-btn")?.addEventListener("click", downloadExportQaMarkdown);
+  document.getElementById("export-fixes-json-btn")?.addEventListener("click", downloadExportFixesJson);
+  document.getElementById("export-fixes-md-btn")?.addEventListener("click", downloadExportFixesMarkdown);
   document.getElementById("export-full-json-btn")?.addEventListener("click", downloadExportFullJson);
   document.getElementById("export-close")?.addEventListener("click", closeExportModal);
   document.getElementById("export-modal")?.addEventListener("click", (e) => {

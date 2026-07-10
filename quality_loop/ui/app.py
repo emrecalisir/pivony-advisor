@@ -31,6 +31,8 @@ from quality_loop.ui.auth import (
 )
 from quality_loop.ui.export_builder import (
     build_conversation_export_markdown,
+    build_improvements_export_json,
+    build_improvements_export_markdown,
     build_qa_export_json,
     export_filename,
     export_payload_from_session_detail,
@@ -412,17 +414,19 @@ def _qa_export_meta_from_session_detail(
     run = _run_for_session_export(session_id, run_id=run_id, job_id=job_id)
     if run:
         return _qa_export_meta_from_run(run)
+    inline_fixes = detail.get("fixes") if isinstance(detail.get("fixes"), dict) else None
+    inline_qa = detail.get("qa_report") if isinstance(detail.get("qa_report"), dict) else None
     return {
         "session_id": session_id,
         "sector": detail.get("sector"),
         "user_email": detail.get("user_email"),
         "user_id": detail.get("user_id"),
-        "run_id": detail.get("run_id"),
+        "run_id": detail.get("run_id") or detail.get("cycle_id"),
         "job_id": job_id,
         "turn_count": detail.get("turn_count"),
-        "qa_report": detail.get("qa_report"),
-        "fixes": None,
-        "summary": None,
+        "qa_report": inline_qa,
+        "fixes": enrich_fixes(inline_fixes, job_id=job_id, qa_report=inline_qa) if inline_fixes else None,
+        "summary": detail.get("summary") if isinstance(detail.get("summary"), dict) else None,
     }
 
 
@@ -959,16 +963,63 @@ def export_run_qa_markdown(run_id: str) -> Response:
     )
 
 
+@app.get("/api/sessions/{session_id}/improvements/export.json")
+def export_session_improvements_json(
+    session_id: str,
+    job_id: str | None = None,
+    run_id: str | None = None,
+) -> Response:
+    detail = _load_session_detail(session_id)
+    meta = _qa_export_meta_from_session_detail(detail, run_id=run_id, job_id=job_id)
+    session_id_str = str(detail.get("session_id") or session_id)
+    payload = build_improvements_export_json(session_id=session_id_str, meta=meta)
+    filename = export_filename(
+        session_id_str,
+        "json",
+        kind="improvements",
+        run_id=str(meta.get("run_id") or "") or None,
+    )
+    body = json.dumps(payload, ensure_ascii=False, indent=2)
+    return Response(
+        content=body,
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/sessions/{session_id}/improvements/export.md")
+def export_session_improvements_markdown(
+    session_id: str,
+    job_id: str | None = None,
+    run_id: str | None = None,
+) -> Response:
+    detail = _load_session_detail(session_id)
+    meta = _qa_export_meta_from_session_detail(detail, run_id=run_id, job_id=job_id)
+    session_id_str = str(detail.get("session_id") or session_id)
+    markdown = build_improvements_export_markdown(session_id=session_id_str, meta=meta)
+    filename = export_filename(
+        session_id_str,
+        "md",
+        kind="improvements",
+        run_id=str(meta.get("run_id") or "") or None,
+    )
+    return Response(
+        content=markdown,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.get("/api/sessions/{session_id}/export.json")
 def export_session_json(
     session_id: str,
     job_id: str | None = None,
     run_id: str | None = None,
-    scope: Literal["conversation", "qa", "all"] = "conversation",
+    scope: Literal["conversation", "qa", "all", "improvements"] = "conversation",
 ) -> Response:
     detail = _load_session_detail(session_id)
     extra: dict[str, Any] = {"job_id": job_id}
-    if scope in ("qa", "all"):
+    if scope in ("qa", "all", "improvements"):
         qa_meta = _qa_export_meta_from_session_detail(detail, run_id=run_id, job_id=job_id)
         extra.update(
             {
@@ -979,7 +1030,11 @@ def export_session_json(
             }
         )
     payload, _ = export_payload_from_session_detail(detail, extra, scope=scope)
-    kind = "qa" if scope == "qa" else "conversation" if scope == "conversation" else "all"
+    kind = {
+        "qa": "qa",
+        "improvements": "improvements",
+        "conversation": "conversation",
+    }.get(scope, "all")
     filename = export_filename(
         session_id,
         "json",
