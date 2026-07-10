@@ -643,6 +643,10 @@ function renderRunHero(run) {
 }
 
 function renderRunDetail(run, targetId, { includeSession = true } = {}) {
+  const el = document.getElementById(targetId);
+  if (!el) return;
+  el.classList.remove("empty");
+
   const qa = run.qa_report || {};
   const fixes = run.fixes || {};
   const verdict = qa.overall_verdict || run.summary?.verdict;
@@ -656,7 +660,7 @@ function renderRunDetail(run, targetId, { includeSession = true } = {}) {
         ? `<div class="empty">Session dosyası henüz sync edilmemiş: ${esc(run.session_id)}</div>`
         : "";
 
-  document.getElementById(targetId).innerHTML = `
+  el.innerHTML = `
     <div class="run-detail">
       ${
         includeSession && run.session_detail?.turns?.length
@@ -696,6 +700,18 @@ function renderRunDetail(run, targetId, { includeSession = true } = {}) {
         qa_report: run.qa_report,
       })
     );
+  }
+
+  if (targetId === "feedback-run-block") {
+    const title = document.getElementById("feedback-run-tab-title");
+    const meta = document.getElementById("feedback-run-tab-meta");
+    if (title) title.textContent = run.run_id || "Run & QA";
+    if (meta) {
+      const parts = [fmtDate(run.created_at)];
+      if (verdict) parts.push(verdict);
+      if (run.summary?.issue_count != null) parts.push(`${run.summary.issue_count} issue`);
+      meta.textContent = parts.filter(Boolean).join(" · ");
+    }
   }
 }
 
@@ -780,6 +796,10 @@ function setWorkbenchTab(tabName) {
     const active = panel.id === `tab-${tabName}`;
     panel.classList.toggle("active", active);
     panel.classList.toggle("hidden", !active);
+    if (active) {
+      const body = panel.querySelector(".tab-panel-body");
+      if (body) body.scrollTop = 0;
+    }
   });
 }
 
@@ -973,9 +993,14 @@ async function loadFeedback() {
   }
 
   if (!runs.length) {
+    runBlock.classList.add("empty");
     runBlock.innerHTML =
       `<div class="empty">Henüz run yok. Sunucuda loop çalıştır veya <button class="btn" onclick="document.getElementById('sync-hint-btn').click()">sync</button> yap.</div>`;
     document.getElementById("feedback-run-meta").textContent = "";
+    const runTabTitle = document.getElementById("feedback-run-tab-title");
+    const runTabMeta = document.getElementById("feedback-run-tab-meta");
+    if (runTabTitle) runTabTitle.textContent = "Run & QA";
+    if (runTabMeta) runTabMeta.textContent = "";
     if (sessions[0]) {
       autoSelectSessionItem("feedback-session-list", sessions[0].session_id);
     }
