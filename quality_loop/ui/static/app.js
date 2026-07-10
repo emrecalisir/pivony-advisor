@@ -993,8 +993,12 @@ function setWorkbenchTab(tabName) {
       if (body) body.scrollTop = 0;
     }
   });
-  if (tabName === "run-qa" && activeRunDetail) {
-    syncRunExportContext(activeRunDetail);
+  if (tabName === "run-qa" && activeSessionId) {
+    if (!activeRunDetail || activeRunDetail.session_id !== activeSessionId) {
+      loadSessionRunPanel(activeSessionId).catch(() => {});
+    } else {
+      syncRunExportContext(activeRunDetail);
+    }
   }
 }
 
@@ -1141,10 +1145,82 @@ function sessionListMeta(item) {
   return `${start}${end !== start ? ` → ${end}` : ""}${sector}${preview ? ` · ${preview}` : ""}`;
 }
 
-async function selectSessionById(sessionId, { runId = null, listContainerId = null } = {}) {
+function renderSessionQaEmptyState(detail, { statusLabel = null } = {}) {
+  const sid = detail?.session_id || "—";
+  const turns = detail?.turn_count || 0;
+  const label = statusLabel || (turns > 0 ? "QA yok" : "Boş session");
+  const reason =
+    label === "Devam ediyor"
+      ? "Quality loop döngüsü hâlâ çalışıyor. QA raporu döngü bitince burada görünür."
+      : turns > 0
+        ? "Konuşma kaydedildi ama tamamlanmış bir döngü (run) yok. Döngü hata vermiş veya henüz QA aşamasına geçilmemiş olabilir."
+        : "Bu session'da henüz konuşma yok.";
+  return `
+    <div class="qa-empty-state">
+      <h4>Bu session için QA yok</h4>
+      <p>${esc(reason)}</p>
+      <div class="meta-block muted-small">
+        <p><strong>Session</strong> = tek konuşma kaydı (CX Director ↔ Advisor mesajları)</p>
+        <p><strong>Run</strong> = o session üzerinde tamamlanan tam döngü (konuşma + QA + coding)</p>
+        <p>Session: <code>${esc(sid)}</code> · ${esc(turns)} tur · ${esc(label)}</p>
+      </div>
+    </div>`;
+}
+
+function updateSessionRunChrome(sessionId, { runDetail = null, emptyReason = null } = {}) {
+  const meta = document.getElementById("feedback-run-meta");
+  const runTabMeta = document.getElementById("feedback-run-tab-meta");
+  if (runDetail?.run_id) {
+    const qa = runDetail.qa_report || {};
+    const verdict = qa.overall_verdict || runDetail.summary?.verdict;
+    if (meta) {
+      meta.textContent = `${runDetail.run_id} · ${shortSessionId(sessionId)} · ${fmtDate(runDetail.created_at)}`;
+    }
+    if (runTabMeta) {
+      const parts = [verdict, runDetail.summary?.issue_count != null ? `${runDetail.summary.issue_count} issue` : null];
+      runTabMeta.textContent = parts.filter(Boolean).join(" · ");
+    }
+    return;
+  }
+  activeRunId = null;
+  activeRunDetail = null;
+  if (meta) meta.textContent = `${shortSessionId(sessionId)} · QA yok`;
+  if (runTabMeta) runTabMeta.textContent = emptyReason || "Tamamlanmış döngü yok";
+}
+
+async function loadSessionRunPanel(sessionId, sessionDetail = null, { statusLabel = null } = {}) {
+  const runBlock = document.getElementById("feedback-run-block");
+  if (!sessionId || !runBlock) return;
+
+  let detail = sessionDetail;
+  if (!detail) {
+    detail = await api(`/api/sessions/${encodeURIComponent(sessionId)}`);
+  }
+  const runId = detail.run_id || detail.linked_runs?.[0]?.run_id || null;
+
+  if (!runId) {
+    runBlock.classList.add("empty");
+    runBlock.innerHTML = renderSessionQaEmptyState(detail, { statusLabel });
+    updateSessionRunChrome(sessionId, { emptyReason: statusLabel || "QA raporu yok" });
+    return;
+  }
+
+  try {
+    const run = await api(`/api/runs/${encodeURIComponent(runId)}`);
+    renderRunDetail(run, "feedback-run-block", { includeSession: false });
+    updateSessionRunChrome(sessionId, { runDetail: run });
+  } catch (err) {
+    runBlock.classList.add("empty");
+    runBlock.innerHTML = `<div class="empty">Run yüklenemedi: ${esc(err.message)}</div>`;
+    updateSessionRunChrome(sessionId, { emptyReason: "Run yüklenemedi" });
+  }
+}
+
+async function selectSessionById(sessionId, { runId = null, listContainerId = null, statusLabel = null } = {}) {
   if (!sessionId) return;
   const detail = await api(`/api/sessions/${encodeURIComponent(sessionId)}`);
-  showSessionDetail(detail, { runId, listContainerId });
+  showSessionDetail(detail, { runId: runId || detail.run_id, listContainerId });
+  await loadSessionRunPanel(sessionId, detail, { statusLabel });
 }
 
 function autoSelectSessionItem(containerId, sessionId) {
@@ -1157,7 +1233,7 @@ function autoSelectSessionItem(containerId, sessionId) {
 }
 
 async function loadFeedback({ preserveActiveJob = false } = {}) {
-  const [runs, sessions] = await Promise.all([api("/api/runs"), api("/api/sessions")]);
+  const sessions = await api("/api/sessions");
   const runBlock = document.getElementById("feedback-run-block");
   const countBadge = document.getElementById("session-count-badge");
   if (countBadge) countBadge.textContent = String(sessions.length);
@@ -1173,8 +1249,8 @@ async function loadFeedback({ preserveActiveJob = false } = {}) {
       sessions,
       async (item) => {
         await selectSessionById(item.session_id, {
-          runId: runs[0]?.run_id,
           listContainerId: "feedback-session-list",
+          statusLabel: item.status_label,
         });
         setWorkbenchTab("conversation");
       },
@@ -1184,7 +1260,7 @@ async function loadFeedback({ preserveActiveJob = false } = {}) {
     );
   }
 
-  if (!runs.length) {
+  if (!sessions.length) {
     runBlock.classList.add("empty");
     runBlock.innerHTML =
       `<div class="empty">Henüz session yok. Sunucuda döngü çalıştır veya <button class="btn" onclick="document.getElementById('sync-hint-btn').click()">sync</button> yap.</div>`;
@@ -1193,27 +1269,26 @@ async function loadFeedback({ preserveActiveJob = false } = {}) {
     const runTabMeta = document.getElementById("feedback-run-tab-meta");
     if (runTabTitle) runTabTitle.textContent = "QA & İyileştirme";
     if (runTabMeta) runTabMeta.textContent = "";
-    if (sessions[0]) {
-      autoSelectSessionItem("feedback-session-list", sessions[0].session_id);
-    }
     return;
   }
-
-  const latest = runs[0];
-  const detail = await api(`/api/runs/${encodeURIComponent(latest.run_id)}`);
-  if (!keepActiveChrome) {
-    document.getElementById("feedback-run-meta").textContent = `${detail.run_id} · ${fmtDate(detail.created_at)}`;
-  }
-  renderRunDetail(detail, "feedback-run-block", { includeSession: false });
 
   const preferId =
     (keepActiveChrome && activeLiveJob?.session_id) ||
     activeSessionId ||
-    detail.session_id ||
     sessions[0]?.session_id;
   if (preferId) {
     highlightSessionInList(preferId);
-    if (!keepActiveChrome) autoSelectSessionItem("feedback-session-list", preferId);
+    if (!keepActiveChrome) {
+      if (activeSessionId && activeSessionId === preferId) {
+        const sessionItem = sessions.find((s) => s.session_id === preferId);
+        await selectSessionById(preferId, {
+          listContainerId: "feedback-session-list",
+          statusLabel: sessionItem?.status_label,
+        });
+      } else {
+        autoSelectSessionItem("feedback-session-list", preferId);
+      }
+    }
   }
 }
 
@@ -1439,8 +1514,18 @@ async function refreshExportContextForSession(sessionId) {
 
 async function refreshExportContext() {
   const tab = getActiveWorkbenchTab();
-  if (tab === "run-qa" && (activeRunId || activeRunDetail?.run_id)) {
-    return refreshExportContextFromRun(activeRunId || activeRunDetail.run_id);
+  if (tab === "run-qa" && activeSessionId) {
+    const detail = await api(`/api/sessions/${encodeURIComponent(activeSessionId)}`);
+    const runId = detail.run_id || detail.linked_runs?.[0]?.run_id || null;
+    if (runId) {
+      return refreshExportContextFromRun(runId);
+    }
+    const payload = buildExportPayloadFromDetail(detail, {
+      run_id: detail.run_id,
+      qa_report: detail.qa_report,
+    });
+    setExportContext(payload);
+    return payload;
   }
   if (activeSessionId) {
     return refreshExportContextForSession(activeSessionId);
