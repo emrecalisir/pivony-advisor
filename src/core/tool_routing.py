@@ -184,7 +184,8 @@ def validated_tool_invoke(
                     "error": "invalid_tool_arguments",
                     "tool": tool.name,
                     "detail": str(exc),
-                    "instruction": "Fix arguments and retry the tool once.",
+                    "user_message": "Maalesef, talebinizdeki bazı parametreleri anlayamadım. Lütfen isteğinizi farklı bir şekilde ifade etmeyi veya detayları netleştirmeyi deneyin.",
+                    "instruction": "Fix arguments and retry the tool once. The `user_message` field contains a user-friendly version of the error.",
                 },
                 ensure_ascii=False,
             )
@@ -192,16 +193,29 @@ def validated_tool_invoke(
         return tool.invoke(args)
     except Exception as exc:
         logger.error("Tool %s invocation failed: %s", tool.name, exc, exc_info=True)
+        detail_str = str(exc).lower()
+        user_facing_error = "Yanıt oluşturulurken bir hata oluştu. Lütfen tekrar deneyin."
+
+        if "no data" in detail_str or "veri bulunamadı" in detail_str or "insufficient data" in detail_str or "yeterli veri bulunamadı" in detail_str:
+            user_facing_error = f"Maalesef, '{tool.name}' aracı için istenen dönemde veya kapsamda veri bulunamadı. Lütfen farklı bir dönem veya dashboard seçmeyi deneyin."
+        elif "timeout" in detail_str or "connection refused" in detail_str or "connection reset" in detail_str or "service unavailable" in detail_str:
+            user_facing_error = "Maalesef, sistemlerimize erişirken geçici bir sorun oluştu. Lütfen kısa bir süre sonra tekrar deneyin."
+        elif "permission denied" in detail_str or "unauthorized" in detail_str:
+            user_facing_error = "Bu işlemi gerçekleştirmek için yetkiniz bulunmamaktadır. Lütfen yöneticinizle iletişime geçin."
+
+
         return json.dumps(
             {
                 "error": "tool_execution_failed",
                 "tool": tool.name,
                 "detail": str(exc),
+                "user_message": user_facing_error,
                 "instruction": (
                     "The tool encountered an error during execution. Analyze the "
                     "'detail' to understand the cause and retry with corrected "
                     "parameters if applicable, or inform the user about the issue. "
-                    "Do NOT endlessly retry the same failed call."
+                    "Do NOT endlessly retry the same failed call. "
+                    "The `user_message` field contains a user-friendly version of the error."
                 ),
             },
             ensure_ascii=False,
