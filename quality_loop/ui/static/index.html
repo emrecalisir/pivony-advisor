@@ -30,7 +30,6 @@
     <div class="header-actions">
       <button id="start-run-btn" class="btn primary" title="Yeni bir konuşma session'ı başlatır (CX → QA → coding döngüsü)">▶ Yeni Session Başlat</button>
       <button id="stop-run-btn" class="btn danger hidden">■ Durdur</button>
-      <button id="export-btn" class="btn ghost hidden" title="Export conversation">↓ Export</button>
       <button id="refresh-btn" class="btn ghost" type="button" title="Listeleri ve canlı durumu yenile">↻ Yenile</button>
       <button id="sync-hint-btn" class="btn ghost" title="Lokal makineye outputs sync komutu">⇅ Sync</button>
       <button id="settings-btn" class="btn ghost">⚙ Ayarlar</button>
@@ -99,9 +98,7 @@
               </div>
               <div class="workbench-toolbar-right header-toolbar">
                 <button id="toolbar-stop-btn" class="btn danger btn-sm hidden" type="button">■ Durdur</button>
-                <button id="toolbar-conversation-json-btn" class="btn primary btn-sm hidden" type="button">↓ Konuşma</button>
-                <button id="toolbar-qa-json-btn" class="btn secondary btn-sm hidden" type="button">↓ QA</button>
-                <button id="toolbar-export-btn" class="btn ghost btn-sm hidden" type="button">↓ Export</button>
+                <button id="toolbar-export-btn" class="btn ghost btn-sm hidden" type="button" title="Seçili session için indir">↓ Export</button>
                 <a id="toolbar-langsmith-link" class="btn secondary btn-sm hidden" href="#" target="_blank" rel="noopener">LangSmith ↗</a>
               </div>
             </div>
@@ -169,9 +166,7 @@
             <div class="panel-header panel-header-split">
               <h3 id="session-title">Detay</h3>
               <div id="session-toolbar" class="header-toolbar hidden">
-                <button id="session-conversation-json-btn" class="btn primary btn-sm" type="button">↓ Konuşma</button>
-                <button id="session-qa-json-btn" class="btn secondary btn-sm" type="button">↓ QA</button>
-                <button id="session-export-btn" class="btn ghost btn-sm hidden" type="button">↓ Export</button>
+                <button id="session-export-btn" class="btn ghost btn-sm hidden" type="button" title="Seçili session için indir">↓ Export</button>
               </div>
             </div>
             <div id="session-detail" class="panel-body empty">Bir session seçin</div>
@@ -197,14 +192,34 @@
 
   <div id="export-modal" class="modal hidden">
     <div class="modal-card export-modal-card">
-      <h3>Export Conversation</h3>
+      <h3>Session Export</h3>
       <p class="muted-small" id="export-modal-subtitle"></p>
-      <div class="export-actions">
-        <button id="export-conversation-json-btn" class="btn primary" type="button">Konuşma — JSON</button>
-        <button id="export-conversation-md-btn" class="btn outline" type="button">Konuşma — Markdown</button>
-        <button id="export-qa-json-btn" class="btn secondary" type="button">QA — JSON</button>
-        <button id="export-qa-md-btn" class="btn ghost" type="button">QA — Markdown</button>
+
+      <div class="export-section">
+        <h4 class="export-section-title">Konuşma</h4>
+        <div class="export-actions">
+          <button id="export-conversation-json-btn" class="btn primary" type="button">JSON</button>
+          <button id="export-conversation-md-btn" class="btn outline" type="button">Markdown</button>
+        </div>
       </div>
+
+      <div class="export-section" id="export-qa-section">
+        <h4 class="export-section-title">QA Raporu</h4>
+        <p class="muted-small" id="export-qa-hint"></p>
+        <div class="export-actions">
+          <button id="export-qa-json-btn" class="btn secondary" type="button">JSON</button>
+          <button id="export-qa-md-btn" class="btn ghost" type="button">Markdown</button>
+        </div>
+      </div>
+
+      <div class="export-section" id="export-full-section">
+        <h4 class="export-section-title">Tam paket</h4>
+        <p class="muted-small">Konuşma + QA tek dosyada</p>
+        <div class="export-actions">
+          <button id="export-full-json-btn" class="btn outline" type="button">JSON</button>
+        </div>
+      </div>
+
       <p class="muted-small export-hint">Power user shortcut: <span id="export-shortcut-hint">⌘⇧E</span></p>
       <button id="export-close" class="btn ghost" type="button">Kapat</button>
     </div>

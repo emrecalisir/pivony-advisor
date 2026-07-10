@@ -387,6 +387,28 @@ header p { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.84rem; }
   margin-bottom: 0.75rem;
 }
 .export-modal-card h3 { margin: 0 0 0.35rem; }
+.export-section {
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+}
+.export-section:first-of-type {
+  margin-top: 0.75rem;
+  padding-top: 0;
+  border-top: none;
+}
+.export-section-title {
+  margin: 0 0 0.45rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.export-section.export-unavailable {
+  opacity: 0.45;
+}
+.export-section.export-unavailable .export-actions button {
+  pointer-events: none;
+}
 .export-actions {
   display: flex;
   flex-wrap: wrap;

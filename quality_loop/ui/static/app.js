@@ -733,13 +733,6 @@ function renderRunDetail(run, targetId, { includeSession = true } = {}) {
 
   el.innerHTML = `
     <div class="run-detail">
-      ${
-        includeSession && run.session_detail?.turns?.length
-          ? `<div class="detail-toolbar">
-        <button class="btn ghost" type="button" onclick="openExportModal()">↓ Export</button>
-      </div>`
-          : ""
-      }
       <div class="chips run-chips">
         <span class="chip">${esc(run.mode)}</span>
         ${run.iteration != null ? `<span class="chip">iter ${esc(run.iteration)}</span>` : ""}
@@ -846,9 +839,7 @@ function showSessionDetail(detail, { runId = null, listContainerId = null } = {}
     sessionDetail.innerHTML = body;
   }
   if (sessionToolbar) sessionToolbar.classList.remove("hidden");
-  document.getElementById("session-export-btn")?.classList.remove("hidden");
-  updateExportButtons(Boolean(detail.turns?.length));
-  updateWorkbenchToolbar({ hasSession: Boolean(detail.turns?.length) });
+  updateExportButtons();
 
   if (listContainerId) {
     const el = document.getElementById(listContainerId);
@@ -949,8 +940,11 @@ function showLiveWaitingInConversation(job, sessionId = job.session_id) {
     feedbackDetail.classList.remove("empty");
     feedbackDetail.innerHTML = renderLiveWaitingPanel(job);
   }
-  if (sessionId) highlightSessionInList(sessionId);
-  updateWorkbenchToolbar({ job, hasSession: false });
+  if (sessionId) {
+    activeSessionId = sessionId;
+    highlightSessionInList(sessionId);
+  }
+  updateWorkbenchToolbar({ job });
 }
 
 function syncLiveSessionFromJob(job) {
@@ -966,10 +960,7 @@ function syncLiveSessionFromJob(job) {
       runId: job.job_id,
       listContainerId: "feedback-session-list",
     });
-    updateWorkbenchToolbar({
-      job,
-      hasSession: true,
-    });
+    updateWorkbenchToolbar({ job });
     if (grew) scrollLiveContainersToBottom();
     return;
   }
@@ -1007,12 +998,9 @@ function setWorkbenchTab(tabName) {
   }
 }
 
-function updateWorkbenchToolbar({ job = activeLiveJob, hasSession = false } = {}) {
+function updateWorkbenchToolbar({ job = activeLiveJob } = {}) {
   const liveBadge = document.getElementById("workbench-live-badge");
   const stopBtn = document.getElementById("toolbar-stop-btn");
-  const conversationJsonBtn = document.getElementById("toolbar-conversation-json-btn");
-  const qaJsonBtn = document.getElementById("toolbar-qa-json-btn");
-  const exportBtn = document.getElementById("toolbar-export-btn");
   const langsmithLink = document.getElementById("toolbar-langsmith-link");
   const liveTabBtn = document.getElementById("live-tab-btn");
 
@@ -1032,13 +1020,7 @@ function updateWorkbenchToolbar({ job = activeLiveJob, hasSession = false } = {}
 
   stopBtn?.classList.toggle("hidden", !running);
   liveTabBtn?.classList.toggle("hidden", !running);
-
-  const canExport = hasSession || Boolean(exportContext?.messages?.length);
-  const canQa = hasQaExportData();
-  conversationJsonBtn?.classList.toggle("hidden", !canExport);
-  qaJsonBtn?.classList.toggle("hidden", !canQa);
-  exportBtn?.classList.toggle("hidden", !canExport && !canQa);
-  document.getElementById("export-btn")?.classList.toggle("hidden", !canExport && !canQa);
+  updateExportButtons();
 
   if (langsmithLink) {
     if (running && job.langsmith_url) {
@@ -1243,6 +1225,10 @@ async function loadRuns() {
     async (item) => {
       const detail = await api(`/api/runs/${encodeURIComponent(item.run_id)}`);
       document.getElementById("run-title").textContent = item.run_id;
+      if (detail.session_id) {
+        activeSessionId = detail.session_id;
+        updateExportButtons();
+      }
       renderRunDetail(detail, "run-detail");
     },
     (r) => `${r.run_id} (${r.mode}${r.iteration != null ? ` #${r.iteration}` : ""})`
@@ -1416,6 +1402,50 @@ function hasQaExportData(ctx = exportContext) {
   return Boolean(qa?.overall_verdict || qa?.issues?.length || qa?.priority_fix);
 }
 
+function canExportSession() {
+  return Boolean(activeSessionId);
+}
+
+function updateExportButtons() {
+  const visible = canExportSession();
+  document.getElementById("toolbar-export-btn")?.classList.toggle("hidden", !visible);
+  document.getElementById("session-export-btn")?.classList.toggle("hidden", !visible);
+}
+
+async function refreshExportContextForSession(sessionId) {
+  if (!sessionId) return null;
+  const detail = await api(`/api/sessions/${encodeURIComponent(sessionId)}`);
+  const payload = buildExportPayloadFromDetail(detail, {
+    run_id: detail.run_id,
+    qa_report: detail.qa_report,
+  });
+  setExportContext(payload);
+  return payload;
+}
+
+function updateExportModalState() {
+  const hasConv = Boolean(exportContext?.messages?.length);
+  const hasQa = hasQaExportData();
+  const qaHint = document.getElementById("export-qa-hint");
+  if (qaHint) {
+    qaHint.textContent = hasQa
+      ? `${(exportContext?.meta?.qa_report?.issues || []).length} issue · ${exportContext?.meta?.qa_report?.overall_verdict || "—"}`
+      : "Bu session için QA raporu yok";
+  }
+  document.getElementById("export-qa-section")?.classList.toggle("export-unavailable", !hasQa);
+  document.getElementById("export-full-section")?.classList.toggle("export-unavailable", !hasConv || !hasQa);
+  for (const id of [
+    "export-conversation-json-btn",
+    "export-conversation-md-btn",
+    "export-full-json-btn",
+  ]) {
+    document.getElementById(id)?.toggleAttribute("disabled", !hasConv);
+  }
+  for (const id of ["export-qa-json-btn", "export-qa-md-btn"]) {
+    document.getElementById(id)?.toggleAttribute("disabled", !hasQa);
+  }
+}
+
 function syncRunExportContext(run) {
   if (!run) return;
   activeRunId = run.run_id || null;
@@ -1441,25 +1471,14 @@ function syncRunExportContext(run) {
       summary: run.summary || null,
     },
   });
-  updateExportButtons(Boolean(messages.length || hasQaExportData()));
-  updateWorkbenchToolbar({
-    hasSession: Boolean(messages.length || hasQaExportData()),
-  });
-}
-
-function updateExportButtons(hasMessages) {
-  const canQa = hasQaExportData();
-  document.getElementById("export-btn")?.classList.toggle("hidden", !hasMessages && !canQa);
-  document.getElementById("session-export-btn")?.classList.toggle("hidden", !hasMessages && !canQa);
-  document.getElementById("toolbar-qa-json-btn")?.classList.toggle("hidden", !canQa);
 }
 
 function setExportContext(ctx) {
   exportContext = ctx;
-  updateExportButtons(Boolean(ctx?.messages?.length || hasQaExportData(ctx)));
   const subtitle = document.getElementById("export-modal-subtitle");
   if (subtitle) {
-    const parts = [ctx?.title].filter(Boolean);
+    const sid = ctx?.sessionId || ctx?.meta?.session_id || activeSessionId;
+    const parts = [sid ? shortSessionId(sid) : null].filter(Boolean);
     if (ctx?.messages?.length) parts.push(`${ctx.messages.length} mesaj`);
     if (hasQaExportData(ctx)) parts.push("QA raporu");
     subtitle.textContent = parts.join(" · ");
@@ -1491,8 +1510,19 @@ function buildExportPayloadFromDetail(detail, extra = {}) {
   };
 }
 
-function openExportModal() {
-  if (!exportContext?.messages?.length && !hasQaExportData()) return;
+async function openExportModal() {
+  if (!activeSessionId) return;
+  try {
+    await refreshExportContextForSession(activeSessionId);
+  } catch (err) {
+    alert(`Session yüklenemedi: ${err.message}`);
+    return;
+  }
+  if (!exportContext?.messages?.length && !hasQaExportData()) {
+    alert("Bu session için indirilebilir konuşma veya QA verisi yok.");
+    return;
+  }
+  updateExportModalState();
   document.getElementById("export-modal")?.classList.remove("hidden");
 }
 
@@ -1500,28 +1530,67 @@ function closeExportModal() {
   document.getElementById("export-modal")?.classList.add("hidden");
 }
 
-function downloadExportConversationJson() {
-  if (!exportContext) return;
-  window.QlExport.downloadConversationJson(exportContext);
-  closeExportModal();
+function currentExportSessionId() {
+  return activeSessionId || exportContext?.sessionId || exportContext?.meta?.session_id || null;
 }
 
-function downloadExportConversationMarkdown() {
-  if (!exportContext) return;
-  window.QlExport.downloadConversationMarkdown(exportContext);
-  closeExportModal();
+function currentExportRunId() {
+  return exportContext?.meta?.run_id || null;
 }
 
-function downloadExportQaJson() {
-  if (!exportContext) return;
-  window.QlExport.downloadQaJson(exportContext);
-  closeExportModal();
+async function downloadExportConversationJson() {
+  const sid = currentExportSessionId();
+  if (!sid) return;
+  try {
+    await downloadSessionExport(sid, "json", null, "conversation", currentExportRunId());
+    closeExportModal();
+  } catch (err) {
+    alert(`Konuşma indirilemedi: ${err.message}`);
+  }
 }
 
-function downloadExportQaMarkdown() {
-  if (!exportContext) return;
-  window.QlExport.downloadQaMarkdown(exportContext);
-  closeExportModal();
+async function downloadExportConversationMarkdown() {
+  const sid = currentExportSessionId();
+  if (!sid) return;
+  try {
+    await downloadSessionExport(sid, "md", null, "conversation", currentExportRunId());
+    closeExportModal();
+  } catch (err) {
+    alert(`Konuşma indirilemedi: ${err.message}`);
+  }
+}
+
+async function downloadExportQaJson() {
+  const sid = currentExportSessionId();
+  if (!sid) return;
+  try {
+    await downloadSessionExport(sid, "json", null, "qa", currentExportRunId());
+    closeExportModal();
+  } catch (err) {
+    alert(`QA indirilemedi: ${err.message}`);
+  }
+}
+
+async function downloadExportQaMarkdown() {
+  const sid = currentExportSessionId();
+  if (!sid) return;
+  try {
+    await downloadSessionExport(sid, "md", null, "qa", currentExportRunId());
+    closeExportModal();
+  } catch (err) {
+    alert(`QA indirilemedi: ${err.message}`);
+  }
+}
+
+async function downloadExportFullJson() {
+  const sid = currentExportSessionId();
+  if (!sid) return;
+  try {
+    await downloadSessionExport(sid, "json", null, "all", currentExportRunId());
+    closeExportModal();
+  } catch (err) {
+    alert(`Tam paket indirilemedi: ${err.message}`);
+  }
 }
 
 function apiUrl(path) {
@@ -1557,7 +1626,9 @@ async function downloadSessionExport(
   const fallback =
     scope === "qa"
       ? `pivony-quality-loop-qa-${String(runId || sessionId).slice(0, 20)}.${format === "md" ? "md" : "json"}`
-      : `pivony-quality-loop-conversation-${String(sessionId).slice(0, 12)}.${format === "md" ? "md" : "json"}`;
+      : scope === "all"
+        ? `pivony-quality-loop-full-${String(sessionId).slice(0, 12)}.${format === "md" ? "md" : "json"}`
+        : `pivony-quality-loop-conversation-${String(sessionId).slice(0, 12)}.${format === "md" ? "md" : "json"}`;
   const filename = match?.[1] || fallback;
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -1565,80 +1636,6 @@ async function downloadSessionExport(
   a.click();
   URL.revokeObjectURL(a.href);
 }
-
-async function downloadRunQaExport(runId, format = "json") {
-  const ext = format === "md" ? "export.md" : "export.json";
-  const url = apiUrl(`api/runs/${encodeURIComponent(runId)}/qa/${ext}`);
-  const res = await fetch(url, fetchOptions());
-  if (res.status === 401) {
-    showLoginOverlay();
-    throw new Error("login required");
-  }
-  if (!res.ok) throw new Error(`${res.status}`);
-  const blob = await res.blob();
-  const disp = res.headers.get("Content-Disposition") || "";
-  const match = disp.match(/filename="?([^";]+)"?/);
-  const fallback = `pivony-quality-loop-qa-${String(runId).slice(0, 24)}.${format === "md" ? "md" : "json"}`;
-  const filename = match?.[1] || fallback;
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
-
-function downloadConversationJson(sessionId, jobId = null) {
-  const sid =
-    sessionId ||
-    exportContext?.sessionId ||
-    exportContext?.meta?.session_id ||
-    null;
-  if (!sid) return;
-  downloadSessionExport(
-    sid,
-    "json",
-    jobId || exportContext?.meta?.job_id || exportContext?.meta?.run_id || null,
-    "conversation"
-  ).catch((err) => alert(`Konuşma indirilemedi: ${err.message}`));
-}
-
-function downloadQaJson(sessionId, jobId = null, runId = null) {
-  const run = runId || exportContext?.meta?.run_id || activeRunId || null;
-  if (hasQaExportData() && (!run || exportContext?.meta?.run_id === run)) {
-    window.QlExport.downloadQaJson(exportContext);
-    return;
-  }
-  if (run) {
-    downloadRunQaExport(run).catch((err) => alert(`QA indirilemedi: ${err.message}`));
-    return;
-  }
-  const sid =
-    sessionId ||
-    exportContext?.sessionId ||
-    exportContext?.meta?.session_id ||
-    null;
-  if (!sid) return;
-  downloadSessionExport(
-    sid,
-    "json",
-    jobId || exportContext?.meta?.job_id || null,
-    "qa",
-    run
-  ).catch((err) => alert(`QA indirilemedi: ${err.message}`));
-}
-
-function downloadActiveConversationJson() {
-  downloadConversationJson(activeSessionId);
-}
-
-function downloadActiveQaJson() {
-  downloadQaJson(activeSessionId);
-}
-
-window.downloadConversationJson = downloadConversationJson;
-window.downloadQaJson = downloadQaJson;
-window.downloadActiveConversationJson = downloadActiveConversationJson;
-window.downloadActiveQaJson = downloadActiveQaJson;
 
 window.openExportModal = openExportModal;
 
@@ -1705,10 +1702,7 @@ function renderLiveRun(job) {
   const body = document.getElementById("live-run-body");
   activeLiveJob = job || null;
   updateRunButtons(job);
-  updateWorkbenchToolbar({
-    job,
-    hasSession: Boolean(exportContext?.messages?.length || job?.session_detail?.turns?.length),
-  });
+  updateWorkbenchToolbar({ job });
 
   if (!isJobLive(job)) {
     lastLiveTurnCount = 0;
@@ -2182,19 +2176,15 @@ async function boot() {
     document.getElementById("sync-modal").classList.add("hidden");
   });
 
-  document.getElementById("export-btn")?.addEventListener("click", openExportModal);
   document.getElementById("session-export-btn")?.addEventListener("click", openExportModal);
   document.getElementById("toolbar-export-btn")?.addEventListener("click", openExportModal);
-  document.getElementById("toolbar-conversation-json-btn")?.addEventListener("click", downloadActiveConversationJson);
-  document.getElementById("toolbar-qa-json-btn")?.addEventListener("click", downloadActiveQaJson);
-  document.getElementById("session-conversation-json-btn")?.addEventListener("click", downloadActiveConversationJson);
-  document.getElementById("session-qa-json-btn")?.addEventListener("click", downloadActiveQaJson);
   document.getElementById("toolbar-stop-btn")?.addEventListener("click", stopRun);
   initWorkbenchTabs();
   document.getElementById("export-conversation-json-btn")?.addEventListener("click", downloadExportConversationJson);
   document.getElementById("export-conversation-md-btn")?.addEventListener("click", downloadExportConversationMarkdown);
   document.getElementById("export-qa-json-btn")?.addEventListener("click", downloadExportQaJson);
   document.getElementById("export-qa-md-btn")?.addEventListener("click", downloadExportQaMarkdown);
+  document.getElementById("export-full-json-btn")?.addEventListener("click", downloadExportFullJson);
   document.getElementById("export-close")?.addEventListener("click", closeExportModal);
   document.getElementById("export-modal")?.addEventListener("click", (e) => {
     if (e.target?.id === "export-modal") closeExportModal();
@@ -2209,7 +2199,7 @@ async function boot() {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod || !e.shiftKey) return;
       if (e.key !== "e" && e.key !== "E") return;
-      if (!exportContext?.messages?.length && !hasQaExportData()) return;
+      if (!activeSessionId) return;
       e.preventDefault();
       openExportModal();
     },
