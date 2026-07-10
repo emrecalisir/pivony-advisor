@@ -777,6 +777,88 @@ header p { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.84rem; }
   line-height: 1.45;
   width: 100%;
 }
+
+.dashboard-selection-block {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.55rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  background: rgba(62, 207, 142, 0.08);
+  border: 1px solid rgba(62, 207, 142, 0.28);
+  width: 100%;
+}
+.dashboard-selection-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--success);
+}
+.dashboard-selection-name {
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+.dashboard-selection-id {
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.dashboard-picker-block {
+  margin-top: 0.65rem;
+  padding: 0.7rem 0.75rem;
+  border-radius: 10px;
+  background: rgba(91, 157, 255, 0.05);
+  border: 1px solid rgba(91, 157, 255, 0.22);
+  width: 100%;
+}
+.dashboard-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.55rem;
+}
+.dashboard-picker-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+.dashboard-picker-groups {
+  margin-bottom: 0.55rem;
+}
+.dashboard-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.45rem;
+}
+.dashboard-picker-item {
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  background: rgba(11, 16, 24, 0.45);
+  border: 1px solid var(--border);
+}
+.dashboard-picker-item.is-default {
+  border-color: rgba(91, 157, 255, 0.45);
+  box-shadow: 0 0 0 1px rgba(91, 157, 255, 0.12);
+}
+.dashboard-picker-name {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.dashboard-picker-meta {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 .reasoning-fold {
   width: 100%;
   border: 1px solid var(--border);

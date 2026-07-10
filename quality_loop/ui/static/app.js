@@ -471,6 +471,70 @@ function renderFixesSummary(fixes) {
     </section>`;
 }
 
+function normalizeDashboardPicker(picker) {
+  if (!picker || typeof picker !== "object") return null;
+  const dashboards = (picker.dashboards || []).filter((d) => d && d.id != null);
+  if (!dashboards.length) return null;
+  const groups = (picker.groups || []).filter((g) => g && g.id != null);
+  return {
+    dashboards,
+    groups,
+    default_dashboard_id: picker.default_dashboard_id,
+  };
+}
+
+function renderDashboardSelection(sel) {
+  if (!sel || sel.id == null) return "";
+  const name =
+    typeof sel.name === "string" && sel.name.trim()
+      ? sel.name.trim()
+      : `Dashboard ${sel.id}`;
+  return `
+    <div class="dashboard-selection-block">
+      <span class="dashboard-selection-label">CX Director seçimi</span>
+      <span class="dashboard-selection-name">${esc(name)}</span>
+      <span class="dashboard-selection-id">id ${esc(sel.id)}</span>
+    </div>`;
+}
+
+function renderDashboardPicker(picker) {
+  const norm = normalizeDashboardPicker(picker);
+  if (!norm) return "";
+  const groupMap = Object.fromEntries(norm.groups.map((g) => [g.id, g]));
+  const items = norm.dashboards
+    .map((d) => {
+      const group = d.group_id != null ? groupMap[d.group_id] : null;
+      const isDefault =
+        norm.default_dashboard_id != null && d.id === norm.default_dashboard_id;
+      const dashName = d.name || `Dashboard ${d.id}`;
+      return `
+        <div class="dashboard-picker-item${isDefault ? " is-default" : ""}">
+          <span class="dashboard-picker-name">${esc(dashName)}</span>
+          <span class="dashboard-picker-meta">
+            #${esc(d.id)}${group?.name ? ` · ${esc(group.name)}` : ""}${isDefault ? " · önerilen" : ""}
+          </span>
+        </div>`;
+    })
+    .join("");
+  const groupChips = norm.groups.length
+    ? `<div class="chips dashboard-picker-groups">${norm.groups
+        .map(
+          (g) =>
+            `<span class="chip muted-chip" style="${g.color ? `--chip-color:${esc(g.color)}` : ""}">${esc(g.name)}</span>`
+        )
+        .join("")}</div>`
+    : "";
+  return `
+    <div class="dashboard-picker-block">
+      <div class="dashboard-picker-head">
+        <span class="dashboard-picker-title">Dashboard seçenekleri</span>
+        <span class="muted-small">${esc(norm.dashboards.length)} dashboard</span>
+      </div>
+      ${groupChips}
+      <div class="dashboard-picker-grid">${items}</div>
+    </div>`;
+}
+
 function renderTurns(turns, autoIssues, { collapsibleReasoning = true } = {}) {
   const issueHtml = autoIssues?.length
     ? `<div class="meta-block"><h4>Otomatik Uyarılar</h4><div class="chips">${autoIssues
@@ -487,9 +551,9 @@ function renderTurns(turns, autoIssues, { collapsibleReasoning = true } = {}) {
       const userTs = fmtMessageTs(user.ts);
       const assistantTs = fmtMessageTs(assistant.ts);
       const dashSel = user.dashboardSelection;
-      const dashChip = dashSel
-        ? `<span class="chip tool">dashboard: ${esc(dashSel.name || dashSel.id)} (${esc(dashSel.id)})</span>`
-        : "";
+      const dashSelectionHtml = renderDashboardSelection(dashSel);
+      const dashPicker = assistant.dashboardPicker;
+      const dashPickerHtml = renderDashboardPicker(dashPicker);
       const followups = assistant.suggestedFollowups || [];
       const reasoningBlock = assistant.reasoning
         ? collapsibleReasoning
@@ -510,7 +574,7 @@ function renderTurns(turns, autoIssues, { collapsibleReasoning = true } = {}) {
                 ${userTs ? `<time class="chat-time">${esc(userTs)}</time>` : ""}
               </div>
               <div class="bubble user">${esc(user.content || "")}</div>
-              ${dashChip ? `<div class="chips msg-chips">${dashChip}</div>` : ""}
+              ${dashSelectionHtml}
             </div>
             <div class="avatar cx-avatar" title="CX Director">CX</div>
           </div>
@@ -522,6 +586,7 @@ function renderTurns(turns, autoIssues, { collapsibleReasoning = true } = {}) {
                 ${assistantTs ? `<time class="chat-time">${esc(assistantTs)}</time>` : ""}
               </div>
               <div class="bubble assistant">${esc(assistant.content || "(boş)")}</div>
+              ${dashPickerHtml}
               ${tools.length ? `<div class="chips msg-chips">${tools.map((t) => `<span class="chip tool">${esc(t)}</span>`).join("")}</div>` : ""}
               ${followups.length ? `<div class="followups msg-chips"><span class="muted-small">Önerilen:</span> ${followups.map((f) => `<span class="chip">${esc(f)}</span>`).join("")}</div>` : ""}
               ${assistant.guidance ? `<p class="guidance-box">${esc(assistant.guidance)}</p>` : ""}
@@ -548,6 +613,11 @@ function renderSessionHeader(detail) {
           return `${Math.floor(sec / 60)} dk ${sec % 60} sn`;
         })()
       : null;
+  const lockedDash = detail.last_dashboard_selection;
+  const lockedDashChip =
+    lockedDash && lockedDash.id != null
+      ? `<span class="chip tool" title="Kilitli dashboard">🔒 ${esc(lockedDash.name || `Dashboard ${lockedDash.id}`)} (#${esc(lockedDash.id)})</span>`
+      : "";
   return `
     <div class="session-header-card">
       <div class="session-header-top">
@@ -566,6 +636,7 @@ function renderSessionHeader(detail) {
         <span class="chip">${esc(detail.sector || "?")}</span>
         ${detail.user_email ? `<span class="chip">${esc(detail.user_email)}</span>` : ""}
         ${detail.user_id ? `<span class="chip muted-chip" title="Firebase ID">${esc(shortSessionId(detail.user_id))}</span>` : ""}
+        ${lockedDashChip}
       </div>
     </div>`;
 }
