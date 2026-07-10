@@ -1,4 +1,4 @@
-\"\"\"Streaming advisor agent with Gemini thinking tokens (Vertex AI).\"\"\"
+"""Streaming advisor agent with Gemini thinking tokens (Vertex AI)."""
 
 from __future__ import annotations
 
