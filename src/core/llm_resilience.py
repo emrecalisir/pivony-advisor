@@ -1,3 +1,4 @@
+
 """Safe LLM streaming with retry on empty turns and Vertex rate limits."""
 
 from __future__ import annotations
@@ -23,6 +24,11 @@ RATE_LIMIT_USER_MESSAGE = (
 )
 GENERIC_LLM_ERROR_MESSAGE = (
     "Yanıt oluşturulurken bir hata oluştu. Lütfen tekrar deneyin."
+)
+INVALID_FUNCTION_CALL_ARGUMENT_ERROR_MESSAGE = (
+    "Yapay zeka modelimizle iletişim sırasında bir sorun oluştu. "
+    "Komutlarınızın işlenmesinde beklenmedik bir hata meydana geldi. "
+    "Lütfen daha sonra tekrar deneyin veya farklı bir yaklaşımla sorunuzu tekrar sorun."
 )
 
 
@@ -86,6 +92,15 @@ def is_rate_limit_error(exc: BaseException) -> bool:
 def user_message_for_llm_error(exc: BaseException) -> str:
     if is_rate_limit_error(exc):
         return RATE_LIMIT_USER_MESSAGE
+
+    try:
+        from google.genai.errors import ClientError
+        if isinstance(exc, ClientError):
+            if exc.code == 400 and "function response parts is equal to the number of function call parts" in str(exc):
+                return INVALID_FUNCTION_CALL_ARGUMENT_ERROR_MESSAGE
+    except ImportError:
+        pass
+
     return GENERIC_LLM_ERROR_MESSAGE
 
 
