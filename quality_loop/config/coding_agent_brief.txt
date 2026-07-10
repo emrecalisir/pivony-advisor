@@ -18,7 +18,7 @@ Coding task JSON çıktısında her fix için:
 - `issue_fixed` / `issue` — kısa açıklama
 - `deploy_status` — file_written_and_valid | syntax_error | success | skipped | failed (applied için; tool commit sonrası `committed_and_pushed` yazar)
 
-Git: `QUALITY_LOOP_ALLOW_GIT_PUSH=true` ise her fix sonrası otomatik commit+push yapılır; `commit_hash` ve `commit_message` snapshot'a kaydedilir ve İyileştirmeler UI'da gösterilir.
+Git: Fix'ler her zaman `development` branch'ine yazılır (`QUALITY_LOOP_GIT_BRANCH`, varsayılan `development`). Job başında repo bu branch'e checkout edilir; push `origin/development`'a gider. `QUALITY_LOOP_ALLOW_GIT_PUSH=true` ise her fix sonrası otomatik commit+push yapılır; `commit_hash` ve `commit_message` snapshot'a kaydedilir ve İyileştirmeler UI'da gösterilir.
 
 Atlanan fix'lerde `reason` ile neden yazılamadığını belirt.
 

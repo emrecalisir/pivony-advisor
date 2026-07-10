@@ -12,6 +12,7 @@ from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 
 from quality_loop.apply_fix_write import validate_and_write_file
+from quality_loop.git_branch import ensure_git_branch, git_push_command, git_target_branch
 from quality_loop.repo_scope import (
     get_write_repo_root,
     list_scoped_repos,
@@ -81,6 +82,15 @@ class ApplyAndDeployTool(BaseTool):
         if not str(full_path).startswith(str(repo.resolve())):
             return f"Refusing to write outside repo: {file_path}"
 
+        branch = git_target_branch()
+        ok, detail = ensure_git_branch(repo, env=_git_env())
+        if not ok:
+            return (
+                f"✗ git_branch_error: {detail}\n"
+                f"Coding agent yalnızca `{branch}` branch'ine yazar; checkout başarısız."
+            )
+        branch_note = f"branch {branch}" if detail.startswith("on ") else detail
+
         full_path.parent.mkdir(parents=True, exist_ok=True)
         before = ""
         if full_path.exists():
@@ -94,7 +104,9 @@ class ApplyAndDeployTool(BaseTool):
                 f" for {full_path.name}:", f" for {repo_slug or 'repo'}/{rel}:"
             )
 
-        results = [f"✓ wrote {repo_slug or 'repo'}/{rel} (file_written_and_valid)"]
+        results = [
+            f"✓ wrote {repo_slug or 'repo'}/{rel} (file_written_and_valid, {branch_note})"
+        ]
 
         job_id = os.environ.get("QUALITY_LOOP_JOB_ID", "").strip()
         if job_id:
@@ -132,10 +144,11 @@ class ApplyAndDeployTool(BaseTool):
         commit_msg = f"[quality-loop] {commit_message.strip()}"
         commit_hash: str | None = None
         git_push_status = "failed"
+        push_cmd = git_push_command(repo)
         cmds = [
             ["git", "-C", str(repo), "add", rel],
             ["git", "-C", str(repo), "commit", "-m", commit_msg],
-            ["git", "-C", str(repo), "push"],
+            push_cmd,
         ]
         for cmd in cmds:
             proc = subprocess.run(cmd, capture_output=True, text=True, env=_git_env())
