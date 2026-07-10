@@ -8,6 +8,16 @@ Fix yazılacak repo: Mimari sayfasında seçilen write repo (varsayılan pivony-
 - Fix'ler minimal, odaklı ve tek soruna yönelik olsun
 - QA fix_hint dışındaki geniş refactor yapma
 
+## Fix çıktı formatı (zorunlu alanlar)
+Coding task JSON çıktısında her fix için:
+- `repo` — repo slug (örn. pivony-advisor, pivony-mcp)
+- `file` — repo içi göreli yol (örn. src/core/prompts.py)
+- `qa_issue_index` — QA raporu `issues[]` dizisindeki 0-tabanlı indeks
+- `issue_fixed` / `issue` — kısa açıklama
+- `deploy_status` — success | skipped | failed (applied için)
+
+Atlanan fix'lerde `reason` ile neden yazılamadığını belirt.
+
 ## Yasak repolar
 - **pivony-api / pivony-api-dev'e ASLA yazma** — ne apply_fix_and_deploy ne başka araçla
 - API/worker route değişikliği gerekiyorsa fixes_skipped'a yaz; kullanıcıya manuel API PR notu bırak

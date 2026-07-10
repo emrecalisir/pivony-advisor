@@ -27,6 +27,28 @@ def _manifest_path(job_id: str) -> Path:
     return SNAPSHOTS_DIR / _safe_job_id(job_id) / "manifest.json"
 
 
+def _snapshot_key(repo: str | None, file_path: str) -> str:
+    if repo:
+        return f"{repo}:{file_path}"
+    return file_path
+
+
+def split_repo_file(file_path: str) -> tuple[str | None, str]:
+    """Split agent file path into (repo_slug, path relative to repo root)."""
+    from quality_loop.repo_scope import read_scope
+
+    normalized = (file_path or "").strip().lstrip("/")
+    if not normalized:
+        return None, ""
+    scope = read_scope()
+    known = {r["id"] for r in scope.get("repos") or []}
+    if "/" in normalized:
+        prefix, rest = normalized.split("/", 1)
+        if prefix in known:
+            return prefix, rest
+    return scope.get("write_repo"), normalized
+
+
 def unified_diff(before: str, after: str, file_path: str) -> str:
     return "".join(
         difflib.unified_diff(
@@ -51,13 +73,24 @@ def _count_diff_lines(diff: str) -> tuple[int, int]:
     return added, removed
 
 
-def record_fix_snapshot(job_id: str, file_path: str, before: str, after: str) -> dict[str, Any]:
+def record_fix_snapshot(
+    job_id: str,
+    file_path: str,
+    before: str,
+    after: str,
+    *,
+    repo: str | None = None,
+) -> dict[str, Any]:
     if not job_id:
         return {}
-    diff = unified_diff(before, after, file_path)
+    inferred_repo, rel = split_repo_file(file_path)
+    repo_slug = repo or inferred_repo
+    rel_path = rel or file_path
+    diff = unified_diff(before, after, rel_path)
     added, removed = _count_diff_lines(diff)
     entry: dict[str, Any] = {
-        "file": file_path,
+        "file": rel_path,
+        "repo": repo_slug,
         "diff": diff,
         "lines_added": added,
         "lines_removed": removed,
@@ -72,9 +105,11 @@ def record_fix_snapshot(job_id: str, file_path: str, before: str, after: str) ->
                 rows = json.load(f)
         except (json.JSONDecodeError, OSError):
             rows = []
+    key = _snapshot_key(repo_slug, rel_path)
     replaced = False
     for i, row in enumerate(rows):
-        if row.get("file") == file_path:
+        row_key = _snapshot_key(row.get("repo"), str(row.get("file") or ""))
+        if row_key == key or (not row.get("repo") and row.get("file") == rel_path):
             rows[i] = entry
             replaced = True
             break
@@ -96,21 +131,39 @@ def load_snapshots(job_id: str | None) -> dict[str, dict[str, Any]]:
             rows = json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}
-    return {str(r.get("file")): r for r in rows if r.get("file")}
+    out: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        file_path = str(row.get("file") or "")
+        if not file_path:
+            continue
+        repo = row.get("repo")
+        out[_snapshot_key(repo, file_path)] = row
+        if file_path not in out:
+            out[file_path] = row
+    return out
 
 
-def _repo_root() -> Path:
+def _repo_root_for_slug(repo_slug: str | None) -> Path | None:
+    if repo_slug:
+        from quality_loop.repo_scope import repo_path
+
+        path = repo_path(repo_slug)
+        if path:
+            return path
     return Path(os.environ.get("PIVONY_REPO_ROOT", _PACKAGE_ROOT.parent))
 
 
-def git_diff_for_file(file_path: str) -> str | None:
-    repo = _repo_root()
-    full = (repo / file_path).resolve()
-    if not str(full).startswith(str(repo.resolve())) or not full.exists():
+def git_diff_for_file(file_path: str, *, repo: str | None = None) -> str | None:
+    repo_slug, rel = split_repo_file(file_path)
+    repo_root = _repo_root_for_slug(repo or repo_slug)
+    if not repo_root:
         return None
-    for args in (["diff", "HEAD", "--", file_path], ["diff", "--", file_path]):
+    full = (repo_root / rel).resolve()
+    if not str(full).startswith(str(repo_root.resolve())) or not full.exists():
+        return None
+    for args in (["diff", "HEAD", "--", rel], ["diff", "--", rel]):
         proc = subprocess.run(
-            ["git", "-C", str(repo), *args],
+            ["git", "-C", str(repo_root), *args],
             capture_output=True,
             text=True,
         )
@@ -119,7 +172,49 @@ def git_diff_for_file(file_path: str) -> str | None:
     return None
 
 
-def enrich_fixes(fixes: dict[str, Any] | None, *, job_id: str | None = None) -> dict[str, Any] | None:
+def _qa_issue_at(qa_report: dict[str, Any] | None, index: Any) -> dict[str, Any] | None:
+    issues = (qa_report or {}).get("issues") or []
+    if index is None:
+        return None
+    try:
+        idx = int(index)
+    except (TypeError, ValueError):
+        return None
+    if 0 <= idx < len(issues) and isinstance(issues[idx], dict):
+        return issues[idx]
+    return None
+
+
+def _normalize_fix_row(row: dict[str, Any], qa_report: dict[str, Any] | None) -> dict[str, Any]:
+    out = dict(row)
+    raw_file = str(out.get("file") or "")
+    if raw_file and raw_file != "N/A":
+        repo_slug, rel_path = split_repo_file(raw_file)
+        if repo_slug and not out.get("repo"):
+            out["repo"] = repo_slug
+        if rel_path and raw_file != rel_path:
+            out["file"] = rel_path
+            out.setdefault("file_raw", raw_file)
+    idx = out.get("qa_issue_index")
+    if idx is None and out.get("qa_issue_id") is not None:
+        idx = out.get("qa_issue_id")
+        out["qa_issue_index"] = idx
+    issue = _qa_issue_at(qa_report, idx)
+    if issue:
+        out.setdefault("qa_issue_index", idx)
+        out.setdefault("qa_severity", issue.get("severity"))
+        out.setdefault("qa_category", issue.get("category"))
+        out.setdefault("qa_issue_description", issue.get("description"))
+        out.setdefault("qa_message_index", issue.get("message_index"))
+    return out
+
+
+def enrich_fixes(
+    fixes: dict[str, Any] | None,
+    *,
+    job_id: str | None = None,
+    qa_report: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     if not fixes:
         return fixes
     snapshots = load_snapshots(job_id)
@@ -128,15 +223,18 @@ def enrich_fixes(fixes: dict[str, Any] | None, *, job_id: str | None = None) -> 
     for item in fixes.get("fixes_applied") or []:
         if not isinstance(item, dict):
             continue
-        row = dict(item)
-        snap = snapshots.get(row.get("file") or "")
+        row = _normalize_fix_row(item, qa_report)
+        repo = row.get("repo")
+        rel = str(row.get("file") or "")
+        snap = snapshots.get(_snapshot_key(repo, rel)) or snapshots.get(rel)
         if snap:
+            row.setdefault("repo", snap.get("repo"))
             row.setdefault("diff", snap.get("diff"))
             row.setdefault("lines_added", snap.get("lines_added"))
             row.setdefault("lines_removed", snap.get("lines_removed"))
             row.setdefault("recorded_at", snap.get("recorded_at"))
-        elif row.get("file") and not row.get("diff"):
-            diff = git_diff_for_file(str(row["file"]))
+        elif rel and not row.get("diff"):
+            diff = git_diff_for_file(rel, repo=repo if isinstance(repo, str) else None)
             if diff:
                 added, removed = _count_diff_lines(diff)
                 row["diff"] = diff
@@ -148,8 +246,11 @@ def enrich_fixes(fixes: dict[str, Any] | None, *, job_id: str | None = None) -> 
     skipped = []
     for item in fixes.get("fixes_skipped") or []:
         if isinstance(item, str):
-            skipped.append({"file": "N/A", "issue": item, "reason": ""})
+            skipped.append(_normalize_fix_row({"file": "N/A", "issue": item, "reason": ""}, qa_report))
         elif isinstance(item, dict):
-            skipped.append(item)
+            row = dict(item)
+            if "issue" not in row and row.get("reason"):
+                row["issue"] = row.get("reason")
+            skipped.append(_normalize_fix_row(row, qa_report))
     out["fixes_skipped"] = skipped
     return out

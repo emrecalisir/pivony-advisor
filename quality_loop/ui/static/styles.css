@@ -866,7 +866,20 @@ header p { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.84rem; }
   font-size: 0.82rem;
   line-height: 1.45;
 }
-.chip.warn { background: rgba(245, 184, 77, 0.15); color: var(--warning); }
+.chip.repo {
+  background: rgba(91, 157, 255, 0.12);
+  color: #9fd0ff;
+  border-color: rgba(91, 157, 255, 0.3);
+}
+.chip.qa-ref {
+  background: rgba(184, 201, 232, 0.1);
+  color: #b8c9e8;
+  border-color: rgba(184, 201, 232, 0.25);
+}
+.fix-card-head .chip.critical { color: var(--danger); border-color: rgba(255, 107, 122, 0.35); }
+.fix-card-head .chip.high { color: #ff9f6b; }
+.fix-card-head .chip.medium { color: var(--warning); }
+.fix-card-head .chip.low { color: var(--muted); }
 
 .issue-card h5, .fix-card h5 { margin: 0 0 0.35rem; font-size: 0.86rem; }
 .issue-card p { margin: 0.25rem 0; font-size: 0.82rem; color: var(--muted); }

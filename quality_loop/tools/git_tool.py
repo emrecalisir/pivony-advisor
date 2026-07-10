@@ -56,6 +56,15 @@ class ApplyAndDeployTool(BaseTool):
                 "Only the Mimari'de seçilen write repo'ya yazılabilir."
             )
         repo, rel = resolved
+        from quality_loop.repo_scope import read_scope, repo_path
+
+        repo_slug = None
+        scope = read_scope()
+        for slug in [scope.get("write_repo"), *(scope.get("extra_write_repos") or [])]:
+            path = repo_path(slug or "")
+            if path and path.resolve() == repo.resolve():
+                repo_slug = slug
+                break
         full_path = (repo / rel).resolve()
         if not str(full_path).startswith(str(repo.resolve())):
             return f"Refusing to write outside repo: {file_path}"
@@ -65,14 +74,14 @@ class ApplyAndDeployTool(BaseTool):
         if full_path.exists():
             before = full_path.read_text(encoding="utf-8")
         full_path.write_text(new_content, encoding="utf-8")
-        results = [f"✓ wrote {rel}"]
+        results = [f"✓ wrote {repo_slug or 'repo'}/{rel}"]
 
         job_id = os.environ.get("QUALITY_LOOP_JOB_ID", "").strip()
         if job_id:
             try:
                 from quality_loop.fix_snapshots import record_fix_snapshot
 
-                snap = record_fix_snapshot(job_id, rel, before, new_content)
+                snap = record_fix_snapshot(job_id, rel, before, new_content, repo=repo_slug)
                 if snap.get("diff"):
                     results.append(
                         f"Δ snapshot +{snap.get('lines_added', 0)}/-{snap.get('lines_removed', 0)}"

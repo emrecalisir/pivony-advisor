@@ -103,11 +103,20 @@ def create_tasks(
             "JSON formatında:\n"
             "{\n"
             "  'fixes_applied': [\n"
-            "    {'file': '...', 'issue_fixed': '...', 'deploy_status': 'success|skipped|failed'}\n"
+            "    {\n"
+            "      'file': 'src/... veya pivony-mcp/src/...',\n"
+            "      'repo': 'pivony-advisor veya pivony-mcp (write/extra-write repo slug)',\n"
+            "      'qa_issue_index': 0,\n"
+            "      'issue_fixed': '...',\n"
+            "      'deploy_status': 'success|skipped|failed'\n"
+            "    }\n"
             "  ],\n"
-            "  'fixes_skipped': ['...'],\n"
+            "  'fixes_skipped': [\n"
+            "    {'file': 'N/A', 'repo': null, 'qa_issue_index': 1, 'issue': '...', 'reason': '...'}\n"
+            "  ],\n"
             "  'next_test_scenarios': ['...']\n"
-            "}"
+            "}\n"
+            "qa_issue_index: QA raporundaki issues[] dizisinin 0-tabanlı indeksi."
         ),
         agent=coding_agent,
         context=[qa_task],
@@ -137,7 +146,10 @@ def create_analyze_tasks(
             "--- Coding Agent Brief ---\n"
             f"{_coding_brief(sector)}"
         ),
-        expected_output="fixes_applied / fixes_skipped JSON özeti.",
+        expected_output=(
+            "fixes_applied / fixes_skipped JSON; her fix'te repo, qa_issue_index, "
+            "file, issue_fixed/deploy_status zorunlu."
+        ),
         agent=coding_agent,
         context=[qa_task],
     )

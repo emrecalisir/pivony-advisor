@@ -325,6 +325,20 @@ function renderIssues(issues, { compact = false } = {}) {
     .join("")}</div>`;
 }
 
+function fixMetaChips(f) {
+  const chips = [];
+  if (f.repo) chips.push(`<span class="chip repo">${esc(f.repo)}</span>`);
+  if (f.qa_issue_index != null && f.qa_issue_index !== "") {
+    const n = Number(f.qa_issue_index);
+    chips.push(
+      `<span class="chip qa-ref" title="${esc(f.qa_issue_description || "")}">QA #${esc(Number.isFinite(n) ? n + 1 : f.qa_issue_index)}</span>`
+    );
+  }
+  if (f.qa_severity) chips.push(severityChip(f.qa_severity));
+  if (f.qa_category) chips.push(`<span class="chip muted-chip">${esc(f.qa_category)}</span>`);
+  return chips.join(" ");
+}
+
 function renderFixes(fixes, { showScenarios = true, showDiffs = false } = {}) {
   const applied = fixes?.fixes_applied || [];
   const skipped = fixes?.fixes_skipped || [];
@@ -351,10 +365,11 @@ function renderFixes(fixes, { showScenarios = true, showDiffs = false } = {}) {
     <article class="fix-card">
       <div class="fix-card-head">
         ${deployChip}
+        ${fixMetaChips(f)}
         <code class="fix-file">${esc(f.file || "?")}</code>
         ${stats}
       </div>
-      <p class="fix-desc">${esc(f.issue_fixed || "")}</p>
+      <p class="fix-desc">${esc(f.issue_fixed || f.qa_issue_description || "")}</p>
       ${diffBlock}
     </article>`;
     })
@@ -368,6 +383,7 @@ function renderFixes(fixes, { showScenarios = true, showDiffs = false } = {}) {
       <article class="fix-card fix-card-skipped">
         <div class="fix-card-head">
           <span class="chip warn">atlandı</span>
+          ${fixMetaChips(s)}
           <code class="fix-file">${esc(file)}</code>
         </div>
         <p class="fix-desc">${esc(issue)}</p>

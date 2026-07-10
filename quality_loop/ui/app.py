@@ -662,6 +662,7 @@ def api_get_run(run_id: str) -> dict[str, Any]:
     fixes = enrich_fixes(
         run.get("fixes") if isinstance(run.get("fixes"), dict) else None,
         job_id=run.get("job_id"),
+        qa_report=run.get("qa_report") if isinstance(run.get("qa_report"), dict) else None,
     )
     return {**run, "fixes": fixes, "session_detail": session_detail}
 
@@ -675,6 +676,7 @@ def export_improvements_json(run_id: str) -> Response:
     fixes = enrich_fixes(
         run.get("fixes") if isinstance(run.get("fixes"), dict) else None,
         job_id=run.get("job_id"),
+        qa_report=run.get("qa_report") if isinstance(run.get("qa_report"), dict) else None,
     )
     payload = {
         "exported_at": datetime.utcnow().isoformat() + "Z",

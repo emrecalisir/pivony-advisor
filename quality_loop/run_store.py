@@ -150,6 +150,7 @@ def save_run(
     fixes = enrich_fixes(
         _fixes_from_phases(phases),
         job_id=job_id or os.environ.get("QUALITY_LOOP_JOB_ID"),
+        qa_report=qa_report if isinstance(qa_report, dict) else None,
     )
     final_text = str(getattr(final_result, "raw", None) or final_result)
 
