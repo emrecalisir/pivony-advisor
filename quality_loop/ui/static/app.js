@@ -787,6 +787,128 @@ function showSessionDetail(detail, { runId = null, listContainerId = null } = {}
 
 let activeSessionId = null;
 let activeLiveJob = null;
+let lastLiveTurnCount = 0;
+
+const POLL_ACTIVE_MS = 2000;
+
+function phaseLabelTr(phase) {
+  const map = {
+    queued: "Kuyruk",
+    conversation: "Konuşma",
+    qa: "QA",
+    coding: "İyileştirme",
+    done: "Bitti",
+    error: "Hata",
+  };
+  return map[phase] || phase || "—";
+}
+
+function isJobLive(job) {
+  return Boolean(job && ["queued", "running"].includes(job.status));
+}
+
+function updateActiveJobChrome(job) {
+  if (!isJobLive(job)) return false;
+  const line = `${job.job_id} · ${phaseLabelTr(job.phase)} · ${job.turn_count || 0} tur`;
+  const meta = document.getElementById("feedback-run-meta");
+  const runTabTitle = document.getElementById("feedback-run-tab-title");
+  const runTabMeta = document.getElementById("feedback-run-tab-meta");
+  if (meta) meta.textContent = line;
+  if (runTabTitle) runTabTitle.textContent = "Canlı run";
+  if (runTabMeta) runTabMeta.textContent = line;
+  return true;
+}
+
+function renderLiveWaitingPanel(job) {
+  const msg =
+    job.phase === "queued"
+      ? "Run kuyruğa alındı, process başlatılıyor…"
+      : job.message || "CX Director ilk senaryoyu hazırlıyor…";
+  return `
+    <div class="live-waiting">
+      <div class="live-waiting-pulse" aria-hidden="true"></div>
+      <p class="live-waiting-title">Canlı run devam ediyor</p>
+      <p class="live-waiting-desc">${esc(msg)}</p>
+      <div class="chips live-waiting-chips">
+        <span class="chip running">${esc(phaseLabelTr(job.phase))}</span>
+        <span class="chip">${esc(job.job_id)}</span>
+        ${job.session_id ? `<span class="chip">${esc(shortSessionId(job.session_id))}</span>` : ""}
+      </div>
+    </div>`;
+}
+
+function scrollLiveContainersToBottom() {
+  ["feedback-session-detail", "live-run-body"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+  });
+}
+
+function highlightSessionInList(sessionId, containerId = "feedback-session-list") {
+  const el = document.getElementById(containerId);
+  if (!el || !sessionId) return;
+  el.querySelectorAll(".list-item").forEach((node) => {
+    node.classList.toggle("selected", node.dataset.sessionId === sessionId);
+  });
+}
+
+function showLiveWaitingInConversation(job, sessionId = job.session_id) {
+  if (sessionId) activeSessionId = sessionId;
+  const feedbackTitle = document.getElementById("feedback-session-title");
+  const feedbackMeta = document.getElementById("feedback-session-meta");
+  const feedbackDetail = document.getElementById("feedback-session-detail");
+  if (feedbackTitle) {
+    feedbackTitle.textContent = sessionId ? shortSessionId(sessionId) : "Canlı run";
+  }
+  if (feedbackMeta) {
+    feedbackMeta.textContent = `${job.turn_count || 0} tur · ${phaseLabelTr(job.phase)}`;
+  }
+  if (feedbackDetail) {
+    feedbackDetail.classList.remove("empty");
+    feedbackDetail.innerHTML = renderLiveWaitingPanel(job);
+  }
+  if (sessionId) highlightSessionInList(sessionId);
+  updateWorkbenchToolbar({ job, hasSession: false });
+}
+
+function syncLiveSessionFromJob(job) {
+  if (!isJobLive(job)) return;
+  updateActiveJobChrome(job);
+
+  const sessionId = job.session_id;
+  const turns = job.session_detail?.turns || [];
+  if (turns.length) {
+    const grew = turns.length > lastLiveTurnCount;
+    lastLiveTurnCount = turns.length;
+    showSessionDetail(job.session_detail, {
+      runId: job.job_id,
+      listContainerId: "feedback-session-list",
+    });
+    updateWorkbenchToolbar({
+      job,
+      hasSession: true,
+    });
+    if (grew) scrollLiveContainersToBottom();
+    return;
+  }
+
+  showLiveWaitingInConversation(job, sessionId);
+}
+
+function startActivePolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(pollActiveJob, POLL_ACTIVE_MS);
+  pollActiveJob();
+}
+
+function stopActivePolling() {
+  if (!pollTimer) return;
+  clearInterval(pollTimer);
+  pollTimer = null;
+}
 
 function setWorkbenchTab(tabName) {
   document.querySelectorAll(".workbench-tabs .tab-btn").forEach((btn) => {
@@ -966,11 +1088,13 @@ function autoSelectSessionItem(containerId, sessionId) {
   node?.click();
 }
 
-async function loadFeedback() {
+async function loadFeedback({ preserveActiveJob = false } = {}) {
   const [runs, sessions] = await Promise.all([api("/api/runs"), api("/api/sessions")]);
   const runBlock = document.getElementById("feedback-run-block");
   const countBadge = document.getElementById("session-count-badge");
   if (countBadge) countBadge.textContent = String(sessions.length);
+  const keepActiveChrome =
+    preserveActiveJob && isJobLive(activeLiveJob) && updateActiveJobChrome(activeLiveJob);
 
   if (!sessions.length) {
     document.getElementById("feedback-session-list").innerHTML =
@@ -1009,12 +1133,19 @@ async function loadFeedback() {
 
   const latest = runs[0];
   const detail = await api(`/api/runs/${encodeURIComponent(latest.run_id)}`);
-  document.getElementById("feedback-run-meta").textContent = `${detail.run_id} · ${fmtDate(detail.created_at)}`;
+  if (!keepActiveChrome) {
+    document.getElementById("feedback-run-meta").textContent = `${detail.run_id} · ${fmtDate(detail.created_at)}`;
+  }
   renderRunDetail(detail, "feedback-run-block", { includeSession: false });
 
-  const preferId = activeSessionId || detail.session_id || sessions[0]?.session_id;
+  const preferId =
+    (keepActiveChrome && activeLiveJob?.session_id) ||
+    activeSessionId ||
+    detail.session_id ||
+    sessions[0]?.session_id;
   if (preferId) {
-    autoSelectSessionItem("feedback-session-list", preferId);
+    highlightSessionInList(preferId);
+    if (!keepActiveChrome) autoSelectSessionItem("feedback-session-list", preferId);
   }
 }
 
@@ -1409,15 +1540,29 @@ function renderLiveRun(job) {
   updateRunButtons(job);
   updateWorkbenchToolbar({
     job,
-    hasSession: Boolean(exportContext?.messages?.length),
+    hasSession: Boolean(exportContext?.messages?.length || job?.session_detail?.turns?.length),
   });
 
-  if (!job || !["queued", "running"].includes(job.status)) {
+  if (!isJobLive(job)) {
+    lastLiveTurnCount = 0;
     if (body) body.innerHTML = `<div class="empty">Aktif run yok</div>`;
     return;
   }
 
+  syncLiveSessionFromJob(job);
+
   const qa = job.qa_preview;
+  const liveThread = job.session_detail?.turns?.length
+    ? `<section class="live-thread-section">
+        <h4 class="run-section-title">Canlı konuşma</h4>
+        <div class="conversation-thread live-embedded-thread">${renderTurns(
+          job.session_detail.turns,
+          job.session_detail.auto_issues,
+          { collapsibleReasoning: false }
+        )}</div>
+      </section>`
+    : `<section class="live-thread-section">${renderLiveWaitingPanel(job)}</section>`;
+
   if (body) {
     body.innerHTML = `
       ${renderVertexBanner(job)}
@@ -1427,13 +1572,16 @@ function renderLiveRun(job) {
         ${renderLangSmithBlock(job.observability, job.job_id)}
       </details>
       <div class="chips" style="margin:0.75rem 0">
+        <span class="chip running">${esc(phaseLabelTr(job.phase))}</span>
         <span class="chip">${esc(job.turn_count || 0)} tur</span>
         ${job.session_id ? `<span class="chip">${esc(shortSessionId(job.session_id))}</span>` : ""}
         <span class="chip">${esc(job.job_id)}</span>
       </div>
       ${qa?.priority_fix ? `<div class="meta-block verdict-box"><h4>QA önizleme</h4><p>${esc(qa.priority_fix)}</p>${renderIssues(qa.issues || [], { compact: true })}</div>` : ""}
-      <p class="muted-small">Canlı konuşma <strong>Konuşma</strong> sekmesinde güncellenir. Soldan ilgili session seçili kalır.</p>
+      ${liveThread}
+      <p class="muted-small">Konuşma akışı <strong>Konuşma</strong> sekmesinde de canlı güncellenir.</p>
     `;
+    if (job.session_detail?.turns?.length) scrollLiveContainersToBottom();
   }
 
   if (job.session_id && job.session_detail?.turns?.length) {
@@ -1441,13 +1589,7 @@ function renderLiveRun(job) {
       job_id: job.job_id,
       session_id: job.session_id,
     });
-    if (!activeSessionId || activeSessionId === job.session_id) {
-      showSessionDetail(job.session_detail, {
-        runId: job.job_id,
-        listContainerId: "feedback-session-list",
-      });
-      setExportContext(livePayload);
-    }
+    setExportContext(livePayload);
   }
 }
 
@@ -1455,8 +1597,12 @@ async function refreshSessionListsIfVisible() {
   const view = viewFromLocation();
   const selected = activeSessionId;
   if (view === "feedback") {
-    await loadFeedback();
-    if (selected) autoSelectSessionItem("feedback-session-list", selected);
+    await loadFeedback({ preserveActiveJob: true });
+    if (isJobLive(activeLiveJob) && activeLiveJob.session_id) {
+      highlightSessionInList(activeLiveJob.session_id);
+    } else if (selected) {
+      autoSelectSessionItem("feedback-session-list", selected);
+    }
   } else if (view === "sessions") {
     await loadSessions();
     if (selected) autoSelectSessionItem("session-list", selected);
@@ -1475,15 +1621,13 @@ async function pollActiveJob() {
     updateRunButtons(jobActive ? job : null);
 
     if (jobActive || hasOngoing) {
-      if (!pollTimer) pollTimer = setInterval(pollActiveJob, 4000);
+      if (!pollTimer) pollTimer = setInterval(pollActiveJob, POLL_ACTIVE_MS);
       await refreshSessionListsIfVisible();
       const overview = await api("/api/overview");
       renderStats(overview);
     } else {
-      if (pollTimer) {
-        clearInterval(pollTimer);
-        pollTimer = null;
-      }
+      stopActivePolling();
+      lastLiveTurnCount = 0;
       if (job && job.status === "completed") await refreshAll();
     }
   } catch (err) {
@@ -1498,10 +1642,8 @@ async function stopRun() {
   btn.disabled = true;
   try {
     await apiPost("/api/jobs/stop", {});
-    if (pollTimer) {
-      clearInterval(pollTimer);
-      pollTimer = null;
-    }
+    stopActivePolling();
+    lastLiveTurnCount = 0;
     updateWorkbenchToolbar({ job: null });
     updateRunButtons(null);
     await refreshAll();
@@ -1768,11 +1910,12 @@ async function startRun() {
   btn.textContent = "Başlatılıyor…";
   try {
     setView("feedback");
-    setWorkbenchTab("live");
+    lastLiveTurnCount = 0;
     const sector = localStorage.getItem("ql_run_sector") || "default";
     const job = await apiPost("/api/jobs/start", { mode: "full", iterations: 1, sector });
     renderLiveRun(job);
-    if (!pollTimer) pollTimer = setInterval(pollActiveJob, 4000);
+    setWorkbenchTab("conversation");
+    startActivePolling();
   } catch (err) {
     alert(`Run başlatılamadı: ${err.message}`);
   } finally {
