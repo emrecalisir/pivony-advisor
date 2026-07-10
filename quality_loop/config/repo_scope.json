@@ -1,4 +1,6 @@
 {
   "write_repo": "pivony-advisor",
-  "read_repos": ["pivony-api-dev"]
+  "read_repos": ["pivony-mcp"],
+  "extra_write_repos": ["pivony-mcp"],
+  "blocked_write_repos": ["pivony-api-dev", "pivony-api"]
 }

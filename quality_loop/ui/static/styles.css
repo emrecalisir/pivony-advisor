@@ -403,7 +403,47 @@ header p { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.84rem; }
   cursor: pointer;
 }
 .list-item:hover, .list-item.selected { background: rgba(91, 157, 255, 0.08); }
-.list-item .title { font-weight: 600; font-size: 0.84rem; font-family: ui-monospace, monospace; }
+.list-item .title {
+  font-weight: 600;
+  font-size: 0.84rem;
+  font-family: ui-monospace, monospace;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+.list-item .title .session-id { font-weight: 700; }
+.list-item .title .chip.running {
+  background: rgba(91, 157, 255, 0.18);
+  color: #9fd0ff;
+  border-color: rgba(91, 157, 255, 0.35);
+  animation: ql-pulse 2s ease-in-out infinite;
+}
+.list-item .title .chip.done {
+  background: rgba(62, 207, 142, 0.15);
+  color: var(--success);
+  border-color: rgba(62, 207, 142, 0.35);
+}
+.list-item .title .chip.verdict.pass {
+  background: rgba(62, 207, 142, 0.12);
+  color: var(--success);
+}
+.list-item .title .chip.verdict.needs_improvement {
+  background: rgba(245, 184, 77, 0.15);
+  color: var(--warning);
+}
+.list-item .title .chip.verdict.fail {
+  background: rgba(255, 107, 122, 0.15);
+  color: var(--danger);
+}
+.list-item .title .chip.score {
+  color: #b8c9e8;
+  border-color: rgba(184, 201, 232, 0.25);
+}
+@keyframes ql-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.65; }
+}
 .list-item .meta {
   margin-top: 0.35rem;
   color: var(--muted);

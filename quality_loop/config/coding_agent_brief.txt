@@ -8,20 +8,33 @@ Fix yazılacak repo: Mimari sayfasında seçilen write repo (varsayılan pivony-
 - Fix'ler minimal, odaklı ve tek soruna yönelik olsun
 - QA fix_hint dışındaki geniş refactor yapma
 
-## Genişletilmiş scope — seçili repolar arası parity
-Mimari'de seçilen read-only repolar varsa (örn. pivony-api-dev), şu kontrolü de yap:
+## Yasak repolar
+- **pivony-api / pivony-api-dev'e ASLA yazma** — ne apply_fix_and_deploy ne başka araçla
+- API/worker route değişikliği gerekiyorsa fixes_skipped'a yaz; kullanıcıya manuel API PR notu bırak
 
-1. `<repo-slug>/...` prefix ile read repo kodunu incele (routes, controllers, services)
-2. write repo içindeki advisor tool'ları ve MCP yüzeyini list_project_files ile karşılaştır
-3. REST API'de olup advisor/MCP tool katmanında olmayan capability varsa:
-   - Önce QA issue'larını çöz
-   - Kalan kapasitede eksik capability için fix öner veya uygula (write repo: tool routing, handler, prompt)
-4. Upstream-only sorunlar (pivony-web-platform, nginx) için fixes_skipped'a yaz — write repo dışına yazma
+## MCP vs Advisor ayrımı
+| Katman | Repo | Ne zaman fix |
+|--------|------|--------------|
+| Advisor agent, tool routing, prompt | pivony-advisor (write) | QA issue advisor davranışı / internal tool |
+| MCP tool tanımları, MCP→REST client | pivony-mcp (extra write) | MCP yüzeyi, tool mapping, parity |
+| REST backend, DB, worker | pivony-api | **Dokunma** — sadece referans |
+
+MCP tool fix'i için dosya yolu: `pivony-mcp/src/pivony_mcp/...`
+Advisor fix için: prefixsiz veya `pivony-advisor/...`
+
+## Genişletilmiş scope — MCP parity (pivony-mcp read)
+read repo olarak seçili pivony-mcp varsa:
+
+1. `pivony-mcp/src/pivony_mcp/tools/` ve `clients/platform.py` incele
+2. pivony-advisor `src/core/agent.py` tool listesi ile MCP tool kataloğunu karşılaştır
+3. MCP'de eksik capability varsa fix'i **pivony-mcp**'ye yaz (pivony-api'ye değil)
+4. Advisor-only worker capability (/worker/advisor/*) MCP'ye taşınmaz; sadece advisor internal tool olarak kalır
 
 Dosya prefix'leri:
-- prefixsiz veya `<write-repo-slug>/` → write repo (fix buraya)
-- `<read-repo-slug>/` → salt okunur keşif (örn. pivony-api-dev/api/...)
+- prefixsiz veya `pivony-advisor/` → advisor write repo
+- `pivony-mcp/` → MCP write (extra_write_repos)
+- `pivony-api-dev/` → **kullanma** (scope dışı)
 
 ## Skip kuralları
-- Sadece upstream (API response mapping, web UI) kaynaklıysa ve advisor internal state doğruysa skip et
+- Sorun sadece pivony-api response mapping veya web UI kaynaklıysa skip et
 - Read repo seçili değilse parity bölümünü atla, QA fix'lerine odaklan

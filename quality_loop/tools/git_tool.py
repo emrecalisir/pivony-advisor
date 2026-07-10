@@ -128,7 +128,8 @@ class ReadFileInput(BaseModel):
 class ReadFileTool(BaseTool):
     name: str = "read_project_file"
     description: str = (
-        "Read a scoped repo file. Use <repo-slug>/path (örn. pivony-api-dev/api/...) "
+        "Read a scoped repo file. Use <repo-slug>/path (örn. pivony-mcp/src/pivony_mcp/...) "
+        "or prefixless path under the write repo. pivony-api-dev is out of scope."
         "or prefixsiz path for write repo. Mimari sayfasındaki repo seçimine göre."
     )
     args_schema: Type[BaseModel] = ReadFileInput

@@ -795,15 +795,20 @@ function renderStats(overview) {
   const stats = [
     ["Run", c.runs],
     ["Konuşma", c.sessions],
-    ["QA Issue", c.total_issues],
-    ["Fix", c.total_fixes_applied],
   ];
+  if (c.ongoing_sessions > 0) {
+    stats.push(["Devam eden", c.ongoing_sessions]);
+  }
+  stats.push(
+    ["QA Issue", c.total_issues],
+    ["Fix", c.total_fixes_applied]
+  );
   document.getElementById("stats").innerHTML = stats
     .map(([label, value]) => `<div class="stat-card"><div class="label">${esc(label)}</div><div class="value">${esc(value)}</div></div>`)
     .join("");
 }
 
-function renderList(containerId, items, onClick, labelFn, metaFn, { idKey = null } = {}) {
+function renderList(containerId, items, onClick, labelFn, metaFn, { idKey = null, labelHtmlFn = null } = {}) {
   const el = document.getElementById(containerId);
   if (!items.length) {
     el.innerHTML = `<div class="empty">Kayıt yok</div>`;
@@ -813,7 +818,7 @@ function renderList(containerId, items, onClick, labelFn, metaFn, { idKey = null
     .map(
       (item, idx) => `
     <div class="list-item" data-idx="${idx}"${idKey && item[idKey] ? ` data-session-id="${esc(item[idKey])}"` : ""}>
-      <div class="title">${esc(labelFn(item))}</div>
+      <div class="title">${labelHtmlFn ? labelHtmlFn(item) : esc(labelFn(item))}</div>
       <div class="meta">${esc(metaFn ? metaFn(item) : fmtDateTime(item.created_at || item.modified_at))}</div>
     </div>`
     )
@@ -829,6 +834,52 @@ function renderList(containerId, items, onClick, labelFn, metaFn, { idKey = null
 
 function sessionListLabel(item) {
   return `${shortSessionId(item.session_id)} · ${item.turn_count} tur`;
+}
+
+function sessionStatusChip(item) {
+  const st = item.status || "";
+  if (st === "ongoing") {
+    const phase = item.job_phase ? ` · ${esc(item.job_phase)}` : "";
+    return `<span class="chip running">${esc(item.status_label || "Devam")}${phase}</span>`;
+  }
+  if (st === "completed") {
+    return `<span class="chip done">${esc(item.status_label || "Bitti")}</span>`;
+  }
+  if (st === "conversation_only") {
+    return `<span class="chip muted-chip">${esc(item.status_label || "QA yok")}</span>`;
+  }
+  if (st === "empty") {
+    return `<span class="chip muted-chip">${esc(item.status_label || "Boş")}</span>`;
+  }
+  return "";
+}
+
+function sessionPerfChips(item) {
+  const chips = [];
+  if (item.qa_verdict) {
+    chips.push(`<span class="chip verdict ${esc(item.qa_verdict)}">${esc(item.qa_verdict)}</span>`);
+  }
+  if (item.issue_count > 0) {
+    chips.push(`<span class="chip issue">${esc(item.issue_count)} issue</span>`);
+  }
+  if (item.avg_score != null && item.avg_score !== "") {
+    chips.push(`<span class="chip score">${esc(item.avg_score)}/10</span>`);
+  }
+  if (!item.qa_verdict && item.warning_count > 0) {
+    chips.push(`<span class="chip warn">${esc(item.warning_count)} uyarı</span>`);
+  }
+  return chips.join(" ");
+}
+
+function sessionListLabelHtml(item) {
+  return [
+    `<span class="session-id">${esc(shortSessionId(item.session_id))}</span>`,
+    `<span class="chip">${esc(item.turn_count)} tur</span>`,
+    sessionStatusChip(item),
+    sessionPerfChips(item),
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function sessionListMeta(item) {
@@ -876,7 +927,7 @@ async function loadFeedback() {
       },
       sessionListLabel,
       sessionListMeta,
-      { idKey: "session_id" }
+      { idKey: "session_id", labelHtmlFn: sessionListLabelHtml }
     );
   }
 
@@ -926,7 +977,7 @@ async function loadSessions() {
     },
     sessionListLabel,
     sessionListMeta,
-    { idKey: "session_id" }
+    { idKey: "session_id", labelHtmlFn: sessionListLabelHtml }
   );
   if (activeSessionId) {
     autoSelectSessionItem("session-list", activeSessionId);
@@ -1334,14 +1385,35 @@ function renderLiveRun(job) {
   }
 }
 
+async function refreshSessionListsIfVisible() {
+  const view = viewFromLocation();
+  const selected = activeSessionId;
+  if (view === "feedback") {
+    await loadFeedback();
+    if (selected) autoSelectSessionItem("feedback-session-list", selected);
+  } else if (view === "sessions") {
+    await loadSessions();
+    if (selected) autoSelectSessionItem("session-list", selected);
+  }
+}
+
 async function pollActiveJob() {
   try {
-    const job = await api("/api/jobs/active");
+    const [job, sessions] = await Promise.all([
+      api("/api/jobs/active"),
+      api("/api/sessions").catch(() => []),
+    ]);
     renderLiveRun(job);
-    if (job && ["queued", "running"].includes(job.status)) {
+    const jobActive = job && ["queued", "running"].includes(job.status);
+    const hasOngoing = (sessions || []).some((s) => s.status === "ongoing");
+    updateRunButtons(jobActive ? job : null);
+
+    if (jobActive || hasOngoing) {
       if (!pollTimer) pollTimer = setInterval(pollActiveJob, 4000);
+      await refreshSessionListsIfVisible();
+      const overview = await api("/api/overview");
+      renderStats(overview);
     } else {
-      updateRunButtons(null);
       if (pollTimer) {
         clearInterval(pollTimer);
         pollTimer = null;
@@ -1413,8 +1485,10 @@ async function savePrompt() {
 
 function renderRepoScopeEditor(scope) {
   const repos = scope?.repos || [];
+  const blocked = new Set(scope?.blocked_write_repos || ["pivony-api-dev", "pivony-api"]);
   const writeRepo = scope?.write_repo || "pivony-advisor";
   const readRepos = new Set(scope?.read_repos || []);
+  const writeOptions = repos.filter((r) => !blocked.has(r.id));
   const readOptions = repos
     .filter((r) => r.id !== writeRepo)
     .map(
@@ -1428,11 +1502,11 @@ function renderRepoScopeEditor(scope) {
         <h3>Coding Agent Repoları</h3>
         <span id="repo-save-status" class="muted-small"></span>
       </div>
-      <p class="flow-desc">masterr altındaki repolar. <strong>Write</strong> = fix yazılır; <strong>Read</strong> = salt okunur keşif.</p>
+      <p class="flow-desc">masterr altındaki repolar. <strong>Write</strong> = fix yazılır; <strong>Read</strong> = salt okunur keşif. MCP fix'leri <code>pivony-mcp/</code> prefix ile yazılabilir. <code>pivony-api-dev</code> bloklu.</p>
       <p class="muted-small">Kök: ${esc(scope?.masterr_root || "—")}</p>
       <div class="prompt-controls">
         <label>Fix yazılacak repo
-          <select id="repo-write">${repos
+          <select id="repo-write">${writeOptions
             .map(
               (r) =>
                 `<option value="${esc(r.id)}"${r.id === writeRepo ? " selected" : ""}>${esc(r.label)}</option>`

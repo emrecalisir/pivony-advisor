@@ -120,6 +120,14 @@ def _fixes_from_phases(phases: list[dict[str, Any]]) -> dict[str, Any] | None:
     return None
 
 
+def _avg_score_from_qa(qa_report: dict[str, Any] | None) -> float | None:
+    scores = (qa_report or {}).get("scores") or {}
+    vals = [v for v in scores.values() if isinstance(v, (int, float))]
+    if not vals:
+        return None
+    return round(sum(vals) / len(vals), 1)
+
+
 def save_run(
     *,
     mode: str,
@@ -162,6 +170,7 @@ def save_run(
             "issue_count": len((qa_report or {}).get("issues") or []) if isinstance(qa_report, dict) else 0,
             "fixes_applied": len((fixes or {}).get("fixes_applied") or []) if isinstance(fixes, dict) else 0,
             "fixes_skipped": len((fixes or {}).get("fixes_skipped") or []) if isinstance(fixes, dict) else 0,
+            "avg_score": _avg_score_from_qa(qa_report if isinstance(qa_report, dict) else None),
             "turn_count": (phases[0].get("parsed_output") or {}).get("turn_count")
             if phases and phases[0].get("phase") == "conversation"
             and isinstance(phases[0].get("parsed_output"), dict)

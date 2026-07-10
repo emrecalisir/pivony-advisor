@@ -118,7 +118,92 @@ def _list_output_files(prefix: str) -> list[dict[str, Any]]:
     return rows
 
 
-def _session_summary(path: Path) -> dict[str, Any]:
+def _avg_score_from_qa(qa_report: dict[str, Any] | None) -> float | None:
+    scores = (qa_report or {}).get("scores") or {}
+    vals = [v for v in scores.values() if isinstance(v, (int, float))]
+    if not vals:
+        return None
+    return round(sum(vals) / len(vals), 1)
+
+
+def _quick_warning_count(messages: list[dict[str, Any]]) -> int:
+    warnings = 0
+    last_dashboard_id = None
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            dash_sel = msg.get("dashboardSelection")
+            if isinstance(dash_sel, dict) and dash_sel.get("id") is not None:
+                last_dashboard_id = dash_sel.get("id")
+            continue
+        tools = msg.get("toolActions") or []
+        if last_dashboard_id and any(
+            "org_wide" in str(t).lower() or "orgwide" in str(t).lower() for t in tools
+        ):
+            warnings += 1
+        if not (msg.get("content") or "").strip():
+            warnings += 1
+    return warnings
+
+
+def _session_performance(session_id: str) -> dict[str, Any]:
+    latest = _latest_run_for_session(session_id)
+    if not latest:
+        return {
+            "run_id": None,
+            "qa_verdict": None,
+            "issue_count": 0,
+            "avg_score": None,
+            "has_qa": False,
+        }
+    qa = latest.get("qa_report") if isinstance(latest.get("qa_report"), dict) else {}
+    summary = latest.get("summary") or {}
+    avg = summary.get("avg_score")
+    if avg is None:
+        avg = _avg_score_from_qa(qa)
+    return {
+        "run_id": latest.get("run_id"),
+        "qa_verdict": qa.get("overall_verdict"),
+        "issue_count": len(qa.get("issues") or []) or summary.get("issue_count") or 0,
+        "avg_score": avg,
+        "has_qa": bool(qa.get("overall_verdict") or qa.get("issues")),
+    }
+
+
+def _session_status(
+    session_id: str,
+    turn_count: int,
+    *,
+    active_job: dict[str, Any] | None,
+    live_session_id: str | None,
+    has_qa: bool,
+) -> dict[str, Any]:
+    job_active = bool(active_job and active_job.get("status") in ("queued", "running"))
+    phase = (active_job or {}).get("phase") or ""
+    job_sid = (active_job or {}).get("session_id")
+
+    if job_active and (
+        job_sid == session_id
+        or live_session_id == session_id
+        or (turn_count == 0 and live_session_id == session_id)
+    ):
+        return {
+            "status": "ongoing",
+            "status_label": "Devam ediyor",
+            "job_phase": phase,
+        }
+    if has_qa:
+        return {"status": "completed", "status_label": "Bitti", "job_phase": None}
+    if turn_count > 0:
+        return {"status": "conversation_only", "status_label": "QA yok", "job_phase": None}
+    return {"status": "empty", "status_label": "Boş", "job_phase": None}
+
+
+def _session_summary(
+    path: Path,
+    *,
+    active_job: dict[str, Any] | None = None,
+    live_session_id: str | None = None,
+) -> dict[str, Any]:
     data = _read_json(path)
     messages = data.get("messages") or []
     user_turns = sum(1 for m in messages if m.get("role") == "user")
@@ -128,8 +213,17 @@ def _session_summary(path: Path) -> dict[str, Any]:
         if msg.get("role") == "user" and (msg.get("content") or "").strip():
             preview = str(msg["content"]).strip().replace("\n", " ")[:120]
             break
+    session_id = data.get("session_id") or path.stem
+    perf = _session_performance(session_id)
+    status = _session_status(
+        session_id,
+        user_turns,
+        active_job=active_job,
+        live_session_id=live_session_id,
+        has_qa=perf["has_qa"],
+    )
     return {
-        "session_id": data.get("session_id") or path.stem,
+        "session_id": session_id,
         "created_at": data.get("created_at"),
         "updated_at": data.get("updated_at"),
         "user_id": data.get("user_id"),
@@ -137,11 +231,17 @@ def _session_summary(path: Path) -> dict[str, Any]:
         "turn_count": user_turns,
         "message_count": len(messages),
         "tool_action_count": tool_count,
+        "warning_count": _quick_warning_count(messages),
         "sector": data.get("sector"),
         "advisor_mode": data.get("advisor_mode"),
         "preview": preview,
         "file": path.name,
         "modified_at": _file_mtime(path),
+        "run_id": perf["run_id"],
+        "qa_verdict": perf["qa_verdict"],
+        "issue_count": perf["issue_count"],
+        "avg_score": perf["avg_score"],
+        **status,
     }
 
 
@@ -407,12 +507,21 @@ def overview() -> dict[str, Any]:
     runs = list_runs()
     sessions: list[dict[str, Any]] = []
     if SESSIONS_DIR.exists():
+        active_job = get_active_job()
+        live_session_id = _best_live_session_id(active_job) if active_job else None
         for path in sorted(SESSIONS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
             try:
-                sessions.append(_session_summary(path))
+                sessions.append(
+                    _session_summary(
+                        path,
+                        active_job=active_job,
+                        live_session_id=live_session_id,
+                    )
+                )
             except (json.JSONDecodeError, ValueError, OSError):
                 continue
 
+    ongoing_sessions = sum(1 for s in sessions if s.get("status") == "ongoing")
     total_issues = sum((r.get("summary") or {}).get("issue_count", 0) for r in runs)
     total_fixes = sum((r.get("summary") or {}).get("fixes_applied", 0) for r in runs)
 
@@ -421,6 +530,7 @@ def overview() -> dict[str, Any]:
         "counts": {
             "runs": len(runs),
             "sessions": len(sessions),
+            "ongoing_sessions": ongoing_sessions,
             "iterations": len(_list_output_files("iteration_")),
             "analyze_runs": len(_list_output_files("analyze_")),
             "total_issues": total_issues,
@@ -591,10 +701,18 @@ def export_improvements_json(run_id: str) -> Response:
 def list_sessions() -> list[dict[str, Any]]:
     if not SESSIONS_DIR.exists():
         return []
+    active_job = get_active_job()
+    live_session_id = _best_live_session_id(active_job) if active_job else None
     rows: list[dict[str, Any]] = []
     for path in sorted(SESSIONS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
         try:
-            rows.append(_session_summary(path))
+            rows.append(
+                _session_summary(
+                    path,
+                    active_job=active_job,
+                    live_session_id=live_session_id,
+                )
+            )
         except (json.JSONDecodeError, ValueError, OSError):
             continue
     return rows
