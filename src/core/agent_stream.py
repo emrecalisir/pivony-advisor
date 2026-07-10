@@ -208,7 +208,11 @@ def _collect_turn_with_rate_limit_status(
     return status_events, events, model_content, function_calls
 
 
-def _yield_llm_failure(exc: LlmTurnFailed) -> Iterator[dict[str, Any]]:
+def _yield_llm_failure(
+    exc: LlmTurnFailed,
+    current_picker: dict | None,
+    current_charts: list[dict[str, Any]],
+) -> Iterator[dict[str, Any]]:
     """Single replaceable error bubble after automatic retries are exhausted."""
     yield {
         "type": "content",
@@ -218,8 +222,8 @@ def _yield_llm_failure(exc: LlmTurnFailed) -> Iterator[dict[str, Any]]:
     yield {
         "type": "done",
         "content": exc.user_message,
-        "dashboard_picker": None,
-        "charts": [],
+        "dashboard_picker": current_picker,
+        "charts": current_charts,
     }
 
 
@@ -310,6 +314,7 @@ def stream_advisor_agent(
     tools_called: set[str] = set()
     limit = max_iterations or AGENT_MAX_TOOL_ITERATIONS
     final_text = ""
+    charts: list[dict[str, Any]] = []
 
     try:
         yield from _run_agent_stream_loop(
@@ -324,11 +329,12 @@ def stream_advisor_agent(
             picker=picker,
             tools_called=tools_called,
             final_text=final_text,
-            charts=[],
+            charts=charts,
         )
     except LlmTurnFailed as exc:
         logger.warning("Agent stream aborted: %s", exc.user_message)
-        yield from _yield_llm_failure(exc)
+        yield from _yield_llm_failure(exc, picker, charts)
+        return
 
 
 def _run_agent_stream_loop(
@@ -518,7 +524,7 @@ def stream_simple_completion(
             )
         )
     except LlmTurnFailed as exc:
-        yield from _yield_llm_failure(exc)
+        yield from _yield_llm_failure(exc, None, [])
         return
 
     for event in _yield_turn_events(status_events, turn_events):
