@@ -1,4 +1,4 @@
-\"\"\"Deterministic tool routing guardrails for the advisor agent.\"\"\"
+"""Deterministic tool routing guardrails for the advisor agent."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ _DASHBOARD_ARG_TOOLS = frozenset(
 
 
 def should_expose_list_dashboards(state: HardAgentState) -> bool:
-    \"\"\"Hide list_dashboards when scope already pins a dashboard or org-wide mode.\"\"\"
+    """Hide list_dashboards when scope already pins a dashboard or org-wide mode."""
     if state.dashboard_locked or state.has_dashboard:
         return False
     if state.org_wide:
@@ -79,12 +79,12 @@ def sanitize_tool_calls(
     calls: list[dict[str, Any]],
     state: HardAgentState,
 ) -> list[dict[str, Any]]:
-    \"\"\"
+    """
     Drop conflicting tool calls before execution.
 
     When dashboard scope is resolved, strip list_dashboards. If the model requested
     list_dashboards together with analysis tools, keep analysis calls only.
-    \"\"\"\
+    """
     if not calls:
         return calls
     if should_expose_list_dashboards(state):
@@ -112,7 +112,7 @@ def sanitize_function_calls(
     function_calls: list[Any],
     state: HardAgentState,
 ) -> list[Any]:
-    \"\"\"Streaming path: filter GenAI FunctionCall objects.\"\"\"\
+    """Streaming path: filter GenAI FunctionCall objects."""
     if should_expose_list_dashboards(state) or not function_calls:
         return function_calls
     names = [getattr(fc, "name", None) for fc in function_calls]
@@ -134,10 +134,10 @@ def pin_tool_args_for_state(
     args: dict[str, Any],
     state: HardAgentState,
 ) -> dict[str, Any]:
-    \"\"\"
+    """
     Authoritative dashboard scope: inject the user-selected id, or strip any
     dashboard_id the model guessed from list_dashboards output.
-    \"\"\"\
+    """
     if tool_name not in _DASHBOARD_ARG_TOOLS:
         return dict(args or {})
     out = dict(args or {})
@@ -156,7 +156,7 @@ def validated_tool_invoke(
     state: HardAgentState | None = None,
     user_id: str | None = None,
 ) -> str:
-    \"\"\"Validate tool args with Pydantic before invoke; return JSON error on bad schema.\"\"\"\
+    """Validate tool args with Pydantic before invoke; return JSON error on bad schema."""
     args = dict(raw_args or {})
     if state is not None:
         args = pin_tool_args_for_state(tool.name, args, state)
@@ -182,7 +182,7 @@ def validated_tool_invoke(
             return json.dumps(
                 {
                     "error": "invalid_tool_arguments",
-                    "tool": tool.name,
+                    "tool": tool_name,
                     "detail": str(exc),
                     "user_message": "Maalesef, talebinizdeki bazı parametreleri anlayamadım. Lütfen isteğinizi farklı bir şekilde ifade etmeyi veya detayları netleştirmeyi deneyin.",
                     "instruction": "Fix arguments and retry the tool once. The `user_message` field contains a user-friendly version of the error.",
@@ -218,7 +218,7 @@ def validated_tool_invoke(
         return json.dumps(
             {
                 "error": "tool_execution_failed",
-                "tool": tool.name,
+                "tool": tool_name,
                 "detail": str(exc),
                 "user_message": user_facing_error,
                 "instruction": (
@@ -234,7 +234,7 @@ def validated_tool_invoke(
 
 
 def blocked_tool_result(tool_name: str, state: HardAgentState) -> str | None:
-    \"\"\"Return a synthetic tool result when a call is blocked by routing rules.\"\"\"\
+    """Return a synthetic tool result when a call is blocked by routing rules."""
     if tool_name not in _DASHBOARD_LISTING_TOOLS:
         return None
     if should_expose_list_dashboards(state):
