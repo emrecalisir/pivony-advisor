@@ -1402,14 +1402,28 @@ function hasQaExportData(ctx = exportContext) {
   return Boolean(qa?.overall_verdict || qa?.issues?.length || qa?.priority_fix);
 }
 
-function canExportSession() {
-  return Boolean(activeSessionId);
+function getActiveWorkbenchTab() {
+  const btn = document.querySelector(".workbench-tabs .tab-btn.active");
+  return btn?.dataset?.tab || "conversation";
+}
+
+function canExportAnything() {
+  return Boolean(activeSessionId || activeRunId || activeRunDetail?.run_id);
 }
 
 function updateExportButtons() {
-  const visible = canExportSession();
+  const visible = canExportAnything();
   document.getElementById("toolbar-export-btn")?.classList.toggle("hidden", !visible);
   document.getElementById("session-export-btn")?.classList.toggle("hidden", !visible);
+}
+
+async function refreshExportContextFromRun(runId) {
+  if (!runId) return null;
+  const run = await api(`/api/runs/${encodeURIComponent(runId)}`);
+  activeRunDetail = run;
+  activeRunId = run.run_id || runId;
+  syncRunExportContext(run);
+  return exportContext;
 }
 
 async function refreshExportContextForSession(sessionId) {
@@ -1423,14 +1437,38 @@ async function refreshExportContextForSession(sessionId) {
   return payload;
 }
 
+async function refreshExportContext() {
+  const tab = getActiveWorkbenchTab();
+  if (tab === "run-qa" && (activeRunId || activeRunDetail?.run_id)) {
+    return refreshExportContextFromRun(activeRunId || activeRunDetail.run_id);
+  }
+  if (activeSessionId) {
+    return refreshExportContextForSession(activeSessionId);
+  }
+  if (activeRunId || activeRunDetail?.run_id) {
+    return refreshExportContextFromRun(activeRunId || activeRunDetail.run_id);
+  }
+  return null;
+}
+
 function updateExportModalState() {
   const hasConv = Boolean(exportContext?.messages?.length);
   const hasQa = hasQaExportData();
   const qaHint = document.getElementById("export-qa-hint");
   if (qaHint) {
-    qaHint.textContent = hasQa
-      ? `${(exportContext?.meta?.qa_report?.issues || []).length} issue · ${exportContext?.meta?.qa_report?.overall_verdict || "—"}`
-      : "Bu session için QA raporu yok";
+    if (hasQa) {
+      const run = exportContext?.meta?.run_id;
+      const issueCount = (exportContext?.meta?.qa_report?.issues || []).length;
+      const verdict = exportContext?.meta?.qa_report?.overall_verdict || "—";
+      qaHint.textContent = run
+        ? `${run} · ${issueCount} issue · ${verdict}`
+        : `${issueCount} issue · ${verdict}`;
+    } else {
+      qaHint.textContent =
+        getActiveWorkbenchTab() === "run-qa"
+          ? "Görüntülenen run için QA verisi yüklenemedi"
+          : "Bu session için QA raporu yok";
+    }
   }
   document.getElementById("export-qa-section")?.classList.toggle("export-unavailable", !hasQa);
   document.getElementById("export-full-section")?.classList.toggle("export-unavailable", !hasConv || !hasQa);
@@ -1477,8 +1515,10 @@ function setExportContext(ctx) {
   exportContext = ctx;
   const subtitle = document.getElementById("export-modal-subtitle");
   if (subtitle) {
+    const parts = [];
+    if (ctx?.meta?.run_id) parts.push(ctx.meta.run_id);
     const sid = ctx?.sessionId || ctx?.meta?.session_id || activeSessionId;
-    const parts = [sid ? shortSessionId(sid) : null].filter(Boolean);
+    if (sid) parts.push(shortSessionId(sid));
     if (ctx?.messages?.length) parts.push(`${ctx.messages.length} mesaj`);
     if (hasQaExportData(ctx)) parts.push("QA raporu");
     subtitle.textContent = parts.join(" · ");
@@ -1511,15 +1551,15 @@ function buildExportPayloadFromDetail(detail, extra = {}) {
 }
 
 async function openExportModal() {
-  if (!activeSessionId) return;
+  if (!canExportAnything()) return;
   try {
-    await refreshExportContextForSession(activeSessionId);
+    await refreshExportContext();
   } catch (err) {
-    alert(`Session yüklenemedi: ${err.message}`);
+    alert(`Export verisi yüklenemedi: ${err.message}`);
     return;
   }
   if (!exportContext?.messages?.length && !hasQaExportData()) {
-    alert("Bu session için indirilebilir konuşma veya QA verisi yok.");
+    alert("İndirilebilir konuşma veya QA verisi yok.");
     return;
   }
   updateExportModalState();
@@ -1531,11 +1571,38 @@ function closeExportModal() {
 }
 
 function currentExportSessionId() {
-  return activeSessionId || exportContext?.sessionId || exportContext?.meta?.session_id || null;
+  return (
+    exportContext?.sessionId ||
+    exportContext?.meta?.session_id ||
+    activeRunDetail?.session_id ||
+    activeSessionId ||
+    null
+  );
 }
 
 function currentExportRunId() {
-  return exportContext?.meta?.run_id || null;
+  return exportContext?.meta?.run_id || activeRunId || activeRunDetail?.run_id || null;
+}
+
+async function downloadRunQaExport(runId, format = "json") {
+  const ext = format === "md" ? "export.md" : "export.json";
+  const url = apiUrl(`api/runs/${encodeURIComponent(runId)}/qa/${ext}`);
+  const res = await fetch(url, fetchOptions());
+  if (res.status === 401) {
+    showLoginOverlay();
+    throw new Error("login required");
+  }
+  if (!res.ok) throw new Error(`${res.status}`);
+  const blob = await res.blob();
+  const disp = res.headers.get("Content-Disposition") || "";
+  const match = disp.match(/filename="?([^";]+)"?/);
+  const fallback = `pivony-quality-loop-qa-${String(runId).slice(0, 24)}.${format === "md" ? "md" : "json"}`;
+  const filename = match?.[1] || fallback;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 async function downloadExportConversationJson() {
@@ -1561,10 +1628,16 @@ async function downloadExportConversationMarkdown() {
 }
 
 async function downloadExportQaJson() {
+  const runId = currentExportRunId();
   const sid = currentExportSessionId();
-  if (!sid) return;
   try {
-    await downloadSessionExport(sid, "json", null, "qa", currentExportRunId());
+    if (runId && hasQaExportData()) {
+      await downloadRunQaExport(runId, "json");
+    } else if (sid) {
+      await downloadSessionExport(sid, "json", null, "qa", runId);
+    } else {
+      return;
+    }
     closeExportModal();
   } catch (err) {
     alert(`QA indirilemedi: ${err.message}`);
@@ -1572,10 +1645,16 @@ async function downloadExportQaJson() {
 }
 
 async function downloadExportQaMarkdown() {
+  const runId = currentExportRunId();
   const sid = currentExportSessionId();
-  if (!sid) return;
   try {
-    await downloadSessionExport(sid, "md", null, "qa", currentExportRunId());
+    if (runId && hasQaExportData()) {
+      await downloadRunQaExport(runId, "md");
+    } else if (sid) {
+      await downloadSessionExport(sid, "md", null, "qa", runId);
+    } else {
+      return;
+    }
     closeExportModal();
   } catch (err) {
     alert(`QA indirilemedi: ${err.message}`);
@@ -2199,7 +2278,7 @@ async function boot() {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod || !e.shiftKey) return;
       if (e.key !== "e" && e.key !== "E") return;
-      if (!activeSessionId) return;
+      if (!canExportAnything()) return;
       e.preventDefault();
       openExportModal();
     },
