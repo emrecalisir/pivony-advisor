@@ -147,26 +147,33 @@ def _quick_warning_count(messages: list[dict[str, Any]]) -> int:
 
 
 def _session_performance(session_id: str) -> dict[str, Any]:
-    latest = _latest_run_for_session(session_id)
-    if not latest:
+    from quality_loop.cycle_store import is_completed_cycle
+    from quality_loop.session_store import load_session
+
+    session = load_session(session_id)
+    if not session:
         return {
             "run_id": None,
+            "cycle_id": session_id,
             "qa_verdict": None,
             "issue_count": 0,
             "avg_score": None,
             "has_qa": False,
         }
-    qa = latest.get("qa_report") if isinstance(latest.get("qa_report"), dict) else {}
-    summary = latest.get("summary") or {}
+    cid = str(session.get("cycle_id") or session.get("session_id") or session_id)
+    qa = session.get("qa_report") if isinstance(session.get("qa_report"), dict) else {}
+    summary = session.get("summary") if isinstance(session.get("summary"), dict) else {}
+    has_qa = is_completed_cycle(session)
     avg = summary.get("avg_score")
     if avg is None:
         avg = _avg_score_from_qa(qa)
     return {
-        "run_id": latest.get("run_id"),
+        "run_id": cid if has_qa else None,
+        "cycle_id": cid,
         "qa_verdict": qa.get("overall_verdict"),
         "issue_count": len(qa.get("issues") or []) or summary.get("issue_count") or 0,
         "avg_score": avg,
-        "has_qa": bool(qa.get("overall_verdict") or qa.get("issues")),
+        "has_qa": has_qa,
     }
 
 
@@ -177,10 +184,11 @@ def _session_status(
     active_job: dict[str, Any] | None,
     live_session_id: str | None,
     has_qa: bool,
+    cycle_status: str | None = None,
 ) -> dict[str, Any]:
     job_active = bool(active_job and active_job.get("status") in ("queued", "running"))
     phase = (active_job or {}).get("phase") or ""
-    job_sid = (active_job or {}).get("session_id")
+    job_sid = (active_job or {}).get("session_id") or (active_job or {}).get("cycle_id")
 
     if job_active and (
         job_sid == session_id
@@ -192,6 +200,8 @@ def _session_status(
             "status_label": "Devam ediyor",
             "job_phase": phase,
         }
+    if cycle_status == "failed":
+        return {"status": "failed", "status_label": "Döngü hatası", "job_phase": None}
     if has_qa:
         return {"status": "completed", "status_label": "Bitti", "job_phase": None}
     if turn_count > 0:
@@ -222,9 +232,11 @@ def _session_summary(
         active_job=active_job,
         live_session_id=live_session_id,
         has_qa=perf["has_qa"],
+        cycle_status=data.get("status"),
     )
     return {
         "session_id": session_id,
+        "cycle_id": perf.get("cycle_id") or session_id,
         "created_at": data.get("created_at"),
         "updated_at": data.get("updated_at"),
         "user_id": data.get("user_id"),
@@ -800,21 +812,31 @@ def get_session(session_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="session not found")
     data = _read_json(path)
     turns = _build_turns(data.get("messages") or [])
-    linked_runs = [r for r in list_runs() if r.get("session_id") == session_id]
+    linked_runs = [r for r in list_runs() if r.get("session_id") == session_id or r.get("cycle_id") == session_id]
     linked_runs.sort(key=lambda r: r.get("created_at") or "", reverse=True)
-    latest_run = _latest_run_for_session(session_id)
-    qa_report = latest_run.get("qa_report") if latest_run else None
+    qa_report = data.get("qa_report") if isinstance(data.get("qa_report"), dict) else None
+    if qa_report is None:
+        latest_run = _latest_run_for_session(session_id)
+        qa_report = latest_run.get("qa_report") if latest_run else None
     _attach_qa_to_turns(turns, qa_report if isinstance(qa_report, dict) else None)
+    cid = str(data.get("cycle_id") or data.get("session_id") or session_id)
     return {
         **data,
+        "cycle_id": cid,
         "turns": turns,
         "turn_count": len(turns),
         "auto_issues": _auto_issues(turns),
         "linked_runs": linked_runs,
-        "run_id": latest_run.get("run_id") if latest_run else None,
+        "run_id": cid if perf_has_qa(qa_report, data.get("status")) else (linked_runs[0].get("run_id") if linked_runs else None),
         "qa_report": qa_report,
         "modified_at": _file_mtime(path),
     }
+
+
+def perf_has_qa(qa_report: dict | None, status: str | None) -> bool:
+    if status == "done":
+        return True
+    return bool((qa_report or {}).get("overall_verdict") or (qa_report or {}).get("issues"))
 
 
 def _load_session_detail(session_id: str) -> dict[str, Any]:

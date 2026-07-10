@@ -94,6 +94,11 @@ def reconcile_stale_jobs() -> None:
                 "finished_at": _utcnow_iso(),
             },
         )
+        sid = data.get("cycle_id") or data.get("session_id")
+        if sid:
+            from quality_loop.cycle_store import mark_cycle_failed
+
+            mark_cycle_failed(str(sid), message="Process sonlandı (zombie job temizlendi)")
 
 
 def get_active_job() -> dict[str, Any] | None:
@@ -140,6 +145,22 @@ def _spawn_job(
         job_id = f"job_{stamp}"
         _active_job_id = job_id
 
+        cycle_id: str | None = session_id
+        if mode == "full":
+            from quality_loop.cycle_store import create_cycle_for_job
+
+            import os as _os
+
+            cycle = create_cycle_for_job(
+                job_id=job_id,
+                sector=sector or _os.environ.get("QUALITY_LOOP_SECTOR", "default"),
+                mode="full",
+                user_id=_os.environ.get("QUALITY_LOOP_USER_ID", "").strip() or None,
+                user_email=_os.environ.get("QUALITY_LOOP_USER_EMAIL", "").strip() or None,
+            )
+            cycle_id = cycle["cycle_id"]
+            session_id = cycle_id
+
         cmd = [
             _python_executable(),
             "-m",
@@ -165,6 +186,7 @@ def _spawn_job(
                 "mode": mode,
                 "iterations": iterations,
                 "session_id": session_id,
+                "cycle_id": cycle_id or session_id,
                 "sector": sector or os.environ.get("QUALITY_LOOP_SECTOR", "default"),
                 "started_at": _utcnow_iso(),
                 "message": "Kuyruğa alındı",
@@ -222,6 +244,11 @@ def _spawn_job(
                 if not current.get("message") or current.get("message") == "Çalışıyor":
                     patch["message"] = f"Hata (exit {code})"
                 write_job(job_id, patch)
+                sid = current.get("cycle_id") or current.get("session_id")
+                if sid:
+                    from quality_loop.cycle_store import mark_cycle_failed
+
+                    mark_cycle_failed(str(sid), message=patch.get("message"))
             with _lock:
                 if _active_job_id == job_id:
                     _active_job_id = None

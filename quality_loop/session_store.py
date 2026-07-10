@@ -54,17 +54,20 @@ def create_session(
 ) -> dict[str, Any]:
     session = {
         "session_id": new_session_id(),
+        "cycle_id": None,
         "created_at": _utcnow_iso(),
         "updated_at": _utcnow_iso(),
         "user_id": user_id,
         "user_email": user_email,
         "sector": sector,
         "advisor_mode": advisor_mode,
+        "status": "conversation",
         "messages": [],
         "page_context": {},
         "analytics_scope": None,
         "last_dashboard_selection": None,
     }
+    session["cycle_id"] = session["session_id"]
     save_session(session)
     return session
 

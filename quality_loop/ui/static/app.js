@@ -1170,11 +1170,12 @@ function renderSessionQaEmptyState(detail, { statusLabel = null } = {}) {
 function updateSessionRunChrome(sessionId, { runDetail = null, emptyReason = null } = {}) {
   const meta = document.getElementById("feedback-run-meta");
   const runTabMeta = document.getElementById("feedback-run-tab-meta");
-  if (runDetail?.run_id) {
+  const cid = shortSessionId(sessionId);
+  if (runDetail?.qa_report || runDetail?.summary?.verdict) {
     const qa = runDetail.qa_report || {};
     const verdict = qa.overall_verdict || runDetail.summary?.verdict;
     if (meta) {
-      meta.textContent = `${runDetail.run_id} · ${shortSessionId(sessionId)} · ${fmtDate(runDetail.created_at)}`;
+      meta.textContent = `${cid} · Bitti · ${fmtDate(runDetail.created_at)}`;
     }
     if (runTabMeta) {
       const parts = [verdict, runDetail.summary?.issue_count != null ? `${runDetail.summary.issue_count} issue` : null];
@@ -1184,7 +1185,7 @@ function updateSessionRunChrome(sessionId, { runDetail = null, emptyReason = nul
   }
   activeRunId = null;
   activeRunDetail = null;
-  if (meta) meta.textContent = `${shortSessionId(sessionId)} · QA yok`;
+  if (meta) meta.textContent = `${shortSessionId(sessionId)} · ${emptyReason || "QA yok"}`;
   if (runTabMeta) runTabMeta.textContent = emptyReason || "Tamamlanmış döngü yok";
 }
 
@@ -1196,23 +1197,42 @@ async function loadSessionRunPanel(sessionId, sessionDetail = null, { statusLabe
   if (!detail) {
     detail = await api(`/api/sessions/${encodeURIComponent(sessionId)}`);
   }
-  const runId = detail.run_id || detail.linked_runs?.[0]?.run_id || null;
+  const cycleId = detail.cycle_id || detail.session_id;
+  const runId = detail.run_id || cycleId || detail.linked_runs?.[0]?.run_id || null;
+  const hasInlineQa = Boolean(detail.qa_report?.overall_verdict || detail.qa_report?.issues?.length);
 
-  if (!runId) {
+  if (!runId && !hasInlineQa) {
     runBlock.classList.add("empty");
     runBlock.innerHTML = renderSessionQaEmptyState(detail, { statusLabel });
     updateSessionRunChrome(sessionId, { emptyReason: statusLabel || "QA raporu yok" });
     return;
   }
 
+  const fetchId = runId || cycleId;
   try {
-    const run = await api(`/api/runs/${encodeURIComponent(runId)}`);
-    renderRunDetail(run, "feedback-run-block", { includeSession: false });
-    updateSessionRunChrome(sessionId, { runDetail: run });
+    const run = await api(`/api/runs/${encodeURIComponent(fetchId)}`);
+    activeRunId = fetchId;
+    activeRunDetail = { ...run, session_id: sessionId, cycle_id: cycleId };
+    renderRunDetail(activeRunDetail, "feedback-run-block", { includeSession: false });
+    updateSessionRunChrome(sessionId, { runDetail: activeRunDetail });
   } catch (err) {
+    if (hasInlineQa) {
+      activeRunDetail = {
+        run_id: cycleId,
+        cycle_id: cycleId,
+        session_id: sessionId,
+        created_at: detail.created_at,
+        qa_report: detail.qa_report,
+        fixes: detail.fixes,
+        summary: detail.summary,
+      };
+      renderRunDetail(activeRunDetail, "feedback-run-block", { includeSession: false });
+      updateSessionRunChrome(sessionId, { runDetail: activeRunDetail });
+      return;
+    }
     runBlock.classList.add("empty");
-    runBlock.innerHTML = `<div class="empty">Run yüklenemedi: ${esc(err.message)}</div>`;
-    updateSessionRunChrome(sessionId, { emptyReason: "Run yüklenemedi" });
+    runBlock.innerHTML = `<div class="empty">Döngü yüklenemedi: ${esc(err.message)}</div>`;
+    updateSessionRunChrome(sessionId, { emptyReason: "Döngü yüklenemedi" });
   }
 }
 

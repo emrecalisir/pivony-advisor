@@ -247,7 +247,8 @@ def run_loop(iterations: int = 1) -> None:
         _update_job(
             phase="done",
             message="Run tamamlandı",
-            run_id=run_data.get("run_id"),
+            run_id=run_data.get("session_id") or run_data.get("run_id"),
+            cycle_id=run_data.get("session_id") or run_data.get("run_id"),
             session_id=run_data.get("session_id"),
             qa_verdict=(run_data.get("qa_report") or {}).get("overall_verdict"),
             issue_count=(run_data.get("summary") or {}).get("issue_count"),
@@ -303,7 +304,8 @@ def run_analyze(session_id: str) -> None:
     )
     _update_job(
         phase="done",
-        run_id=run_data.get("run_id"),
+        run_id=session_id,
+        cycle_id=session_id,
         session_id=session_id,
         qa_verdict=(run_data.get("qa_report") or {}).get("overall_verdict"),
     )

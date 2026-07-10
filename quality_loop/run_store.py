@@ -139,13 +139,16 @@ def save_run(
     run_id: str | None = None,
     job_id: str | None = None,
 ) -> Path:
-    """Write canonical run manifest under outputs/runs/."""
+    """Finalize unified cycle manifest (session file); mirror legacy runs/ for compat."""
+    from quality_loop.cycle_store import cycle_as_run, finalize_cycle
     from quality_loop.fix_snapshots import enrich_fixes
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
-    rid = run_id or new_run_id()
     phases = [_task_output(task, phase=phase, agent=agent) for task, phase, agent in tasks]
     linked_session = session_id or _extract_session_id(phases)
+    if not linked_session:
+        raise ValueError("session_id is required to finalize a cycle")
+    cid = linked_session
     qa_report = _qa_from_phases(phases)
     fixes = enrich_fixes(
         _fixes_from_phases(phases),
@@ -153,70 +156,99 @@ def save_run(
         qa_report=qa_report if isinstance(qa_report, dict) else None,
     )
     final_text = str(getattr(final_result, "raw", None) or final_result)
-
-    payload: dict[str, Any] = {
-        "run_id": rid,
-        "mode": mode,
-        "iteration": iteration,
-        "created_at": _utcnow_iso(),
-        "session_id": linked_session,
-        "advisor_url": advisor_url,
-        "job_id": job_id or os.environ.get("QUALITY_LOOP_JOB_ID"),
-        "phases": phases,
-        "qa_report": qa_report,
-        "fixes": fixes,
-        "final_result": final_text,
-        "summary": {
-            "verdict": (qa_report or {}).get("overall_verdict") if isinstance(qa_report, dict) else None,
-            "issue_count": len((qa_report or {}).get("issues") or []) if isinstance(qa_report, dict) else 0,
-            "fixes_applied": len((fixes or {}).get("fixes_applied") or []) if isinstance(fixes, dict) else 0,
-            "fixes_skipped": len((fixes or {}).get("fixes_skipped") or []) if isinstance(fixes, dict) else 0,
-            "avg_score": _avg_score_from_qa(qa_report if isinstance(qa_report, dict) else None),
-            "turn_count": (phases[0].get("parsed_output") or {}).get("turn_count")
-            if phases and phases[0].get("phase") == "conversation"
-            and isinstance(phases[0].get("parsed_output"), dict)
-            else None,
-        },
+    summary = {
+        "verdict": (qa_report or {}).get("overall_verdict") if isinstance(qa_report, dict) else None,
+        "issue_count": len((qa_report or {}).get("issues") or []) if isinstance(qa_report, dict) else 0,
+        "fixes_applied": len((fixes or {}).get("fixes_applied") or []) if isinstance(fixes, dict) else 0,
+        "fixes_skipped": len((fixes or {}).get("fixes_skipped") or []) if isinstance(fixes, dict) else 0,
+        "avg_score": _avg_score_from_qa(qa_report if isinstance(qa_report, dict) else None),
+        "turn_count": (phases[0].get("parsed_output") or {}).get("turn_count")
+        if phases and phases[0].get("phase") == "conversation"
+        and isinstance(phases[0].get("parsed_output"), dict)
+        else None,
     }
 
-    path = RUNS_DIR / f"{rid}.json"
+    session = finalize_cycle(
+        cid,
+        {
+            "mode": mode,
+            "iteration": iteration,
+            "job_id": job_id or os.environ.get("QUALITY_LOOP_JOB_ID"),
+            "advisor_url": advisor_url,
+            "phases": phases,
+            "qa_report": qa_report,
+            "fixes": fixes,
+            "final_result": final_text,
+            "summary": summary,
+            "status": "done",
+        },
+    )
+
+    payload = cycle_as_run(session)
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in cid)
+    path = RUNS_DIR / f"{safe}.json"
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
-    # Legacy iteration/analyze files still written by crew.py for backward compatibility.
     return path
 
 
 def list_runs() -> list[dict[str, Any]]:
+    from quality_loop.cycle_store import list_completed_cycles
+
+    unified = list_completed_cycles()
+    seen = {row["run_id"] for row in unified}
     if not RUNS_DIR.exists():
-        return []
-    rows: list[dict[str, Any]] = []
+        return unified
     for path in sorted(RUNS_DIR.glob("run_*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
         try:
             data = _read_json(path)
-            rows.append(
-                {
-                    "run_id": data.get("run_id") or path.stem,
-                    "mode": data.get("mode"),
-                    "iteration": data.get("iteration"),
-                    "session_id": data.get("session_id"),
-                    "created_at": data.get("created_at"),
-                    "summary": data.get("summary") or {},
-                    "file": path.name,
-                    "modified_at": datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"),
-                }
-            )
+            rid = data.get("run_id") or path.stem
+            if rid in seen:
+                continue
+            rows_item = {
+                "run_id": rid,
+                "cycle_id": data.get("cycle_id") or data.get("session_id") or rid,
+                "mode": data.get("mode"),
+                "iteration": data.get("iteration"),
+                "session_id": data.get("session_id") or rid,
+                "created_at": data.get("created_at"),
+                "summary": data.get("summary") or {},
+                "file": path.name,
+                "modified_at": datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+                .isoformat(timespec="seconds"),
+            }
+            unified.append(rows_item)
+            seen.add(rid)
         except (json.JSONDecodeError, OSError, ValueError):
             continue
-    return rows
+    unified.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+    return unified
 
 
 def load_run(run_id: str) -> dict[str, Any]:
+    from quality_loop.cycle_store import cycle_as_run, is_completed_cycle
+    from quality_loop.session_store import load_session
+
+    session = load_session(run_id)
+    if session and is_completed_cycle(session):
+        return cycle_as_run(session)
+
     safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in run_id)
     path = RUNS_DIR / f"{safe}.json"
-    if not path.exists():
-        raise FileNotFoundError(run_id)
-    return _read_json(path)
+    if path.exists():
+        data = _read_json(path)
+        linked = data.get("session_id")
+        if linked and linked != run_id:
+            merged = load_session(str(linked))
+            if merged and is_completed_cycle(merged):
+                return cycle_as_run(merged)
+        return data
+
+    if session:
+        return cycle_as_run(session)
+
+    raise FileNotFoundError(run_id)
 
 
 def _read_json(path: Path) -> dict[str, Any]:

@@ -173,19 +173,54 @@ class CreateSessionTool(BaseTool):
         effective_user_email = env_email or user_email
         effective_sector = env_sector or sector or "hospitality"
 
+        pinned = _pinned_cycle_for_job()
+        if pinned:
+            cid = pinned.get("cycle_id") or pinned.get("session_id")
+            return json.dumps(
+                {
+                    "session_id": cid,
+                    "cycle_id": cid,
+                    "note": (
+                        "Mevcut döngü kullanılıyor (session ≡ run, tek cycle_id). "
+                        "Use pivony_advisor_chat for each turn."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+
         session = create_session(
             user_id=effective_user_id,
             user_email=effective_user_email,
             sector=effective_sector,
             advisor_mode=advisor_mode,
         )
+        cid = session["session_id"]
         return json.dumps(
             {
-                "session_id": session["session_id"],
+                "session_id": cid,
+                "cycle_id": cid,
                 "note": (
                     "Advisor is stateless; history is kept in quality_loop/outputs/sessions/. "
-                    "Use pivony_advisor_chat for each turn."
+                    "session_id and cycle_id are the same. Use pivony_advisor_chat for each turn."
                 ),
             },
             ensure_ascii=False,
         )
+
+
+def _pinned_cycle_for_job() -> dict | None:
+    import os
+
+    job_id = os.environ.get("QUALITY_LOOP_JOB_ID", "").strip()
+    if not job_id:
+        return None
+    from quality_loop.run_manager import load_job
+
+    try:
+        job = load_job(job_id)
+    except FileNotFoundError:
+        return None
+    sid = job.get("cycle_id") or job.get("session_id")
+    if not sid:
+        return None
+    return load_session(str(sid))
