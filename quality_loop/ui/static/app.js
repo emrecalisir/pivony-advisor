@@ -535,7 +535,7 @@ function renderDashboardPicker(picker) {
     </div>`;
 }
 
-function renderTurns(turns, autoIssues, { collapsibleReasoning = true } = {}) {
+function renderTurns(turns, autoIssues, { collapsibleReasoning = true, showQaIssues = true } = {}) {
   const issueHtml = autoIssues?.length
     ? `<div class="meta-block"><h4>Otomatik Uyarılar</h4><div class="chips">${autoIssues
         .map((i) => `<span class="chip issue">${esc(i)}</span>`)
@@ -564,7 +564,7 @@ function renderTurns(turns, autoIssues, { collapsibleReasoning = true } = {}) {
       <article class="turn">
         <div class="turn-header">
           <span class="turn-num">Tur ${turn.turn}</span>
-          <span class="turn-meta">${tools.length} tool · ${qaIssues.length} QA issue</span>
+          <span class="turn-meta">${tools.length ? `${tools.length} tool` : "—"}${showQaIssues && qaIssues.length ? ` · ${qaIssues.length} QA issue` : ""}</span>
         </div>
         <div class="turn-thread">
           <div class="msg msg-right">
@@ -785,26 +785,10 @@ function renderRunDetail(run, targetId, { includeSession = true } = {}) {
 }
 
 function renderSessionDetailBody(detail) {
-  const linked = (detail.linked_runs || [])
-    .map((r) => `<span class="chip">${esc(r.run_id)}</span>`)
-    .join("");
-  const qa = detail.qa_report || {};
-  const qaBlock = qa.overall_verdict
-    ? `<div class="meta-block verdict-box">
-        <h4>QA Raporu ${detail.run_id ? `<span class="chip">${esc(detail.run_id)}</span>` : ""}
-          <span class="verdict ${esc(qa.overall_verdict)}">${esc(qa.overall_verdict)}</span>
-        </h4>
-        ${qa.priority_fix ? `<p>${esc(qa.priority_fix)}</p>` : ""}
-        ${renderScores(qa)}
-        ${renderIssues(qa.issues || [], { compact: true })}
-      </div>`
-    : "";
   return `
     ${renderSessionHeader(detail)}
-    ${linked ? `<div class="meta-block"><h4>Bağlı Run'lar</h4><div class="chips">${linked}</div></div>` : ""}
-    ${qaBlock}
     <div class="conversation-thread">
-      ${renderTurns(detail.turns, detail.auto_issues)}
+      ${renderTurns(detail.turns, detail.auto_issues, { showQaIssues: false })}
     </div>`;
 }
 
