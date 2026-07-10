@@ -1761,12 +1761,39 @@ function updateSourceBadge() {
   document.getElementById("source-badge").textContent = base ? `Kaynak: ${base}` : "Kaynak: local";
 }
 
-async function refreshAll() {
+async function refreshCurrentView() {
   const overview = await api("/api/overview");
   renderStats(overview);
-  await loadFeedback();
+  const view = viewFromLocation();
+  await navigateToView(view, { syncUrl: false });
   await pollActiveJob();
   updateSourceBadge();
+}
+
+async function manualRefresh() {
+  const btn = document.getElementById("refresh-btn");
+  if (btn?.disabled) return;
+  const label = btn?.textContent || "↻ Yenile";
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Yenileniyor…";
+  }
+  try {
+    await refreshCurrentView();
+  } catch (err) {
+    console.error(err);
+    const subtitle = document.getElementById("subtitle");
+    if (subtitle) subtitle.textContent = `Yenileme hatası: ${err.message}`;
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  }
+}
+
+async function refreshAll() {
+  await refreshCurrentView();
 }
 
 async function boot() {
@@ -1811,6 +1838,9 @@ async function boot() {
     await refreshAll();
   });
 
+  document.getElementById("refresh-btn")?.addEventListener("click", () => {
+    manualRefresh().catch(console.error);
+  });
   document.getElementById("sync-hint-btn").addEventListener("click", () => {
     document.getElementById("sync-modal").classList.remove("hidden");
   });
