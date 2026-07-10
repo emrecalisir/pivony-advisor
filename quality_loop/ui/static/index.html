@@ -113,7 +113,8 @@
 
             <div class="workbench-tabs" role="tablist">
               <button class="tab-btn active" type="button" data-tab="conversation" role="tab">Konuşma</button>
-              <button class="tab-btn" type="button" data-tab="run-qa" role="tab">QA &amp; İyileştirme</button>
+              <button class="tab-btn" type="button" data-tab="run-qa" role="tab">QA</button>
+              <button class="tab-btn" type="button" data-tab="run-fixes" role="tab">Coding Agent</button>
               <button class="tab-btn hidden" type="button" data-tab="live" id="live-tab-btn" role="tab">Canlı</button>
             </div>
 
@@ -128,11 +129,21 @@
 
               <div id="tab-run-qa" class="tab-panel hidden" role="tabpanel">
                 <div class="tab-panel-toolbar panel-header-split">
-                  <h3 id="feedback-run-tab-title">QA &amp; İyileştirme</h3>
+                  <h3 id="feedback-run-tab-title">QA Değerlendirmesi</h3>
                   <span class="muted-small" id="feedback-run-tab-meta"></span>
                 </div>
                 <div id="feedback-run-block" class="tab-panel-body run-detail-panel empty">
                   Henüz session yok — <strong>Yeni Session Başlat</strong> ile başlayın
+                </div>
+              </div>
+
+              <div id="tab-run-fixes" class="tab-panel hidden" role="tabpanel">
+                <div class="tab-panel-toolbar panel-header-split">
+                  <h3 id="feedback-fixes-tab-title">Coding Agent</h3>
+                  <span class="muted-small" id="feedback-fixes-tab-meta"></span>
+                </div>
+                <div id="feedback-fixes-block" class="tab-panel-body run-detail-panel empty">
+                  QA tamamlandıktan sonra coding agent fix'leri burada görünür
                 </div>
               </div>
 

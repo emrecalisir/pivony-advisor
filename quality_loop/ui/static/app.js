@@ -713,7 +713,7 @@ function renderRunHero(run) {
     </div>`;
 }
 
-function renderRunDetail(run, targetId, { includeSession = true } = {}) {
+function renderRunDetail(run, targetId, { includeSession = true, panel = "all" } = {}) {
   const el = document.getElementById(targetId);
   if (!el) return;
   el.classList.remove("empty");
@@ -722,39 +722,64 @@ function renderRunDetail(run, targetId, { includeSession = true } = {}) {
   const fixes = run.fixes || {};
   const verdict = qa.overall_verdict || run.summary?.verdict;
   const sessionBlock =
-    includeSession && run.session_detail?.turns?.length
+    includeSession && panel === "all" && run.session_detail?.turns?.length
       ? `<section class="run-section">
         <h4 class="run-section-title">Konuşma <span class="muted-small">${esc(run.session_id || "")}</span></h4>
         <div class="conversation-thread">${renderTurns(run.session_detail.turns, run.session_detail.auto_issues)}</div>
       </section>`
-      : includeSession && run.session_id
+      : includeSession && panel === "all" && run.session_id
         ? `<div class="empty">Session dosyası henüz sync edilmemiş: ${esc(run.session_id)}</div>`
         : "";
 
-  el.innerHTML = `
-    <div class="run-detail">
-      <div class="chips run-chips">
+  const chipsHtml =
+    panel === "all"
+      ? `<div class="chips run-chips">
         <span class="chip">${esc(run.mode)}</span>
         ${run.iteration != null ? `<span class="chip">iter ${esc(run.iteration)}</span>` : ""}
         ${verdict ? `<span class="verdict ${esc(verdict)}">${esc(verdict)}</span>` : ""}
         <span class="chip">${esc(run.summary?.issue_count ?? 0)} issue</span>
         <span class="chip ${(run.summary?.fixes_applied ?? 0) > 0 ? "warn" : ""}">${esc(run.summary?.fixes_applied ?? 0)} fix önerisi</span>
-      </div>
-      ${renderRunHero(run)}
-      ${renderPhaseSummary(run)}
-      ${renderFixesSummary(fixes)}
+      </div>`
+      : panel === "qa"
+        ? `<div class="chips run-chips">
+        ${verdict ? `<span class="verdict ${esc(verdict)}">${esc(verdict)}</span>` : ""}
+        <span class="chip">${esc(run.summary?.issue_count ?? (qa.issues || []).length)} issue</span>
+      </div>`
+        : `<div class="chips run-chips">
+        <span class="chip ${(run.summary?.fixes_applied ?? 0) > 0 ? "warn" : ""}">${esc(run.summary?.fixes_applied ?? (fixes.fixes_applied || []).length)} uygulanan</span>
+        <span class="chip">${esc((fixes.fixes_skipped || []).length)} atlanan</span>
+      </div>`;
+
+  const qaHtml =
+    panel === "fixes"
+      ? ""
+      : `
+      ${panel !== "fixes" ? renderRunHero(run) : ""}
+      ${panel === "all" ? renderPhaseSummary(run) : ""}
+      ${panel === "all" ? renderFixesSummary(fixes) : ""}
       ${sessionBlock}
       <section class="run-section">
         <h4 class="run-section-title">QA Değerlendirmesi</h4>
         ${qa.scores ? renderScores(qa) : ""}
         ${qa.priority_fix && verdict ? "" : qa.priority_fix ? `<p class="priority-fix">${esc(qa.priority_fix)}</p>` : ""}
         ${renderIssues(qa.issues || [], { compact: true })}
-      </section>
+      </section>`;
+
+  const fixesHtml =
+    panel === "qa"
+      ? ""
+      : `
       <section class="run-section">
-        <h4 class="run-section-title">İyileştirmeler — detay</h4>
-        ${renderFixes(fixes)}
-      </section>
-      ${renderPhaseTechnical(run)}
+        <h4 class="run-section-title">Coding Agent — uygulanan fix'ler</h4>
+        ${renderFixes(fixes, { showScenarios: true, showDiffs: panel !== "all" })}
+      </section>`;
+
+  el.innerHTML = `
+    <div class="run-detail">
+      ${chipsHtml}
+      ${qaHtml}
+      ${fixesHtml}
+      ${panel === "all" ? renderPhaseTechnical(run) : ""}
     </div>
   `;
   if (includeSession && run.session_detail?.turns?.length) {
@@ -774,12 +799,24 @@ function renderRunDetail(run, targetId, { includeSession = true } = {}) {
   if (targetId === "feedback-run-block") {
     const title = document.getElementById("feedback-run-tab-title");
     const meta = document.getElementById("feedback-run-tab-meta");
-    if (title) title.textContent = run.run_id || "QA & İyileştirme";
+    if (title) title.textContent = "QA Değerlendirmesi";
     if (meta) {
       const parts = [fmtDate(run.created_at)];
       if (verdict) parts.push(verdict);
       if (run.summary?.issue_count != null) parts.push(`${run.summary.issue_count} issue`);
       meta.textContent = parts.filter(Boolean).join(" · ");
+    }
+  }
+  if (targetId === "feedback-fixes-block") {
+    const title = document.getElementById("feedback-fixes-tab-title");
+    const meta = document.getElementById("feedback-fixes-tab-meta");
+    const applied = (fixes.fixes_applied || []).length;
+    const skipped = (fixes.fixes_skipped || []).length;
+    if (title) title.textContent = "Coding Agent";
+    if (meta) {
+      meta.textContent = [fmtDate(run.created_at), `${applied} uygulanan`, skipped ? `${skipped} atlanan` : null]
+        .filter(Boolean)
+        .join(" · ");
     }
   }
 }
@@ -977,7 +1014,7 @@ function setWorkbenchTab(tabName) {
       if (body) body.scrollTop = 0;
     }
   });
-  if (tabName === "run-qa" && activeSessionId) {
+  if ((tabName === "run-qa" || tabName === "run-fixes") && activeSessionId) {
     if (!activeRunDetail || activeRunDetail.session_id !== activeSessionId) {
       loadSessionRunPanel(activeSessionId).catch(() => {});
     } else {
@@ -1318,13 +1355,37 @@ function renderSessionQaEmptyState(detail, { statusLabel = null } = {}) {
     </div>`;
 }
 
+function renderSessionFixesEmptyState(detail, { statusLabel = null } = {}) {
+  const sid = detail?.session_id || "—";
+  const label = statusLabel || "Coding yok";
+  const reason =
+    label === "Devam ediyor"
+      ? "Döngü hâlâ çalışıyor. Coding Agent, QA tamamlandıktan sonra fix üretir — bitince bu sekmede görünür."
+      : label === "Döngü hatası"
+        ? "Döngü QA veya coding aşamasında hata vermiş olabilir; fix kaydı oluşmamış."
+        : "Bu session için henüz coding agent çıktısı yok. Tam döngü (CX → QA → Coding) tamamlanmış olmalı.";
+  return `
+    <div class="qa-empty-state">
+      <h4>Coding Agent çıktısı yok</h4>
+      <p>${esc(reason)}</p>
+      <div class="meta-block muted-small">
+        <p><strong>Coding Agent</strong> = QA raporundaki issue'lara kod fix'i üretir (dosya, diff, commit)</p>
+        <p>Session: <code>${esc(sid)}</code> · ${esc(label)}</p>
+      </div>
+    </div>`;
+}
+
 function updateSessionRunChrome(sessionId, { runDetail = null, emptyReason = null } = {}) {
   const meta = document.getElementById("feedback-run-meta");
   const runTabMeta = document.getElementById("feedback-run-tab-meta");
+  const fixesTabMeta = document.getElementById("feedback-fixes-tab-meta");
   const cid = shortSessionId(sessionId);
   if (runDetail?.qa_report || runDetail?.summary?.verdict) {
     const qa = runDetail.qa_report || {};
     const verdict = qa.overall_verdict || runDetail.summary?.verdict;
+    const fixes = runDetail.fixes || {};
+    const applied = (fixes.fixes_applied || []).length;
+    const skipped = (fixes.fixes_skipped || []).length;
     if (meta) {
       meta.textContent = `${cid} · Bitti · ${fmtDate(runDetail.created_at)}`;
     }
@@ -1332,16 +1393,23 @@ function updateSessionRunChrome(sessionId, { runDetail = null, emptyReason = nul
       const parts = [verdict, runDetail.summary?.issue_count != null ? `${runDetail.summary.issue_count} issue` : null];
       runTabMeta.textContent = parts.filter(Boolean).join(" · ");
     }
+    if (fixesTabMeta) {
+      fixesTabMeta.textContent = [`${applied} uygulanan`, skipped ? `${skipped} atlanan` : null]
+        .filter(Boolean)
+        .join(" · ");
+    }
     return;
   }
   activeRunId = null;
   activeRunDetail = null;
   if (meta) meta.textContent = `${shortSessionId(sessionId)} · ${emptyReason || "QA yok"}`;
   if (runTabMeta) runTabMeta.textContent = emptyReason || "Tamamlanmış döngü yok";
+  if (fixesTabMeta) fixesTabMeta.textContent = emptyReason || "Fix kaydı yok";
 }
 
 async function loadSessionRunPanel(sessionId, sessionDetail = null, { statusLabel = null } = {}) {
   const runBlock = document.getElementById("feedback-run-block");
+  const fixesBlock = document.getElementById("feedback-fixes-block");
   if (!sessionId || !runBlock) return;
 
   let detail = sessionDetail;
@@ -1351,10 +1419,17 @@ async function loadSessionRunPanel(sessionId, sessionDetail = null, { statusLabe
   const cycleId = detail.cycle_id || detail.session_id;
   const runId = detail.run_id || cycleId || detail.linked_runs?.[0]?.run_id || null;
   const hasInlineQa = Boolean(detail.qa_report?.overall_verdict || detail.qa_report?.issues?.length);
+  const hasInlineFixes = Boolean(
+    (detail.fixes?.fixes_applied || []).length || (detail.fixes?.fixes_skipped || []).length
+  );
 
   if (!runId && !hasInlineQa) {
     runBlock.classList.add("empty");
     runBlock.innerHTML = renderSessionQaEmptyState(detail, { statusLabel });
+    if (fixesBlock) {
+      fixesBlock.classList.add("empty");
+      fixesBlock.innerHTML = renderSessionFixesEmptyState(detail, { statusLabel });
+    }
     updateSessionRunChrome(sessionId, { emptyReason: statusLabel || "QA raporu yok" });
     return;
   }
@@ -1364,10 +1439,13 @@ async function loadSessionRunPanel(sessionId, sessionDetail = null, { statusLabe
     const run = await api(`/api/runs/${encodeURIComponent(fetchId)}`);
     activeRunId = fetchId;
     activeRunDetail = { ...run, session_id: sessionId, cycle_id: cycleId };
-    renderRunDetail(activeRunDetail, "feedback-run-block", { includeSession: false });
+    renderRunDetail(activeRunDetail, "feedback-run-block", { includeSession: false, panel: "qa" });
+    if (fixesBlock) {
+      renderRunDetail(activeRunDetail, "feedback-fixes-block", { includeSession: false, panel: "fixes" });
+    }
     updateSessionRunChrome(sessionId, { runDetail: activeRunDetail });
   } catch (err) {
-    if (hasInlineQa) {
+    if (hasInlineQa || hasInlineFixes) {
       activeRunDetail = {
         run_id: cycleId,
         cycle_id: cycleId,
@@ -1377,12 +1455,19 @@ async function loadSessionRunPanel(sessionId, sessionDetail = null, { statusLabe
         fixes: detail.fixes,
         summary: detail.summary,
       };
-      renderRunDetail(activeRunDetail, "feedback-run-block", { includeSession: false });
+      renderRunDetail(activeRunDetail, "feedback-run-block", { includeSession: false, panel: "qa" });
+      if (fixesBlock) {
+        renderRunDetail(activeRunDetail, "feedback-fixes-block", { includeSession: false, panel: "fixes" });
+      }
       updateSessionRunChrome(sessionId, { runDetail: activeRunDetail });
       return;
     }
     runBlock.classList.add("empty");
     runBlock.innerHTML = `<div class="empty">Döngü yüklenemedi: ${esc(err.message)}</div>`;
+    if (fixesBlock) {
+      fixesBlock.classList.add("empty");
+      fixesBlock.innerHTML = renderSessionFixesEmptyState(detail, { statusLabel });
+    }
     updateSessionRunChrome(sessionId, { emptyReason: "Döngü yüklenemedi" });
   }
 }
@@ -1438,7 +1523,7 @@ async function loadFeedback({ preserveActiveJob = false } = {}) {
     document.getElementById("feedback-run-meta").textContent = "";
     const runTabTitle = document.getElementById("feedback-run-tab-title");
     const runTabMeta = document.getElementById("feedback-run-tab-meta");
-    if (runTabTitle) runTabTitle.textContent = "QA & İyileştirme";
+    if (runTabTitle) runTabTitle.textContent = "QA Değerlendirmesi";
     if (runTabMeta) runTabMeta.textContent = "";
     return;
   }
