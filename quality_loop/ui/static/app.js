@@ -768,9 +768,14 @@ function renderRunDetail(run, targetId, { includeSession = true } = {}) {
     setExportContext(
       buildExportPayloadFromDetail(run.session_detail, {
         run_id: run.run_id,
+        job_id: run.job_id,
         qa_report: run.qa_report,
+        fixes: run.fixes,
+        summary: run.summary,
       })
     );
+  } else {
+    syncRunExportContext(run);
   }
 
   if (targetId === "feedback-run-block") {
@@ -857,6 +862,8 @@ function showSessionDetail(detail, { runId = null, listContainerId = null } = {}
 }
 
 let activeSessionId = null;
+let activeRunId = null;
+let activeRunDetail = null;
 let activeLiveJob = null;
 let lastLiveTurnCount = 0;
 
@@ -995,6 +1002,9 @@ function setWorkbenchTab(tabName) {
       if (body) body.scrollTop = 0;
     }
   });
+  if (tabName === "run-qa" && activeRunDetail) {
+    syncRunExportContext(activeRunDetail);
+  }
 }
 
 function updateWorkbenchToolbar({ job = activeLiveJob, hasSession = false } = {}) {
@@ -1024,10 +1034,11 @@ function updateWorkbenchToolbar({ job = activeLiveJob, hasSession = false } = {}
   liveTabBtn?.classList.toggle("hidden", !running);
 
   const canExport = hasSession || Boolean(exportContext?.messages?.length);
+  const canQa = hasQaExportData();
   conversationJsonBtn?.classList.toggle("hidden", !canExport);
-  qaJsonBtn?.classList.toggle("hidden", !canExport);
-  exportBtn?.classList.toggle("hidden", !canExport);
-  document.getElementById("export-btn")?.classList.toggle("hidden", !canExport);
+  qaJsonBtn?.classList.toggle("hidden", !canQa);
+  exportBtn?.classList.toggle("hidden", !canExport && !canQa);
+  document.getElementById("export-btn")?.classList.toggle("hidden", !canExport && !canQa);
 
   if (langsmithLink) {
     if (running && job.langsmith_url) {
@@ -1400,19 +1411,58 @@ function renderFlowSteps(flow) {
     .join("")}</div>`;
 }
 
+function hasQaExportData(ctx = exportContext) {
+  const qa = ctx?.meta?.qa_report;
+  return Boolean(qa?.overall_verdict || qa?.issues?.length || qa?.priority_fix);
+}
+
+function syncRunExportContext(run) {
+  if (!run) return;
+  activeRunId = run.run_id || null;
+  activeRunDetail = run;
+  const sessionDetail = run.session_detail;
+  const messages = sessionDetail?.turns?.length
+    ? window.QlExport.turnsToMessages(sessionDetail.turns)
+    : [];
+  setExportContext({
+    sessionId: run.session_id || sessionDetail?.session_id || null,
+    title: run.run_id || shortSessionId(run.session_id || "qa"),
+    messages,
+    meta: {
+      session_id: run.session_id || sessionDetail?.session_id || null,
+      sector: sessionDetail?.sector || null,
+      user_email: sessionDetail?.user_email || null,
+      user_id: sessionDetail?.user_id || null,
+      run_id: run.run_id || null,
+      job_id: run.job_id || null,
+      turn_count: sessionDetail?.turns?.length || null,
+      qa_report: run.qa_report || null,
+      fixes: run.fixes || null,
+      summary: run.summary || null,
+    },
+  });
+  updateExportButtons(Boolean(messages.length || hasQaExportData()));
+  updateWorkbenchToolbar({
+    hasSession: Boolean(messages.length || hasQaExportData()),
+  });
+}
+
 function updateExportButtons(hasMessages) {
-  document.getElementById("export-btn")?.classList.toggle("hidden", !hasMessages);
-  document.getElementById("session-export-btn")?.classList.toggle("hidden", !hasMessages);
+  const canQa = hasQaExportData();
+  document.getElementById("export-btn")?.classList.toggle("hidden", !hasMessages && !canQa);
+  document.getElementById("session-export-btn")?.classList.toggle("hidden", !hasMessages && !canQa);
+  document.getElementById("toolbar-qa-json-btn")?.classList.toggle("hidden", !canQa);
 }
 
 function setExportContext(ctx) {
   exportContext = ctx;
-  updateExportButtons(Boolean(ctx?.messages?.length));
+  updateExportButtons(Boolean(ctx?.messages?.length || hasQaExportData(ctx)));
   const subtitle = document.getElementById("export-modal-subtitle");
   if (subtitle) {
-    subtitle.textContent = ctx?.title
-      ? `${ctx.title}${ctx.messages?.length ? ` · ${ctx.messages.length} mesaj` : ""}`
-      : "";
+    const parts = [ctx?.title].filter(Boolean);
+    if (ctx?.messages?.length) parts.push(`${ctx.messages.length} mesaj`);
+    if (hasQaExportData(ctx)) parts.push("QA raporu");
+    subtitle.textContent = parts.join(" · ");
   }
 }
 
@@ -1431,14 +1481,18 @@ function buildExportPayloadFromDetail(detail, extra = {}) {
       user_email: detail.user_email,
       user_id: detail.user_id,
       run_id: runId,
+      job_id: extra.job_id || null,
+      turn_count: turns.length,
       qa_report: detail.qa_report || extra.qa_report || null,
+      fixes: extra.fixes || null,
+      summary: extra.summary || null,
       ...extra,
     },
   };
 }
 
 function openExportModal() {
-  if (!exportContext?.messages?.length) return;
+  if (!exportContext?.messages?.length && !hasQaExportData()) return;
   document.getElementById("export-modal")?.classList.remove("hidden");
 }
 
@@ -1479,10 +1533,17 @@ function apiUrl(path) {
   return rel;
 }
 
-async function downloadSessionExport(sessionId, format = "json", jobId = null, scope = "conversation") {
+async function downloadSessionExport(
+  sessionId,
+  format = "json",
+  jobId = null,
+  scope = "conversation",
+  runId = null
+) {
   const ext = format === "md" ? "export.md" : "export.json";
   const params = new URLSearchParams({ scope });
-  if (jobId) params.set("job_id", jobId);
+  if (runId) params.set("run_id", runId);
+  else if (jobId) params.set("job_id", jobId);
   const url = apiUrl(`api/sessions/${encodeURIComponent(sessionId)}/${ext}?${params}`);
   const res = await fetch(url, fetchOptions());
   if (res.status === 401) {
@@ -1495,8 +1556,29 @@ async function downloadSessionExport(sessionId, format = "json", jobId = null, s
   const match = disp.match(/filename="?([^";]+)"?/);
   const fallback =
     scope === "qa"
-      ? `pivony-quality-loop-qa-${String(sessionId).slice(0, 12)}.${format === "md" ? "md" : "json"}`
+      ? `pivony-quality-loop-qa-${String(runId || sessionId).slice(0, 20)}.${format === "md" ? "md" : "json"}`
       : `pivony-quality-loop-conversation-${String(sessionId).slice(0, 12)}.${format === "md" ? "md" : "json"}`;
+  const filename = match?.[1] || fallback;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function downloadRunQaExport(runId, format = "json") {
+  const ext = format === "md" ? "export.md" : "export.json";
+  const url = apiUrl(`api/runs/${encodeURIComponent(runId)}/qa/${ext}`);
+  const res = await fetch(url, fetchOptions());
+  if (res.status === 401) {
+    showLoginOverlay();
+    throw new Error("login required");
+  }
+  if (!res.ok) throw new Error(`${res.status}`);
+  const blob = await res.blob();
+  const disp = res.headers.get("Content-Disposition") || "";
+  const match = disp.match(/filename="?([^";]+)"?/);
+  const fallback = `pivony-quality-loop-qa-${String(runId).slice(0, 24)}.${format === "md" ? "md" : "json"}`;
   const filename = match?.[1] || fallback;
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -1520,7 +1602,16 @@ function downloadConversationJson(sessionId, jobId = null) {
   ).catch((err) => alert(`Konuşma indirilemedi: ${err.message}`));
 }
 
-function downloadQaJson(sessionId, jobId = null) {
+function downloadQaJson(sessionId, jobId = null, runId = null) {
+  const run = runId || exportContext?.meta?.run_id || activeRunId || null;
+  if (hasQaExportData() && (!run || exportContext?.meta?.run_id === run)) {
+    window.QlExport.downloadQaJson(exportContext);
+    return;
+  }
+  if (run) {
+    downloadRunQaExport(run).catch((err) => alert(`QA indirilemedi: ${err.message}`));
+    return;
+  }
   const sid =
     sessionId ||
     exportContext?.sessionId ||
@@ -1530,8 +1621,9 @@ function downloadQaJson(sessionId, jobId = null) {
   downloadSessionExport(
     sid,
     "json",
-    jobId || exportContext?.meta?.job_id || exportContext?.meta?.run_id || null,
-    "qa"
+    jobId || exportContext?.meta?.job_id || null,
+    "qa",
+    run
   ).catch((err) => alert(`QA indirilemedi: ${err.message}`));
 }
 
@@ -2117,7 +2209,7 @@ async function boot() {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod || !e.shiftKey) return;
       if (e.key !== "e" && e.key !== "E") return;
-      if (!exportContext?.messages?.length) return;
+      if (!exportContext?.messages?.length && !hasQaExportData()) return;
       e.preventDefault();
       openExportModal();
     },

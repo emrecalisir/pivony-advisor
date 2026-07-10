@@ -233,16 +233,28 @@ def build_qa_export_json(
             "scores": qa.get("scores"),
             "issues": qa.get("issues") or [],
             "summary": qa.get("summary"),
-            "fixes": qa.get("fixes"),
         }
     else:
         body["qa_report"] = None
+    fixes = meta.get("fixes")
+    if isinstance(fixes, dict):
+        body["fixes"] = fixes
+    summary = meta.get("summary")
+    if isinstance(summary, dict):
+        body["summary"] = summary
     return body
 
 
-def export_filename(session_id: str, ext: str, *, kind: str = "conversation") -> str:
+def export_filename(
+    session_id: str,
+    ext: str,
+    *,
+    kind: str = "conversation",
+    run_id: str | None = None,
+) -> str:
     date = datetime.now().strftime("%Y-%m-%d")
-    slug = _slugify_filename(session_id)
+    slug_source = run_id if kind == "qa" and run_id else session_id
+    slug = _slugify_filename(slug_source)
     labels = {
         "qa": "pivony-quality-loop-qa",
         "conversation": "pivony-quality-loop-conversation",
@@ -261,6 +273,9 @@ def export_payload_from_session_detail(
     session_id = str(detail.get("session_id") or "")
     linked = detail.get("linked_runs") or []
     run_id = extra.get("run_id") or detail.get("run_id") or (linked[0].get("run_id") if linked else None)
+    qa_report = extra.get("qa_report")
+    if qa_report is None:
+        qa_report = detail.get("qa_report")
     meta = {
         "session_id": session_id,
         "sector": detail.get("sector"),
@@ -269,7 +284,9 @@ def export_payload_from_session_detail(
         "run_id": run_id,
         "job_id": extra.get("job_id"),
         "turn_count": len(turns),
-        "qa_report": detail.get("qa_report") or extra.get("qa_report"),
+        "qa_report": qa_report,
+        "fixes": extra.get("fixes"),
+        "summary": extra.get("summary"),
     }
     title = session_id[:18] + "…" if len(session_id) > 20 else session_id
     if scope == "qa":

@@ -202,9 +202,16 @@
               fix_hint: issue.fix_hint,
               message_index: issue.message_index,
             })),
+            summary: qa.summary || null,
           }
         : null,
     };
+    if (meta.fixes && typeof meta.fixes === "object") {
+      body.fixes = meta.fixes;
+    }
+    if (meta.summary && typeof meta.summary === "object") {
+      body.summary = meta.summary;
+    }
     return body;
   }
 
@@ -227,7 +234,20 @@
       qa.issues.forEach((issue) => {
         const sev = issue.severity ? `[${issue.severity}] ` : "";
         lines.push(`- ${sev}${issue.category || "issue"}: ${issue.description || ""}`);
+        if (issue.evidence) lines.push(`  - Evidence: ${issue.evidence}`);
         if (issue.fix_hint) lines.push(`  - Fix: ${issue.fix_hint}`);
+      });
+    }
+    const fixes = meta.fixes || {};
+    const applied = fixes.applied || [];
+    const skipped = fixes.skipped || [];
+    if (applied.length || skipped.length) {
+      lines.push("", "**Fixes:**");
+      applied.forEach((fix) => {
+        lines.push(`- [applied] ${fix.file || "N/A"}: ${fix.issue || ""}`);
+      });
+      skipped.forEach((fix) => {
+        lines.push(`- [skipped] ${fix.file || "N/A"}: ${fix.issue || ""}`);
       });
     }
     return lines.join("\n").trimEnd() + "\n";
@@ -373,9 +393,10 @@
       type: "application/json;charset=utf-8",
     });
     const date = new Date().toISOString().slice(0, 10);
+    const slugSource = payload.meta?.run_id || payload.sessionId || "qa";
     triggerDownload(
       blob,
-      `pivony-quality-loop-qa-${slugifyFilename(payload.sessionId || "qa")}-${date}.json`
+      `pivony-quality-loop-qa-${slugifyFilename(slugSource)}-${date}.json`
     );
   }
 
@@ -396,9 +417,10 @@
     });
     const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
     const date = new Date().toISOString().slice(0, 10);
+    const slugSource = payload.meta?.run_id || payload.sessionId || "qa";
     triggerDownload(
       blob,
-      `pivony-quality-loop-qa-${slugifyFilename(payload.sessionId || "qa")}-${date}.md`
+      `pivony-quality-loop-qa-${slugifyFilename(slugSource)}-${date}.md`
     );
   }
 

@@ -31,6 +31,7 @@ from quality_loop.ui.auth import (
 )
 from quality_loop.ui.export_builder import (
     build_conversation_export_markdown,
+    build_qa_export_json,
     export_filename,
     export_payload_from_session_detail,
 )
@@ -339,6 +340,77 @@ def _latest_run_for_session(session_id: str) -> dict[str, Any] | None:
         return load_run(str(run_id))
     except FileNotFoundError:
         return None
+
+
+def _normalize_run_id_param(run_id: str | None, job_id: str | None) -> str | None:
+    if run_id and str(run_id).strip():
+        return str(run_id).strip()
+    if job_id and str(job_id).startswith("run_"):
+        return str(job_id).strip()
+    return None
+
+
+def _run_for_session_export(
+    session_id: str,
+    *,
+    run_id: str | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any] | None:
+    candidate = _normalize_run_id_param(run_id, job_id)
+    if candidate:
+        try:
+            run = load_run(candidate)
+        except FileNotFoundError:
+            return _latest_run_for_session(session_id)
+        if run.get("session_id") == session_id:
+            return run
+        return _latest_run_for_session(session_id)
+    return _latest_run_for_session(session_id)
+
+
+def _qa_export_meta_from_run(run: dict[str, Any]) -> dict[str, Any]:
+    session_detail = run.get("session_detail") if isinstance(run.get("session_detail"), dict) else {}
+    fixes = enrich_fixes(
+        run.get("fixes") if isinstance(run.get("fixes"), dict) else None,
+        job_id=run.get("job_id"),
+        qa_report=run.get("qa_report") if isinstance(run.get("qa_report"), dict) else None,
+    )
+    return {
+        "session_id": run.get("session_id"),
+        "sector": session_detail.get("sector"),
+        "user_email": session_detail.get("user_email"),
+        "user_id": session_detail.get("user_id"),
+        "run_id": run.get("run_id"),
+        "job_id": run.get("job_id"),
+        "turn_count": len(session_detail.get("turns") or []),
+        "qa_report": run.get("qa_report"),
+        "fixes": fixes,
+        "summary": run.get("summary"),
+    }
+
+
+def _qa_export_meta_from_session_detail(
+    detail: dict[str, Any],
+    *,
+    run_id: str | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    session_id = str(detail.get("session_id") or "")
+    run = _run_for_session_export(session_id, run_id=run_id, job_id=job_id)
+    if run:
+        return _qa_export_meta_from_run(run)
+    return {
+        "session_id": session_id,
+        "sector": detail.get("sector"),
+        "user_email": detail.get("user_email"),
+        "user_id": detail.get("user_id"),
+        "run_id": detail.get("run_id"),
+        "job_id": job_id,
+        "turn_count": detail.get("turn_count"),
+        "qa_report": detail.get("qa_report"),
+        "fixes": None,
+        "summary": None,
+    }
 
 
 class StartJobRequest(BaseModel):
@@ -749,16 +821,103 @@ def _load_session_detail(session_id: str) -> dict[str, Any]:
     return get_session(session_id)
 
 
+@app.get("/api/runs/{run_id}/qa/export.json")
+def export_run_qa_json(run_id: str) -> Response:
+    try:
+        run = load_run(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="run not found") from exc
+    session_id = str(run.get("session_id") or "")
+    meta = _qa_export_meta_from_run(run)
+    payload = build_qa_export_json(session_id=session_id, meta=meta)
+    filename = export_filename(session_id, "json", kind="qa", run_id=run_id)
+    body = json.dumps(payload, ensure_ascii=False, indent=2)
+    return Response(
+        content=body,
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/runs/{run_id}/qa/export.md")
+def export_run_qa_markdown(run_id: str) -> Response:
+    try:
+        run = load_run(run_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="run not found") from exc
+    session_id = str(run.get("session_id") or "")
+    meta = _qa_export_meta_from_run(run)
+    qa_payload = build_qa_export_json(session_id=session_id, meta=meta)
+    lines = [
+        "# Pivony Quality Loop — QA Report",
+        f"Session: {session_id}",
+        f"Run: {run_id}",
+        f"Exported: {datetime.utcnow().strftime('%d %B %Y %H:%M')} UTC",
+    ]
+    qa = qa_payload.get("qa_report") or {}
+    if qa.get("overall_verdict"):
+        lines.append(f"Verdict: {qa['overall_verdict']}")
+    if qa.get("priority_fix"):
+        lines.append(f"Priority fix: {qa['priority_fix']}")
+    if qa.get("scores"):
+        lines.append("", "**Scores:**")
+        for k, v in (qa.get("scores") or {}).items():
+            lines.append(f"- {k}: {v}")
+    if qa.get("issues"):
+        lines.append("", "**Issues:**")
+        for issue in qa["issues"]:
+            sev = issue.get("severity")
+            prefix = f"[{sev}] " if sev else ""
+            lines.append(f"- {prefix}{issue.get('category', 'issue')}: {issue.get('description', '')}")
+            if issue.get("fix_hint"):
+                lines.append(f"  - Fix: {issue['fix_hint']}")
+            if issue.get("evidence"):
+                lines.append(f"  - Evidence: {issue['evidence']}")
+    fixes = qa_payload.get("fixes") or {}
+    applied = fixes.get("applied") or []
+    skipped = fixes.get("skipped") or []
+    if applied or skipped:
+        lines.append("", "**Fixes:**")
+        for fix in applied:
+            lines.append(f"- [applied] {fix.get('file', 'N/A')}: {fix.get('issue', '')}")
+        for fix in skipped:
+            lines.append(f"- [skipped] {fix.get('file', 'N/A')}: {fix.get('issue', '')}")
+    markdown = "\n".join(lines).strip() + "\n"
+    filename = export_filename(session_id, "md", kind="qa", run_id=run_id)
+    return Response(
+        content=markdown,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.get("/api/sessions/{session_id}/export.json")
 def export_session_json(
     session_id: str,
     job_id: str | None = None,
+    run_id: str | None = None,
     scope: Literal["conversation", "qa", "all"] = "conversation",
 ) -> Response:
     detail = _load_session_detail(session_id)
-    payload, _ = export_payload_from_session_detail(detail, {"job_id": job_id}, scope=scope)
+    extra: dict[str, Any] = {"job_id": job_id}
+    if scope in ("qa", "all"):
+        qa_meta = _qa_export_meta_from_session_detail(detail, run_id=run_id, job_id=job_id)
+        extra.update(
+            {
+                "run_id": qa_meta.get("run_id"),
+                "qa_report": qa_meta.get("qa_report"),
+                "fixes": qa_meta.get("fixes"),
+                "summary": qa_meta.get("summary"),
+            }
+        )
+    payload, _ = export_payload_from_session_detail(detail, extra, scope=scope)
     kind = "qa" if scope == "qa" else "conversation" if scope == "conversation" else "all"
-    filename = export_filename(session_id, "json", kind=kind)
+    filename = export_filename(
+        session_id,
+        "json",
+        kind=kind,
+        run_id=str(extra.get("run_id") or "") or None,
+    )
     body = json.dumps(payload, ensure_ascii=False, indent=2)
     return Response(
         content=body,
@@ -771,24 +930,26 @@ def export_session_json(
 def export_session_markdown(
     session_id: str,
     job_id: str | None = None,
+    run_id: str | None = None,
     scope: Literal["conversation", "qa", "all"] = "conversation",
 ) -> Response:
     detail = _load_session_detail(session_id)
     session_id_str = str(detail.get("session_id") or session_id)
     title = session_id_str[:18] + "…" if len(session_id_str) > 20 else session_id_str
+    qa_meta = _qa_export_meta_from_session_detail(detail, run_id=run_id, job_id=job_id)
     meta = {
         "session_id": session_id_str,
         "sector": detail.get("sector"),
         "user_email": detail.get("user_email"),
         "user_id": detail.get("user_id"),
-        "run_id": detail.get("run_id"),
+        "run_id": qa_meta.get("run_id"),
         "job_id": job_id,
         "turn_count": detail.get("turn_count"),
-        "qa_report": detail.get("qa_report") if scope != "conversation" else None,
+        "qa_report": qa_meta.get("qa_report") if scope != "conversation" else None,
+        "fixes": qa_meta.get("fixes") if scope != "conversation" else None,
+        "summary": qa_meta.get("summary") if scope != "conversation" else None,
     }
     if scope == "qa":
-        from quality_loop.ui.export_builder import build_qa_export_json
-
         qa_payload = build_qa_export_json(session_id=session_id_str, meta=meta)
         lines = [
             f"# Pivony Quality Loop — QA Report",
@@ -815,7 +976,12 @@ def export_session_markdown(
                 if issue.get("fix_hint"):
                     lines.append(f"  - Fix: {issue['fix_hint']}")
         markdown = "\n".join(lines).strip() + "\n"
-        filename = export_filename(session_id_str, "md", kind="qa")
+        filename = export_filename(
+            session_id_str,
+            "md",
+            kind="qa",
+            run_id=str(meta.get("run_id") or "") or None,
+        )
     else:
         _, messages = export_payload_from_session_detail(detail, {"job_id": job_id}, scope="conversation")
         markdown = build_conversation_export_markdown(title=title, messages=messages, meta=meta)
