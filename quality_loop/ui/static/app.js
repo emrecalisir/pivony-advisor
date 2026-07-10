@@ -332,6 +332,8 @@ function deployStatusChip(status) {
     committed_not_pushed: ["warn", "commit (push yok)"],
     commit_push_failed: ["warn", "push başarısız"],
     file_written: ["success", "dosyaya yazıldı"],
+    file_written_and_valid: ["success", "yazıldı + syntax OK"],
+    syntax_error: ["error", "syntax hatası — yazılmadı"],
     success: ["success", "uygulandı"],
     applied: ["success", "uygulandı"],
     deployed: ["success", "uygulandı"],

@@ -94,6 +94,7 @@ def record_fix_snapshot(
         "diff": diff,
         "lines_added": added,
         "lines_removed": removed,
+        "deploy_status": "file_written_and_valid",
         "recorded_at": _utcnow_iso(),
     }
     path = _manifest_path(job_id)
@@ -246,6 +247,9 @@ def _normalize_fix_row(row: dict[str, Any], qa_report: dict[str, Any] | None) ->
 
 
 def _infer_deploy_status(row: dict[str, Any]) -> str | None:
+    explicit = (row.get("deploy_status") or "").strip()
+    if explicit:
+        return explicit
     push = (row.get("git_push_status") or "").lower()
     if row.get("commit_hash"):
         if push == "success":
@@ -255,7 +259,7 @@ def _infer_deploy_status(row: dict[str, Any]) -> str | None:
         if push == "skipped":
             return "committed_not_pushed"
     if row.get("diff") or row.get("lines_added"):
-        return "file_written"
+        return "file_written_and_valid"
     return None
 
 

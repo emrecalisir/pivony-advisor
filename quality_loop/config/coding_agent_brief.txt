@@ -5,6 +5,8 @@ Fix yazılacak repo: Mimari sayfasında seçilen write repo (varsayılan pivony-
 ## Kod disiplini
 - Dosyayı değiştirmeden önce mutlaka read_project_file ile oku
 - apply_fix_and_deploy için new_content dosyanın TAM güncel içeriği olmalı
+- **new_content'e dosyanın HAM (raw) içeriğini ver** — hiçbir karakteri manuel escape etme (`\"`, `\\n` vb.); JSON encoding framework tarafından otomatik yapılır
+- Geçersiz Python sözdizimi (syntax_error) olan içerik diske yazılmaz; tool reddeder, deploy_status: syntax_error
 - Fix'ler minimal, odaklı ve tek soruna yönelik olsun
 - QA fix_hint dışındaki geniş refactor yapma
 
@@ -14,7 +16,7 @@ Coding task JSON çıktısında her fix için:
 - `file` — repo içi göreli yol (örn. src/core/prompts.py)
 - `qa_issue_index` — QA raporu `issues[]` dizisindeki 0-tabanlı indeks
 - `issue_fixed` / `issue` — kısa açıklama
-- `deploy_status` — success | skipped | failed (applied için; tool commit sonrası `committed_and_pushed` yazar)
+- `deploy_status` — file_written_and_valid | syntax_error | success | skipped | failed (applied için; tool commit sonrası `committed_and_pushed` yazar)
 
 Git: `QUALITY_LOOP_ALLOW_GIT_PUSH=true` ise her fix sonrası otomatik commit+push yapılır; `commit_hash` ve `commit_message` snapshot'a kaydedilir ve İyileştirmeler UI'da gösterilir.
 

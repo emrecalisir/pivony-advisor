@@ -11,6 +11,7 @@ from typing import Type
 from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 
+from quality_loop.apply_fix_write import validate_and_write_file
 from quality_loop.repo_scope import (
     get_write_repo_root,
     list_scoped_repos,
@@ -84,8 +85,16 @@ class ApplyAndDeployTool(BaseTool):
         before = ""
         if full_path.exists():
             before = full_path.read_text(encoding="utf-8")
-        full_path.write_text(new_content, encoding="utf-8")
-        results = [f"✓ wrote {repo_slug or 'repo'}/{rel}"]
+
+        write_result = validate_and_write_file(full_path, new_content, before)
+        if not write_result.ok:
+            return write_result.message.replace(
+                f" {full_path.name}:", f" {repo_slug or 'repo'}/{rel}:"
+            ).replace(
+                f" for {full_path.name}:", f" for {repo_slug or 'repo'}/{rel}:"
+            )
+
+        results = [f"✓ wrote {repo_slug or 'repo'}/{rel} (file_written_and_valid)"]
 
         job_id = os.environ.get("QUALITY_LOOP_JOB_ID", "").strip()
         if job_id:
