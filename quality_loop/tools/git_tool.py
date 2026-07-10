@@ -31,6 +31,17 @@ def _deploy_allowed() -> bool:
     return os.environ.get("QUALITY_LOOP_AUTO_DEPLOY", "").lower() in ("1", "true", "yes")
 
 
+def _git_env() -> dict[str, str]:
+    env = os.environ.copy()
+    name = os.environ.get("QUALITY_LOOP_GIT_USER_NAME", "quality-loop").strip() or "quality-loop"
+    email = os.environ.get("QUALITY_LOOP_GIT_USER_EMAIL", "quality-loop@pivony.local").strip()
+    env.setdefault("GIT_AUTHOR_NAME", name)
+    env.setdefault("GIT_AUTHOR_EMAIL", email)
+    env.setdefault("GIT_COMMITTER_NAME", name)
+    env.setdefault("GIT_COMMITTER_EMAIL", email)
+    return env
+
+
 class ApplyFixInput(BaseModel):
     file_path: str = Field(
         description="Path under write repo, e.g. src/core/agent_state.py or pivony-advisor/src/..."
@@ -118,7 +129,7 @@ class ApplyAndDeployTool(BaseTool):
             ["git", "-C", str(repo), "push"],
         ]
         for cmd in cmds:
-            proc = subprocess.run(cmd, capture_output=True, text=True)
+            proc = subprocess.run(cmd, capture_output=True, text=True, env=_git_env())
             if proc.returncode != 0:
                 if job_id:
                     try:
@@ -141,6 +152,7 @@ class ApplyAndDeployTool(BaseTool):
                     ["git", "-C", str(repo), "rev-parse", "--short", "HEAD"],
                     capture_output=True,
                     text=True,
+                    env=_git_env(),
                 )
                 if rev.returncode == 0 and rev.stdout.strip():
                     commit_hash = rev.stdout.strip()
