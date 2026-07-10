@@ -10,7 +10,7 @@ const VIEW_SEGMENTS = {
 const VIEW_SUBTITLES = {
   feedback: "Konuşmalar · QA değerlendirmeleri · kod iyileştirmeleri · tam feedback döngüsü",
   architecture: "CrewAI mimarisi · agent promptları · veri akışı",
-  runs: "Tüm quality loop run geçmişi",
+  runs: "Tamamlanan döngü geçmişi (her döngü = bir session + QA + fix)",
   sessions: "Advisor konuşma kayıtları",
   qa: "QA Agent değerlendirme raporları",
   improvements: "Coding Agent iyileştirme önerileri",
@@ -705,7 +705,7 @@ function renderRunDetail(run, targetId, { includeSession = true } = {}) {
   if (targetId === "feedback-run-block") {
     const title = document.getElementById("feedback-run-tab-title");
     const meta = document.getElementById("feedback-run-tab-meta");
-    if (title) title.textContent = run.run_id || "Run & QA";
+    if (title) title.textContent = run.run_id || "QA & İyileştirme";
     if (meta) {
       const parts = [fmtDate(run.created_at)];
       if (verdict) parts.push(verdict);
@@ -809,12 +809,14 @@ function isJobLive(job) {
 
 function updateActiveJobChrome(job) {
   if (!isJobLive(job)) return false;
-  const line = `${job.job_id} · ${phaseLabelTr(job.phase)} · ${job.turn_count || 0} tur`;
+  const line = job.session_id
+    ? `${shortSessionId(job.session_id)} · ${phaseLabelTr(job.phase)} · ${job.turn_count || 0} konuşma turu`
+    : `Yeni session hazırlanıyor · ${phaseLabelTr(job.phase)}`;
   const meta = document.getElementById("feedback-run-meta");
   const runTabTitle = document.getElementById("feedback-run-tab-title");
   const runTabMeta = document.getElementById("feedback-run-tab-meta");
   if (meta) meta.textContent = line;
-  if (runTabTitle) runTabTitle.textContent = "Canlı run";
+  if (runTabTitle) runTabTitle.textContent = "Canlı session";
   if (runTabMeta) runTabMeta.textContent = line;
   return true;
 }
@@ -822,17 +824,16 @@ function updateActiveJobChrome(job) {
 function renderLiveWaitingPanel(job) {
   const msg =
     job.phase === "queued"
-      ? "Run kuyruğa alındı, process başlatılıyor…"
-      : job.message || "CX Director ilk senaryoyu hazırlıyor…";
+      ? "Yeni session kuyruğa alındı, CX Director başlatılıyor…"
+      : job.message || "Yeni session oluşturuluyor — CX Director ilk senaryoyu hazırlıyor…";
   return `
     <div class="live-waiting">
       <div class="live-waiting-pulse" aria-hidden="true"></div>
-      <p class="live-waiting-title">Canlı run devam ediyor</p>
+      <p class="live-waiting-title">Yeni session başlıyor</p>
       <p class="live-waiting-desc">${esc(msg)}</p>
       <div class="chips live-waiting-chips">
         <span class="chip running">${esc(phaseLabelTr(job.phase))}</span>
-        <span class="chip">${esc(job.job_id)}</span>
-        ${job.session_id ? `<span class="chip">${esc(shortSessionId(job.session_id))}</span>` : ""}
+        ${job.session_id ? `<span class="chip">${esc(shortSessionId(job.session_id))}</span>` : `<span class="chip">session bekleniyor</span>`}
       </div>
     </div>`;
 }
@@ -861,7 +862,7 @@ function showLiveWaitingInConversation(job, sessionId = job.session_id) {
   const feedbackMeta = document.getElementById("feedback-session-meta");
   const feedbackDetail = document.getElementById("feedback-session-detail");
   if (feedbackTitle) {
-    feedbackTitle.textContent = sessionId ? shortSessionId(sessionId) : "Canlı run";
+    feedbackTitle.textContent = sessionId ? shortSessionId(sessionId) : "Yeni session";
   }
   if (feedbackMeta) {
     feedbackMeta.textContent = `${job.turn_count || 0} tur · ${phaseLabelTr(job.phase)}`;
@@ -976,8 +977,8 @@ function initWorkbenchTabs() {
 function renderStats(overview) {
   const c = overview.counts;
   const stats = [
-    ["Run", c.runs],
-    ["Konuşma", c.sessions],
+    ["Session", c.sessions, "Toplam konuşma session sayısı"],
+    ["Tamamlanan döngü", c.runs, "QA + coding bitmiş tam döngü sayısı"],
   ];
   if (c.ongoing_sessions > 0) {
     stats.push(["Devam eden", c.ongoing_sessions]);
@@ -987,7 +988,7 @@ function renderStats(overview) {
     ["Fix", c.total_fixes_applied]
   );
   document.getElementById("stats").innerHTML = stats
-    .map(([label, value]) => `<div class="stat-card"><div class="label">${esc(label)}</div><div class="value">${esc(value)}</div></div>`)
+    .map(([label, value, hint]) => `<div class="stat-card"${hint ? ` title="${esc(hint)}"` : ""}><div class="label">${esc(label)}</div><div class="value">${esc(value)}</div></div>`)
     .join("");
 }
 
@@ -1055,7 +1056,10 @@ function sessionPerfChips(item) {
 }
 
 function sessionListLabelHtml(item) {
+  const isLiveSession =
+    isJobLive(activeLiveJob) && activeLiveJob.session_id === item.session_id;
   return [
+    isLiveSession ? `<span class="chip running">Yeni session</span>` : "",
     `<span class="session-id">${esc(shortSessionId(item.session_id))}</span>`,
     `<span class="chip">${esc(item.turn_count)} tur</span>`,
     sessionStatusChip(item),
@@ -1119,11 +1123,11 @@ async function loadFeedback({ preserveActiveJob = false } = {}) {
   if (!runs.length) {
     runBlock.classList.add("empty");
     runBlock.innerHTML =
-      `<div class="empty">Henüz run yok. Sunucuda loop çalıştır veya <button class="btn" onclick="document.getElementById('sync-hint-btn').click()">sync</button> yap.</div>`;
+      `<div class="empty">Henüz session yok. Sunucuda döngü çalıştır veya <button class="btn" onclick="document.getElementById('sync-hint-btn').click()">sync</button> yap.</div>`;
     document.getElementById("feedback-run-meta").textContent = "";
     const runTabTitle = document.getElementById("feedback-run-tab-title");
     const runTabMeta = document.getElementById("feedback-run-tab-meta");
-    if (runTabTitle) runTabTitle.textContent = "Run & QA";
+    if (runTabTitle) runTabTitle.textContent = "QA & İyileştirme";
     if (runTabMeta) runTabMeta.textContent = "";
     if (sessions[0]) {
       autoSelectSessionItem("feedback-session-list", sessions[0].session_id);
@@ -1545,7 +1549,7 @@ function renderLiveRun(job) {
 
   if (!isJobLive(job)) {
     lastLiveTurnCount = 0;
-    if (body) body.innerHTML = `<div class="empty">Aktif run yok</div>`;
+    if (body) body.innerHTML = `<div class="empty">Aktif session yok</div>`;
     return;
   }
 
@@ -1574,8 +1578,7 @@ function renderLiveRun(job) {
       <div class="chips" style="margin:0.75rem 0">
         <span class="chip running">${esc(phaseLabelTr(job.phase))}</span>
         <span class="chip">${esc(job.turn_count || 0)} tur</span>
-        ${job.session_id ? `<span class="chip">${esc(shortSessionId(job.session_id))}</span>` : ""}
-        <span class="chip">${esc(job.job_id)}</span>
+        ${job.session_id ? `<span class="chip">${esc(shortSessionId(job.session_id))}</span>` : `<span class="chip">session bekleniyor</span>`}
       </div>
       ${qa?.priority_fix ? `<div class="meta-block verdict-box"><h4>QA önizleme</h4><p>${esc(qa.priority_fix)}</p>${renderIssues(qa.issues || [], { compact: true })}</div>` : ""}
       ${liveThread}
@@ -1637,7 +1640,7 @@ async function pollActiveJob() {
 }
 
 async function stopRun() {
-  if (!confirm("Aktif run durdurulsun mu?")) return;
+  if (!confirm("Aktif session durdurulsun mu?")) return;
   const btn = document.getElementById("stop-run-btn");
   btn.disabled = true;
   try {
@@ -1917,10 +1920,10 @@ async function startRun() {
     setWorkbenchTab("conversation");
     startActivePolling();
   } catch (err) {
-    alert(`Run başlatılamadı: ${err.message}`);
+    alert(`Session başlatılamadı: ${err.message}`);
   } finally {
     btn.disabled = false;
-    btn.textContent = "▶ Run Başlat";
+    btn.textContent = "▶ Yeni Session Başlat";
   }
 }
 

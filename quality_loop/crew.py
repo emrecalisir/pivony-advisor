@@ -71,20 +71,50 @@ def _vertex_status_callback(patch: dict) -> None:
 
 
 def _latest_session_id() -> str | None:
+    """Session created for the current job only (never reuse a pre-job session)."""
     sessions_dir = OUTPUT_DIR / "sessions"
     if not sessions_dir.exists():
         return None
-    latest: Path | None = None
+
+    job_started: str | None = None
+    pinned_sid: str | None = None
+    if _JOB_ID:
+        try:
+            from quality_loop.run_manager import load_job
+
+            job = load_job(_JOB_ID)
+            job_started = job.get("started_at")
+            pinned_sid = job.get("session_id")
+        except FileNotFoundError:
+            pass
+
+    if pinned_sid:
+        safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in pinned_sid)
+        path = sessions_dir / f"{safe}.json"
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                created = data.get("created_at") or ""
+                if not job_started or not created or created >= job_started:
+                    return data.get("session_id") or pinned_sid
+            except (json.JSONDecodeError, OSError):
+                return pinned_sid
+
+    best_id: str | None = None
+    best_created = ""
     for path in sessions_dir.glob("sess_*.json"):
-        if latest is None or path.stat().st_mtime > latest.stat().st_mtime:
-            latest = path
-    if latest is None:
-        return None
-    try:
-        data = json.loads(latest.read_text(encoding="utf-8"))
-        return data.get("session_id") or latest.stem
-    except (json.JSONDecodeError, OSError):
-        return latest.stem
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        created = data.get("created_at") or ""
+        if job_started and created and created < job_started:
+            continue
+        sid = data.get("session_id") or path.stem
+        if created >= best_created:
+            best_created = created
+            best_id = sid
+    return best_id
 
 
 def _session_turn_count(session_id: str | None) -> int:

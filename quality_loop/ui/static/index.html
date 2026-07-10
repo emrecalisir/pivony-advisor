@@ -28,7 +28,7 @@
       </div>
     </div>
     <div class="header-actions">
-      <button id="start-run-btn" class="btn primary">▶ Run Başlat</button>
+      <button id="start-run-btn" class="btn primary" title="Yeni bir konuşma session'ı başlatır (CX → QA → coding döngüsü)">▶ Yeni Session Başlat</button>
       <button id="stop-run-btn" class="btn danger hidden">■ Durdur</button>
       <button id="export-btn" class="btn ghost hidden" title="Export conversation">↓ Export</button>
       <button id="refresh-btn" class="btn ghost" type="button" title="Listeleri ve canlı durumu yenile">↻ Yenile</button>
@@ -72,7 +72,7 @@
       <h2>Görünüm</h2>
       <button class="nav-btn active" data-view="feedback">Feedback Loop</button>
       <button class="nav-btn" data-view="architecture">Mimari</button>
-      <button class="nav-btn" data-view="runs">Tüm Run'lar</button>
+      <button class="nav-btn" data-view="runs">Tamamlanan Döngüler</button>
       <button class="nav-btn" data-view="sessions">Konuşmalar</button>
       <button class="nav-btn" data-view="qa">QA Raporları</button>
       <button class="nav-btn" data-view="improvements">İyileştirmeler</button>
@@ -108,7 +108,7 @@
 
             <div class="workbench-tabs" role="tablist">
               <button class="tab-btn active" type="button" data-tab="conversation" role="tab">Konuşma</button>
-              <button class="tab-btn" type="button" data-tab="run-qa" role="tab">Run &amp; QA</button>
+              <button class="tab-btn" type="button" data-tab="run-qa" role="tab">QA &amp; İyileştirme</button>
               <button class="tab-btn hidden" type="button" data-tab="live" id="live-tab-btn" role="tab">Canlı</button>
             </div>
 
@@ -123,11 +123,11 @@
 
               <div id="tab-run-qa" class="tab-panel hidden" role="tabpanel">
                 <div class="tab-panel-toolbar panel-header-split">
-                  <h3 id="feedback-run-tab-title">Run &amp; QA</h3>
+                  <h3 id="feedback-run-tab-title">QA &amp; İyileştirme</h3>
                   <span class="muted-small" id="feedback-run-tab-meta"></span>
                 </div>
                 <div id="feedback-run-block" class="tab-panel-body run-detail-panel empty">
-                  Henüz run yok — <strong>Run Başlat</strong> ile başlayın
+                  Henüz session yok — <strong>Yeni Session Başlat</strong> ile başlayın
                 </div>
               </div>
 
