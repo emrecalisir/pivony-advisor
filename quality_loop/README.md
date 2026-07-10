@@ -81,7 +81,7 @@ DEPLOY_CMD=systemctl restart pivony-advisor
 ## Agents
 
 1. **CX Director** — drives 6–10 turn conversation via `pivony_advisor_chat`
-2. **QA Agent** — `fetch_conversation` + rubric JSON report
+2. **QA Agent** — `fetch_conversation` + `fetch_advisor_logs` + rubric JSON report
 3. **Coding Agent** — reads/fixes code; git/deploy gated by env flags
 
 ## Outputs

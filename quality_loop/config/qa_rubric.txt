@@ -21,6 +21,16 @@ Pivony Advisor yanıtlarını şu kriterlere göre değerlendir:
 - Çözüm yolu sundu mu?
 - Bağlamda çözüm varken "yapamam" dedi mi?
 
+## Log analizi (zorunlu)
+Her değerlendirmede `fetch_advisor_logs` kullan:
+- **logs/history.log** — gerçek API audit (messages, assistant_response, model)
+- **logs/advisor.log** — sunucu ERROR/WARNING/traceback, rate limit, tool exception
+
+Advisor yüzey yanıtı ("Yanıt oluşturulurken hata", dashboard_picker eksikliği vb.) yanıltıcı olabilir.
+Issue `evidence` alanına hem conversation hem log satırı koy (ör. advisor.log traceback).
+
+Log'da kök neden varsa ama kullanıcıya generic mesaj gittiyse → `misleading_error` (yüksek severity).
+
 ## Bilinen risk alanları (pivony-advisor)
 - src/core/agent_state.py — hard scope resolution (analytics_scope vs dashboard_selection)
 - src/core/tool_routing.py — pin_tool_args_for_state, list_dashboards gating

@@ -59,14 +59,20 @@ def create_tasks(
     qa_description = (
         "Verilen session_id ile konuşmayı oku ve Pivony Advisor performansını değerlendir.\n\n"
         "Adımlar:\n"
-        "1. fetch_conversation tool'u ile konuşmayı oku\n"
-        "2. Her advisor yanıtını rubric'e göre değerlendir\n"
-        "3. Özellikle şunlara bak:\n"
+        "1. fetch_conversation ile konuşmayı oku\n"
+        "2. fetch_advisor_logs ile aynı session için advisor-dev loglarını oku:\n"
+        "   - logs/history.log (gerçek API request/response audit)\n"
+        "   - logs/advisor.log (ERROR, traceback, rate limit, tool hataları)\n"
+        "   Bu adım ZORUNLU — advisor yüzey yanıtı root cause'u gizleyebilir.\n"
+        "3. Her advisor yanıtını rubric'e göre değerlendir; log kanıtını evidence'a ekle\n"
+        "4. Özellikle şunlara bak:\n"
         "   - Dashboard seçildikten sonra bağlam korunuyor mu?\n"
         "   - tool_actions doğru mu? reasoning'de hata var mı?\n"
         "   - org_wide kullanımı seçili dashboard varken tetikleniyor mu?\n"
         "   - Kullanıcıya hatalı yönlendirme var mı?\n"
-        "4. Her sorunu dosya/fonksiyon bazında fix önerisiyle raporla\n"
+        "   - advisor.log'da session zaman penceresinde exception / 429 / API error var mı?\n"
+        "   - history.log'da dashboard_picker veya tool failure advisor yanıtında görünmüyor mu?\n"
+        "5. Her sorunu dosya/fonksiyon bazında fix önerisiyle raporla\n"
     )
     if conversation_task is not None:
         qa_description += "\nCX Director çıktısındaki session_id'yi kullan."
@@ -134,8 +140,9 @@ def create_analyze_tasks(
     qa_task = Task(
         description=(
             f"Mevcut session_id: {session_id}\n\n"
-            "fetch_conversation ile konuşmayı oku ve rubric'e göre değerlendir. "
-            "JSON rapor üret."
+            "1. fetch_conversation ile konuşmayı oku\n"
+            "2. fetch_advisor_logs ile logs/history.log ve logs/advisor.log incele\n"
+            "3. Rubric'e göre JSON rapor üret; evidence alanına log satırlarını ekle"
         ),
         expected_output="qa_rubric.txt JSON formatında tam rapor.",
         agent=qa_agent,

@@ -9,6 +9,7 @@ from crewai import Agent
 
 from quality_loop.tools.advisor_tool import CreateSessionTool, PivonyAdvisorTool
 from quality_loop.tools.db_tool import FetchRecentSessionsTool, FetchSessionTool
+from quality_loop.tools.log_tool import FetchAdvisorLogsTool
 from quality_loop.tools.git_tool import (
     ApplyAndDeployTool,
     ListProjectFilesTool,
@@ -50,7 +51,7 @@ def create_agents(sector: str | None = None):
         role="QA Agent",
         goal=(
             "Pivony Advisor'ın verdiği yanıtları objektif olarak değerlendir. "
-            "Her sorunu kanıtıyla birlikte raporla. "
+            "Her sorunu kanıtıyla birlikte raporla — yüzey yanıtı yetersizse advisor-dev loglarından root cause bul. "
             "Coding Agent'ın direkt uygulayabileceği, dosya ve fonksiyon bazlı fix önerileri üret."
         ),
         backstory=(
@@ -58,7 +59,7 @@ def create_agents(sector: str | None = None):
             "tool call pattern'lerini ve conversation state yönetimini analiz etmekte uzmanlaşmışsın.\n\n"
             + qa_rubric
         ),
-        tools=[FetchSessionTool(), FetchRecentSessionsTool()],
+        tools=[FetchSessionTool(), FetchRecentSessionsTool(), FetchAdvisorLogsTool()],
         llm=_llm("QUALITY_LOOP_QA_LLM", "anthropic/claude-sonnet-4-20250514"),
         verbose=True,
         allow_delegation=False,

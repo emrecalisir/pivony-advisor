@@ -77,6 +77,10 @@ def get_architecture() -> dict:
                 "tools": [
                     {"name": "fetch_conversation", "desc": "Session mesajlarını okur"},
                     {"name": "fetch_recent_sessions", "desc": "Son session listesi"},
+                    {
+                        "name": "fetch_advisor_logs",
+                        "desc": "logs/history.log + logs/advisor.log — root cause kanıtı",
+                    },
                 ],
                 "outputs": ["scores", "issues", "overall_verdict", "priority_fix", "fix_hint"],
                 "decision_maker": True,
