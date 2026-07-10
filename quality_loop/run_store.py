@@ -150,6 +150,17 @@ def save_run(
         raise ValueError("session_id is required to finalize a cycle")
     cid = linked_session
     qa_report = _qa_from_phases(phases)
+    from quality_loop.qa_sanitize import sanitize_qa_report
+    from quality_loop.session_store import load_session
+
+    session_for_qa = load_session(cid)
+    msg_count = len((session_for_qa or {}).get("messages") or [])
+    if isinstance(qa_report, dict):
+        qa_report = sanitize_qa_report(
+            qa_report,
+            session_id=cid,
+            message_count=msg_count,
+        )
     fixes = enrich_fixes(
         _fixes_from_phases(phases),
         job_id=job_id or os.environ.get("QUALITY_LOOP_JOB_ID"),

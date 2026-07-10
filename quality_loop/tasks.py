@@ -73,6 +73,8 @@ def create_tasks(
         "   - advisor.log'da session zaman penceresinde exception / 429 / API error var mı?\n"
         "   - history.log'da dashboard_picker veya tool failure advisor yanıtında görünmüyor mu?\n"
         "5. Her sorunu dosya/fonksiyon bazında fix önerisiyle raporla\n"
+        "6. message_index YALNIZCA fetch_conversation.messages[] içindeki message_index alanından seç; "
+        "log veya başka session içeriğinden indeks türetme\n"
     )
     if conversation_task is not None:
         qa_description += "\nCX Director çıktısındaki session_id'yi kullan."
@@ -140,9 +142,10 @@ def create_analyze_tasks(
     qa_task = Task(
         description=(
             f"Mevcut session_id: {session_id}\n\n"
-            "1. fetch_conversation ile konuşmayı oku\n"
+            "1. fetch_conversation ile konuşmayı oku (messages[].message_index ve message_count)\n"
             "2. fetch_advisor_logs ile logs/history.log ve logs/advisor.log incele\n"
-            "3. Rubric'e göre JSON rapor üret; evidence alanına log satırlarını ekle"
+            "3. Rubric'e göre JSON rapor üret; evidence alanına log satırlarını ekle\n"
+            "4. message_index sadece fetch_conversation.messages[] indeksleri; log başka session ise cite etme"
         ),
         expected_output="qa_rubric.txt JSON formatında tam rapor.",
         agent=qa_agent,

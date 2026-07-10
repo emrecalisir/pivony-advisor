@@ -21,6 +21,13 @@ Pivony Advisor yanıtlarını şu kriterlere göre değerlendir:
 - Çözüm yolu sundu mu?
 - Bağlamda çözüm varken "yapamam" dedi mi?
 
+## Session sınırı (zorunlu)
+- Önce `fetch_conversation` ile **hedef session_id** konuşmasını oku.
+- `message_index` = fetch_conversation.messages[] içindeki 0-tabanlı indeks (her satırda message_index alanı var).
+- YALNIZCA bu dizideki indeksleri kullan; `message_count` dışındaki indeksler geçersizdir.
+- `fetch_advisor_logs` / history.log kayıtları **ek kanıt** içindir; başka session veya log satırından message_index türetme.
+- fetch_recent_sessions kullanma (QA agent'ta yok).
+
 ## Log analizi (zorunlu)
 Her değerlendirmede `fetch_advisor_logs` kullan:
 - **logs/history.log** — gerçek API audit (messages, assistant_response, model)
@@ -50,7 +57,7 @@ Log'da kök neden varsa ama kullanıcıya generic mesaj gittiyse → `misleading
     {
       "severity": "critical|high|medium|low",
       "category": "context_loss|wrong_tool_params|poor_response|misleading_error",
-      "message_index": <int>,
+      "message_index": <int — fetch_conversation.messages[] 0-tabanlı indeks>,
       "description": "Sorunun açıklaması",
       "evidence": "İlgili reasoning veya content'ten kanıt",
       "fix_hint": "Hangi dosyada ne değişmeli (ör. src/core/agent_state.py)"

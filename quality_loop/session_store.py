@@ -164,8 +164,10 @@ def session_messages_for_qa(session_id: str) -> list[dict[str, Any]]:
     if session is None:
         raise KeyError(f"session not found: {session_id}")
     rows: list[dict[str, Any]] = []
+    flat_index = 0
     for msg in session.get("messages") or []:
         row = {
+            "message_index": flat_index,
             "role": msg.get("role"),
             "content": msg.get("content"),
             "tool_actions": msg.get("toolActions") or [],
@@ -175,5 +177,8 @@ def session_messages_for_qa(session_id: str) -> list[dict[str, Any]]:
             "dashboard_picker": msg.get("dashboardPicker"),
             "ts": msg.get("ts"),
         }
+        if msg.get("turn") is not None:
+            row["turn"] = msg.get("turn")
         rows.append(row)
+        flat_index += 1
     return rows

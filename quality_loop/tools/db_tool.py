@@ -130,7 +130,17 @@ class FetchSessionTool(BaseTool):
             )
 
         return json.dumps(
-            {"session_id": session_id, "source": source, "messages": rows},
+            {
+                "session_id": session_id,
+                "source": source,
+                "message_count": len(rows),
+                "indexing_rules": (
+                    "message_index is 0-based over the messages[] array below ONLY. "
+                    "Each issue.message_index MUST reference an advisor or user row from THIS session. "
+                    "Do NOT use history_log_samples, fetch_recent_sessions, or other sessions."
+                ),
+                "messages": rows,
+            },
             ensure_ascii=False,
             default=str,
         )

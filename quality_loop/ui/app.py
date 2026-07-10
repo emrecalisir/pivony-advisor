@@ -315,7 +315,7 @@ def _message_indexes(message_index: Any) -> list[int]:
 
 def _issue_matches_turn(message_index: Any, turn: int) -> bool:
     for idx in _message_indexes(message_index):
-        if idx // 2 + 1 == turn or idx + 1 == turn:
+        if idx // 2 + 1 == turn:
             return True
     return False
 

@@ -24,6 +24,7 @@ _issue_matches_turn = _mod._issue_matches_turn
 def test_issue_matches_turn_single_index():
     assert _issue_matches_turn(1, 1)
     assert _issue_matches_turn(3, 2)
+    assert not _issue_matches_turn(3, 4)
 
 
 def test_issue_matches_turn_list_index():

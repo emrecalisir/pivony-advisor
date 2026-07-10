@@ -90,12 +90,12 @@ def _history_record_matches(
     user_email: str,
     fingerprints: list[str],
 ) -> bool:
-    if user_id and record.get("user_id") == user_id:
-        return True
-    if user_email and record.get("user_email") == user_email:
-        return True
-    if not fingerprints:
+    uid_match = bool(user_id and record.get("user_id") == user_id)
+    email_match = bool(user_email and record.get("user_email") == user_email)
+    if not (uid_match or email_match):
         return False
+    if not fingerprints:
+        return uid_match or email_match
     blob = json.dumps(record.get("messages") or [], ensure_ascii=False)
     return any(fp in blob for fp in fingerprints)
 
@@ -135,7 +135,7 @@ def _read_history_for_session(
         ):
             continue
         rec_ts = _parse_iso(record.get("ts"))
-        if start and end and rec_ts and (rec_ts < start - timedelta(hours=2) or rec_ts > end + timedelta(hours=2)):
+        if start and end and rec_ts and (rec_ts < start - timedelta(minutes=15) or rec_ts > end + timedelta(minutes=15)):
             continue
         matches.append(
             {
@@ -320,9 +320,10 @@ class FetchAdvisorLogsTool(BaseTool):
                 "advisor_log_excerpt": advisor_excerpt,
                 "advisor_error_excerpt": advisor_errors,
                 "hint": (
-                    "history.log = gerçek API request/response audit. "
+                    "history.log = gerçek API request/response audit (aynı session zaman penceresi). "
                     "advisor.log = sunucu hataları, traceback, rate limit. "
-                    "Issue evidence alanına log satırlarını da ekle."
+                    "history_records başka session'dan olabilir — message_index için YALNIZCA "
+                    "fetch_conversation.messages[] kullan; log satırlarını yalnızca evidence'da cite et."
                 ),
             },
             ensure_ascii=False,

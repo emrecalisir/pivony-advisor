@@ -8,7 +8,7 @@ from pathlib import Path
 from crewai import Agent
 
 from quality_loop.tools.advisor_tool import CreateSessionTool, PivonyAdvisorTool
-from quality_loop.tools.db_tool import FetchRecentSessionsTool, FetchSessionTool
+from quality_loop.tools.db_tool import FetchSessionTool
 from quality_loop.tools.log_tool import FetchAdvisorLogsTool
 from quality_loop.tools.git_tool import (
     ApplyAndDeployTool,
@@ -59,7 +59,7 @@ def create_agents(sector: str | None = None):
             "tool call pattern'lerini ve conversation state yönetimini analiz etmekte uzmanlaşmışsın.\n\n"
             + qa_rubric
         ),
-        tools=[FetchSessionTool(), FetchRecentSessionsTool(), FetchAdvisorLogsTool()],
+        tools=[FetchSessionTool(), FetchAdvisorLogsTool()],
         llm=_llm("QUALITY_LOOP_QA_LLM", "anthropic/claude-sonnet-4-20250514"),
         verbose=True,
         allow_delegation=False,
