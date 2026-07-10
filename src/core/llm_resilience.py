@@ -1,4 +1,3 @@
-
 """Safe LLM streaming with retry on empty turns and Vertex rate limits."""
 
 from __future__ import annotations
@@ -10,7 +9,7 @@ from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
-MAX_STREAM_TURN_RETRIES = 1
+MAX_STREAM_TURN_RETRIES = 3
 MAX_RATE_LIMIT_RETRIES = 3
 RATE_LIMIT_BACKOFF_SEC = (2.0, 4.0, 8.0)
 
@@ -51,7 +50,11 @@ def make_rate_limit_retry_status(attempt: int, max_attempts: int) -> dict[str, A
 def is_terminal_llm_user_message(text: str) -> bool:
     """True when follow-up LLM calls should be skipped (error replies)."""
     normalized = (text or "").strip()
-    return normalized in (RATE_LIMIT_USER_MESSAGE, GENERIC_LLM_ERROR_MESSAGE)
+    return normalized in (
+        RATE_LIMIT_USER_MESSAGE,
+        GENERIC_LLM_ERROR_MESSAGE,
+        INVALID_FUNCTION_CALL_ARGUMENT_ERROR_MESSAGE,
+    )
 
 
 class LlmTurnFailed(Exception):
