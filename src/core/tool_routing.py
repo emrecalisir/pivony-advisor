@@ -152,8 +152,9 @@ def pin_tool_args_for_state(
             out.pop("org_wide", None)
     else:
         out.pop("dashboard_id", None)
-        if tool_name == METRICS:
-            out.pop("org_wide", None)
+        # org_wide is only valid for get_pivony_metrics; strip it from other
+        # dashboard tools so validation does not fail with a misleading mix.
+        out.pop("org_wide", None)
     return out
 
 
@@ -197,6 +198,12 @@ def validated_tool_invoke(
                         f"Dashboard kapsamı (id={state.dashboard_id}) sunucu tarafından "
                         "ayarlandı ancak araç çağrısı doğrulanamadı. Lütfen tekrar deneyin."
                     )
+                elif "org_wide" in str(args or {}):
+                    user_message = (
+                        "Bu araç tek bir dashboard gerektirir; org_wide yalnızca "
+                        "get_pivony_metrics için geçerlidir. Dashboard seçimini doğrulayın "
+                        "veya list_dashboards ile tekrar seçin."
+                    )
                 else:
                     user_message = (
                         "Bu işlem için bir dashboard seçilmesi gerekiyor. "
@@ -208,7 +215,13 @@ def validated_tool_invoke(
                     "tool": tool.name,
                     "detail": detail,
                     "user_message": user_message,
-                    "instruction": "Fix arguments and retry the tool once. The `user_message` field contains a user-friendly version of the error.",
+                    "instruction": (
+                        "Fix arguments and retry the tool once. The `user_message` field "
+                        "contains a user-friendly version of the error. Do NOT tell the user "
+                        "that data is missing when this error indicates a parameter or scope "
+                        "problem — explain the technical issue and suggest retrying or "
+                        "selecting a dashboard / wider date range."
+                    ),
                 },
                 ensure_ascii=False,
             )

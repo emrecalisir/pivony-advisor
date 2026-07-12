@@ -228,6 +228,17 @@ def test_pin_tool_args_strips_org_wide_from_dashboard_tools():
     assert "org_wide" not in args
 
 
+def test_pin_tool_args_strips_org_wide_when_scope_unresolved():
+    state = HardAgentState(source="none")
+    args = pin_tool_args_for_state(
+        "get_trends",
+        {"days": 7, "org_wide": True},
+        state,
+    )
+    assert "dashboard_id" not in args
+    assert "org_wide" not in args
+
+
 def test_pin_tool_args_for_new_topic_intent_tool():
     state = HardAgentState(
         dashboard_id=6208,

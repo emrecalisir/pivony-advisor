@@ -11,7 +11,9 @@ logger = logging.getLogger(__name__)
 
 MAX_STREAM_TURN_RETRIES = 3
 MAX_RATE_LIMIT_RETRIES = 3
+MAX_FUNCTION_MISMATCH_RETRIES = 2
 RATE_LIMIT_BACKOFF_SEC = (2.0, 4.0, 8.0)
+FUNCTION_MISMATCH_BACKOFF_SEC = (0.5, 1.0)
 
 PROCESSING_USER_MESSAGE = "Verileri işliyorum, lütfen bir an bekleyin…"
 RATE_LIMIT_RETRY_USER_MESSAGE = (
@@ -122,6 +124,11 @@ def is_rate_limit_error(exc: BaseException) -> bool:
     return "429" in text and "RESOURCE_EXHAUSTED" in text
 
 
+def is_retryable_llm_error(exc: BaseException) -> bool:
+    """Transient Vertex errors worth one automatic retry before surfacing to the user."""
+    return is_rate_limit_error(exc) or is_function_call_mismatch_error(exc)
+
+
 def user_message_for_llm_error(exc: BaseException) -> str:
     if is_rate_limit_error(exc):
         return RATE_LIMIT_USER_MESSAGE
@@ -171,7 +178,8 @@ def collect_stream_turn(
     """
     Run a streaming model turn, collecting intermediate events.
 
-    Retries empty turns and 429 rate-limit errors with backoff.
+    Retries empty turns, 429 rate-limit errors, and transient function-call/response
+    mismatches with backoff.
     Raises LlmTurnFailed with a user-safe message when the turn cannot complete.
     """
     last_exc: BaseException | None = None
@@ -179,6 +187,24 @@ def collect_stream_turn(
         try:
             return _collect_stream_turn_once(turn_factory, max_retries=max_retries)
         except Exception as exc:
+            if is_function_call_mismatch_error(exc):
+                mismatch_attempt = min(rate_attempt, MAX_FUNCTION_MISMATCH_RETRIES)
+                if mismatch_attempt < MAX_FUNCTION_MISMATCH_RETRIES:
+                    wait = FUNCTION_MISMATCH_BACKOFF_SEC[
+                        min(mismatch_attempt, len(FUNCTION_MISMATCH_BACKOFF_SEC) - 1)
+                    ]
+                    attempt_no = mismatch_attempt + 1
+                    max_attempts = MAX_FUNCTION_MISMATCH_RETRIES + 1
+                    logger.warning(
+                        "LLM function-call mismatch (attempt %s/%s), retrying in %.1fs",
+                        attempt_no,
+                        max_attempts,
+                        wait,
+                        exc_info=True,
+                    )
+                    time.sleep(wait)
+                    last_exc = exc
+                    continue
             if is_rate_limit_error(exc) and rate_attempt < MAX_RATE_LIMIT_RETRIES:
                 wait = RATE_LIMIT_BACKOFF_SEC[
                     min(rate_attempt, len(RATE_LIMIT_BACKOFF_SEC) - 1)

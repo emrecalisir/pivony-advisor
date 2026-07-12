@@ -233,6 +233,18 @@ def resolve_hard_agent_state(
     # 4. Fallback: Inferred established scope from prior turns
     established = infer_established_analytics_scope(turns, page_context)
     if established is not None:
+        if established.org_wide and established.dashboard_id is None:
+            deferred_dash = _dashboard_from_picker_context(pc)
+            if deferred_dash is not None:
+                return HardAgentState(
+                    dashboard_id=deferred_dash,
+                    org_wide=False,
+                    since=established.since or since_pc,
+                    until=established.until or until_pc,
+                    days=established.days,
+                    dashboard_locked=True,
+                    source="last_dashboard_selection",
+                )
         # No dashboard name available from inferred scope reliably
         return HardAgentState(
             dashboard_id=established.dashboard_id,

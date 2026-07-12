@@ -107,6 +107,37 @@ def test_collect_stream_turn_invokes_retry_callback_then_succeeds():
     assert events == [{"type": "thought", "delta": "ok"}]
 
 
+def test_collect_stream_turn_retries_function_call_mismatch():
+    attempts = {"n": 0}
+    original_sleep = _mod.time.sleep
+    _mod.time.sleep = lambda _s: None
+    try:
+
+        def turn_factory():
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise RuntimeError(
+                    "400 INVALID_ARGUMENT. Please ensure that the number of function "
+                    "response parts is equal to the number of function call parts of "
+                    "the function call turn."
+                )
+
+            def gen():
+                from types import SimpleNamespace
+
+                yield {"type": "thought", "delta": "ok"}
+                model_content = SimpleNamespace(parts=[SimpleNamespace(text="done")])
+                return model_content, []
+
+            return gen()
+
+        events, _content, _calls = collect_stream_turn(turn_factory)
+        assert attempts["n"] == 2
+        assert events == [{"type": "thought", "delta": "ok"}]
+    finally:
+        _mod.time.sleep = original_sleep
+
+
 def test_collect_stream_turn_raises_after_retry_exhaustion():
     def turn_factory():
         raise RuntimeError("429 RESOURCE_EXHAUSTED")

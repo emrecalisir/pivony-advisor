@@ -70,6 +70,23 @@ def test_page_dashboard_id_blocks_org_wide_inference():
     assert scope.org_wide is False
 
 
+def test_org_wide_analytics_scope_defers_to_last_dashboard_selection():
+    scope = infer_established_analytics_scope(
+        [
+            ("user", "memnuniyet"),
+            ("assistant", "Son 7 güne ait verilere göre %61 pozitif."),
+            ("user", "NPS?"),
+        ],
+        {
+            "analytics_scope": {"org_wide": True, "days": 7},
+            "last_dashboard_selection": {"id": 4077, "name": "Prima"},
+        },
+    )
+    assert scope is not None
+    assert scope.dashboard_id == 4077
+    assert scope.org_wide is False
+
+
 def test_scope_prompt_org_wide():
     block = scope_prompt_block(
         infer_established_analytics_scope(

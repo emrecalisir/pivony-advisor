@@ -39,6 +39,18 @@ def assistant_text_has_substantive_data(text: str) -> bool:
     return False
 
 
+def _dashboard_id_from_page_selection(page_context: dict) -> int | None:
+    """Resolve dashboard id from explicit picker state (current or last turn)."""
+    for key in ("dashboard_selection", "last_dashboard_selection"):
+        selection = page_context.get(key)
+        if isinstance(selection, dict) and selection.get("id") is not None:
+            try:
+                return int(selection["id"])
+            except (TypeError, ValueError):
+                pass
+    return None
+
+
 def _scope_from_page_context(page_context: dict | None) -> EstablishedAnalyticsScope | None:
     if not isinstance(page_context, dict):
         return None
@@ -55,9 +67,22 @@ def _scope_from_page_context(page_context: dict | None) -> EstablishedAnalyticsS
             days_i = int(days) if days is not None else None
         except (TypeError, ValueError):
             days_i = None
+        org_wide = bool(raw.get("org_wide")) and dash_id is None
+        if org_wide:
+            sel_id = _dashboard_id_from_page_selection(page_context)
+            if sel_id is None:
+                page_dash = page_context.get("dashboard_id")
+                if page_dash is not None:
+                    try:
+                        sel_id = int(page_dash)
+                    except (TypeError, ValueError):
+                        sel_id = None
+            if sel_id is not None:
+                dash_id = sel_id
+                org_wide = False
         return EstablishedAnalyticsScope(
             dashboard_id=dash_id,
-            org_wide=bool(raw.get("org_wide")) and dash_id is None,
+            org_wide=org_wide,
             days=days_i,
             since=raw.get("since") or None,
             until=raw.get("until") or None,
@@ -70,12 +95,9 @@ def _scope_from_page_context(page_context: dict | None) -> EstablishedAnalyticsS
         except (TypeError, ValueError):
             pass
 
-    selection = page_context.get("dashboard_selection")
-    if isinstance(selection, dict) and selection.get("id") is not None:
-        try:
-            return EstablishedAnalyticsScope(dashboard_id=int(selection["id"]))
-        except (TypeError, ValueError):
-            pass
+    sel_id = _dashboard_id_from_page_selection(page_context)
+    if sel_id is not None:
+        return EstablishedAnalyticsScope(dashboard_id=sel_id)
 
     return None
 
@@ -93,6 +115,23 @@ def infer_established_analytics_scope(
     from_context = _scope_from_page_context(page_context)
     if from_context and from_context.dashboard_id is not None:
         return from_context
+    if from_context and from_context.org_wide:
+        pc = page_context if isinstance(page_context, dict) else {}
+        sel_id = _dashboard_id_from_page_selection(pc)
+        if sel_id is None:
+            page_dash = pc.get("dashboard_id")
+            if page_dash is not None:
+                try:
+                    sel_id = int(page_dash)
+                except (TypeError, ValueError):
+                    sel_id = None
+        if sel_id is not None:
+            return EstablishedAnalyticsScope(
+                dashboard_id=sel_id,
+                days=from_context.days,
+                since=from_context.since,
+                until=from_context.until,
+            )
 
     if not turns:
         return None
