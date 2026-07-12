@@ -24,9 +24,10 @@ from core.agent import (
 from core.agent_state import hard_context_prompt_block, resolve_hard_agent_state
 from core.chart_specs import charts_from_tool_result, merge_chart_lists
 from core.llm_resilience import (
+    GENERIC_LLM_ERROR_MESSAGE,
     LlmTurnFailed,
-    PROCESSING_USER_MESSAGE,
     collect_stream_turn,
+    is_incomplete_advisor_reply,
     make_rate_limit_retry_status,
 )
 from core.tool_routing import (
@@ -385,15 +386,24 @@ def _run_agent_stream_loop(
 
         if not model_content.parts and not function_calls:
             logger.error("Agent stream: empty model turn after retries at step %s", step + 1)
-            yield {"type": "content", "delta": PROCESSING_USER_MESSAGE}
-            final_text = PROCESSING_USER_MESSAGE
-            break
+            raise LlmTurnFailed(GENERIC_LLM_ERROR_MESSAGE)
 
         if not model_content.parts:
+            if tools_called:
+                raise LlmTurnFailed(GENERIC_LLM_ERROR_MESSAGE)
             break
 
         # Store the original function calls from the model before sanitization
         raw_function_calls_from_model = list(function_calls)
+        if not raw_function_calls_from_model:
+            synthesis = "".join(
+                p.text for p in model_content.parts if getattr(p, "text", None)
+            ).strip()
+            if synthesis:
+                final_text = synthesis
+                yield {"type": "content", "delta": synthesis}
+                break
+            raise LlmTurnFailed(GENERIC_LLM_ERROR_MESSAGE)
         # Sanitize function calls: this list will contain only executable calls.
         function_calls_after_sanitization = sanitize_function_calls(function_calls, _hard)
         executable_ids = {id(fc) for fc in function_calls_after_sanitization}
@@ -489,7 +499,10 @@ def _run_agent_stream_loop(
         if picker:
             yield {"type": "dashboard_picker", "picker": picker}
 
-    answer = _finalize_agent_reply(final_text or EMPTY_AGENT_REPLY)
+    if is_incomplete_advisor_reply(final_text):
+        raise LlmTurnFailed(GENERIC_LLM_ERROR_MESSAGE)
+
+    answer = _finalize_agent_reply(final_text)
     yield {
         "type": "done",
         "content": answer,

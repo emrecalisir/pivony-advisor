@@ -75,6 +75,8 @@
       <button class="nav-btn" data-view="sessions">Konuşmalar</button>
       <button class="nav-btn" data-view="qa">QA Raporları</button>
       <button class="nav-btn" data-view="improvements">İyileştirmeler</button>
+      <button class="nav-btn" data-view="trends">Trendler</button>
+      <button class="nav-btn" data-view="backlog">Backlog</button>
     </aside>
 
     <main class="content">
@@ -212,6 +214,20 @@
         <div class="panel">
           <div class="panel-header"><h3>Coding Agent — Uygulanan / Atlanan Fix'ler</h3></div>
           <div id="improvements-board" class="panel-body"></div>
+        </div>
+      </section>
+
+      <section id="view-trends" class="hidden">
+        <div class="panel">
+          <div class="panel-header"><h3>Session Trendleri</h3></div>
+          <div id="trends-board" class="panel-body"></div>
+        </div>
+      </section>
+
+      <section id="view-backlog" class="hidden">
+        <div class="panel">
+          <div class="panel-header"><h3>Blocked / Env Backlog</h3></div>
+          <div id="backlog-board" class="panel-body"></div>
         </div>
       </section>
     </main>

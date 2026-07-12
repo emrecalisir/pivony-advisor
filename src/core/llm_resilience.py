@@ -58,6 +58,7 @@ def is_terminal_llm_user_message(text: str) -> bool:
     """True when follow-up LLM calls should be skipped (error replies)."""
     normalized = (text or "").strip()
     return normalized in (
+        PROCESSING_USER_MESSAGE,
         RATE_LIMIT_USER_MESSAGE,
         GENERIC_LLM_ERROR_MESSAGE,
         FUNCTION_CALL_MISMATCH_USER_MESSAGE,
@@ -87,6 +88,14 @@ def is_invalid_argument_error(exc: BaseException) -> bool:
             return True
     text = str(exc)
     return "400" in text and "INVALID_ARGUMENT" in text
+
+
+def is_incomplete_advisor_reply(text: str) -> bool:
+    """True when the advisor has not produced a final user-facing answer yet."""
+    normalized = (text or "").strip()
+    if not normalized:
+        return True
+    return normalized == PROCESSING_USER_MESSAGE or is_terminal_llm_user_message(normalized)
 
 
 class LlmTurnFailed(Exception):

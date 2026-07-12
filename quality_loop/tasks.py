@@ -19,8 +19,20 @@ def create_tasks(
     qa_agent: Agent,
     coding_agent: Agent | None,
     sector: str | None = None,
+    *,
+    regression_scenarios: list[str] | None = None,
 ) -> tuple[Task | None, Task, Task | None]:
     conversation_task = None
+    regression_block = ""
+    if regression_scenarios:
+        from quality_loop.regression import format_regression_checklist
+
+        regression_block = (
+            "\n7. REGRESSION GATE (önceki session fix'lerini doğrula — ZORUNLU, ilk turlarda):\n"
+            f"{format_regression_checklist(regression_scenarios)}\n"
+            "   Her REGRESSION senaryosu için pivony_advisor_chat ile sor; "
+            "turn_incomplete veya error gelirse yeni tur başlatma.\n"
+        )
     if cx_director is not None:
         conversation_task = Task(
             description=(
@@ -31,7 +43,11 @@ def create_tasks(
                 "2. pivony_advisor_chat tool'u ile mesaj gönder, yanıt al\n"
                 "3. En az 6, en fazla 10 tur konuş\n"
                 "4. Her turda bir önceki yanıta göre daha derine in\n"
-                "5. Şu senaryoları mutlaka test et:\n"
+                "5. pivony_advisor_chat `turn_incomplete: true` veya `error` dönerse "
+                "aynı mesajı tekrar gönderme — önce daralt veya farklı soru dene; "
+                "assistant yanıtı gelmeden yeni tur başlatma\n"
+                f"{regression_block}"
+                "6. Şu senaryoları mutlaka test et:\n"
                 "   - Dashboard seç (picker gelirse dashboard_id ile kilitle), sonra detay sor\n"
                 "   - Yorum örnekleri iste (list_reviews tetikle)\n"
                 "   - Konu trend analizi iste (get_topic_trends)\n"
@@ -73,7 +89,9 @@ def create_tasks(
         "   - advisor.log'da session zaman penceresinde exception / 429 / API error var mı?\n"
         "   - history.log'da dashboard_picker veya tool failure advisor yanıtında görünmüyor mu?\n"
         "5. Her sorunu dosya/fonksiyon bazında fix önerisiyle raporla\n"
-        "6. message_index YALNIZCA fetch_conversation.messages[] içindeki message_index alanından seç; "
+        "6. Her issue için issue_class alanı ekle: code | env | flaky | blocked "
+        "(429/403/rate-limit → flaky veya env; pivony-api scope → blocked)\n"
+        "7. message_index YALNIZCA fetch_conversation.messages[] içindeki message_index alanından seç; "
         "log veya başka session içeriğinden indeks türetme\n"
     )
     if conversation_task is not None:

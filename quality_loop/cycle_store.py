@@ -45,6 +45,8 @@ def cycle_as_run(session: dict[str, Any]) -> dict[str, Any]:
         "fixes": fixes,
         "final_result": session.get("final_result") or "",
         "summary": session.get("summary") or {},
+        "issue_traceability": session.get("issue_traceability") or [],
+        "verification": session.get("verification"),
     }
 
 

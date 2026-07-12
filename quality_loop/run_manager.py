@@ -22,6 +22,7 @@ _REPO_ROOT = _PACKAGE_ROOT.parent
 
 _lock = threading.Lock()
 _active_job_id: str | None = None
+_processes: dict[str, subprocess.Popen] = {}
 _lock_handles: dict[str, Any] = {}
 
 

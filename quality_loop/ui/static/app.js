@@ -1,4 +1,4 @@
-const views = ["feedback", "architecture", "runs", "sessions", "qa", "improvements"];
+const views = ["feedback", "architecture", "runs", "sessions", "qa", "improvements", "trends", "backlog"];
 const VIEW_SEGMENTS = {
   feedback: "",
   architecture: "architecture",
@@ -6,6 +6,8 @@ const VIEW_SEGMENTS = {
   sessions: "sessions",
   qa: "qa",
   improvements: "improvements",
+  trends: "trends",
+  backlog: "backlog",
 };
 const VIEW_SUBTITLES = {
   feedback: "Konuşmalar · QA değerlendirmeleri · kod iyileştirmeleri · tam feedback döngüsü",
@@ -13,7 +15,9 @@ const VIEW_SUBTITLES = {
   runs: "Tamamlanan döngü geçmişi (her döngü = bir session + QA + fix)",
   sessions: "Advisor konuşma kayıtları",
   qa: "QA Agent değerlendirme raporları",
-  improvements: "Coding Agent iyileştirme önerileri",
+  improvements: "Coding Agent iyileştirme önerileri · push onayı",
+  trends: "Session trendleri · baseline karşılaştırma",
+  backlog: "Blocked / env / flaky issue backlog",
 };
 let exportContext = null;
 let pollTimer = null;
@@ -249,6 +253,8 @@ async function navigateToView(view, { syncUrl = true } = {}) {
   if (view === "sessions") await loadSessions();
   if (view === "qa") await loadQaBoard();
   if (view === "improvements") await loadImprovements();
+  if (view === "trends") await loadTrends();
+  if (view === "backlog") await loadBacklog();
 }
 
 function selectedPromptSector() {
@@ -292,10 +298,17 @@ function renderScores(qa) {
     .join("")}</div>`;
 }
 
-function renderIssues(issues, { compact = false } = {}) {
+function renderIssues(issues, { compact = false, traceability = null } = {}) {
   if (!issues?.length) return `<div class="empty">Sorun kaydı yok</div>`;
+  const traceByIndex = {};
+  if (Array.isArray(traceability)) {
+    for (const row of traceability) {
+      if (row?.qa_issue_index != null) traceByIndex[row.qa_issue_index] = row;
+    }
+  }
   return `<div class="issue-list">${issues
-    .map((issue) => {
+    .map((issue, idx) => {
+      const trace = traceByIndex[idx];
       const hint = issue.fix_hint
         ? `<p class="issue-fix"><strong>Fix:</strong> ${esc(issue.fix_hint)}</p>`
         : "";
@@ -304,22 +317,36 @@ function renderIssues(issues, { compact = false } = {}) {
           ? `<details class="issue-evidence-fold"><summary>Kanıt</summary><p>${esc(issue.evidence)}</p></details>`
           : `<details class="issue-evidence-fold" open><summary>Kanıt</summary><p>${esc(issue.evidence)}</p></details>`
         : "";
-      const idx = issue.message_index;
-      const idxLabel = Array.isArray(idx)
-        ? idx.map((n) => `#${n}`).join(", ")
-        : idx != null
-          ? `#${idx}`
+      const idxLabel = Array.isArray(issue.message_index)
+        ? issue.message_index.map((n) => `#${n}`).join(", ")
+        : issue.message_index != null
+          ? `#${issue.message_index}`
           : "?";
+      const issueClass = issue.issue_class
+        ? `<span class="chip muted-chip" title="issue sınıfı">${esc(issue.issue_class)}</span>`
+        : "";
+      const traceStatus = trace?.status
+        ? `<span class="chip ${trace.status === "fixed" ? "success" : trace.status === "open" ? "warn" : ""}">${esc(trace.status)}</span>`
+        : "";
+      const commits =
+        trace?.commit_hashes?.length
+          ? `<p class="issue-trace muted-small">Commit: ${trace.commit_hashes
+              .map((h) => `<span class="chip commit">${esc(h)}</span>`)
+              .join(" ")}</p>`
+          : "";
       return `
       <article class="issue-card ${esc(String(issue.severity || "low").toLowerCase())}">
         <div class="issue-card-head">
           ${severityChip(issue.severity)}
           <span class="issue-category">${esc(issue.category || "issue")}</span>
+          ${issueClass}
+          ${traceStatus}
           <span class="issue-idx muted-small">mesaj ${esc(idxLabel)}</span>
         </div>
         <p class="issue-desc">${esc(issue.description || "")}</p>
         ${evidence}
         ${hint}
+        ${commits}
       </article>`;
     })
     .join("")}</div>`;
@@ -330,6 +357,7 @@ function deployStatusChip(status) {
   const labels = {
     committed_and_pushed: ["success", "commit + push"],
     committed_not_pushed: ["warn", "commit (push yok)"],
+    pending_approval: ["warn", "push onayı bekliyor"],
     commit_push_failed: ["warn", "push başarısız"],
     file_written: ["success", "dosyaya yazıldı"],
     file_written_and_valid: ["success", "yazıldı + syntax OK"],
@@ -764,7 +792,7 @@ function renderRunDetail(run, targetId, { includeSession = true, panel = "all" }
         <h4 class="run-section-title">QA Değerlendirmesi</h4>
         ${qa.scores ? renderScores(qa) : ""}
         ${qa.priority_fix && verdict ? "" : qa.priority_fix ? `<p class="priority-fix">${esc(qa.priority_fix)}</p>` : ""}
-        ${renderIssues(qa.issues || [], { compact: true })}
+        ${renderIssues(qa.issues || [], { compact: true, traceability: run.issue_traceability })}
       </section>`;
 
   const fixesHtml =
@@ -1304,6 +1332,22 @@ function sessionPerfChips(item) {
   if (item.issue_count > 0) {
     chips.push(`<span class="chip issue">${esc(item.issue_count)} issue</span>`);
   }
+  if (item.issue_count > 0 && (item.issues_addressed > 0 || item.fixes_applied > 0)) {
+    const addressed = item.issues_addressed ?? item.fixes_applied ?? 0;
+    chips.push(
+      `<span class="chip success" title="QA issue'larına alınan fix aksiyonu">${esc(addressed)}/${esc(item.issue_count)} aksiyon</span>`
+    );
+  }
+  if (item.fixes_committed > 0) {
+    chips.push(
+      `<span class="chip commit" title="Commit hash ile push edilen fix">${esc(item.fixes_committed)} commit</span>`
+    );
+  }
+  if (item.fixes_skipped > 0) {
+    chips.push(
+      `<span class="chip skip" title="Coding agent tarafından atlanan fix">${esc(item.fixes_skipped)} atlandı</span>`
+    );
+  }
   if (item.avg_score != null && item.avg_score !== "") {
     chips.push(`<span class="chip score">${esc(item.avg_score)}/10</span>`);
   }
@@ -1388,11 +1432,26 @@ function updateSessionRunChrome(sessionId, { runDetail = null, emptyReason = nul
     const fixes = runDetail.fixes || {};
     const applied = (fixes.fixes_applied || []).length;
     const skipped = (fixes.fixes_skipped || []).length;
+    const issueTotal = runDetail.summary?.issue_count ?? (qa.issues || []).length;
+    const issueIndices = new Set(
+      (fixes.fixes_applied || [])
+        .map((f) => f?.qa_issue_index)
+        .filter((v) => v != null)
+    );
+    const addressed = issueIndices.size || applied;
+    const committed = (fixes.fixes_applied || []).filter(
+      (f) => f?.commit_hash && String(f.commit_hash).trim() && f.commit_hash !== "—"
+    ).length;
     if (meta) {
       meta.textContent = `${cid} · Bitti · ${fmtDate(runDetail.created_at)}`;
     }
     if (runTabMeta) {
-      const parts = [verdict, runDetail.summary?.issue_count != null ? `${runDetail.summary.issue_count} issue` : null];
+      const parts = [
+        verdict,
+        issueTotal ? `${issueTotal} issue` : null,
+        addressed && issueTotal ? `${addressed}/${issueTotal} aksiyon` : null,
+        committed ? `${committed} commit` : null,
+      ];
       runTabMeta.textContent = parts.filter(Boolean).join(" · ");
     }
     if (fixesTabMeta) {
@@ -1609,25 +1668,157 @@ async function loadQaBoard() {
         </div>
         ${qa.priority_fix ? `<p class="run-hero-fix">${esc(qa.priority_fix)}</p>` : ""}
         ${renderScores(qa)}
-        ${renderIssues(qa.issues || [], { compact: true })}
+        ${renderIssues(qa.issues || [], { compact: true, traceability: run.issue_traceability })}
       </div>`;
     })
     .join("");
 }
 
+function renderDeployPendingPanel(pending) {
+  if (!pending?.length) return "";
+  return `
+    <section class="deploy-pending-panel panel">
+      <div class="panel-header"><h3>Push onayı bekleyen fix'ler</h3></div>
+      <div class="panel-body">
+        ${pending
+          .map((row) => {
+            const status = row.status || "pending";
+            const hashes = (row.commit_hashes || []).join(", ");
+            return `
+            <article class="deploy-card">
+              <div class="deploy-card-head">
+                <h4>${esc(row.job_id)}</h4>
+                <span class="chip ${status === "approved" ? "success" : "warn"}">${esc(status)}</span>
+              </div>
+              <p class="muted-small">${esc(row.fix_count || 0)} fix · ${esc(row.deploy_target || "dev")} · ${esc(hashes)}</p>
+              <div class="deploy-card-actions">
+                ${
+                  status === "pending"
+                    ? `<button type="button" class="btn secondary btn-sm deploy-approve-btn" data-job-id="${esc(row.job_id)}">Onayla</button>`
+                    : ""
+                }
+                ${
+                  status === "approved"
+                    ? `<button type="button" class="btn primary btn-sm deploy-push-btn" data-job-id="${esc(row.job_id)}">Push</button>`
+                    : ""
+                }
+              </div>
+            </article>`;
+          })
+          .join("")}
+      </div>
+    </section>`;
+}
+
+function wireDeployPendingActions(root) {
+  root.querySelectorAll(".deploy-approve-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      try {
+        await apiPost(`/api/deploy/approve/${encodeURIComponent(btn.dataset.jobId)}`, {});
+        await loadImprovements();
+      } catch (err) {
+        alert(String(err.message || err));
+      }
+    });
+  });
+  root.querySelectorAll(".deploy-push-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      try {
+        await apiPost(`/api/deploy/push/${encodeURIComponent(btn.dataset.jobId)}`, {});
+        await loadImprovements();
+      } catch (err) {
+        alert(String(err.message || err));
+      }
+    });
+  });
+}
+
+async function loadTrends() {
+  const data = await api("/api/trends");
+  const el = document.getElementById("trends-board");
+  if (!el) return;
+  const points = data.points || [];
+  if (!points.length) {
+    el.innerHTML = `<div class="empty">Henüz trend verisi yok</div>`;
+    return;
+  }
+  const delta = data.delta_vs_baseline || {};
+  const deltaHtml = Object.keys(delta).length
+    ? `<div class="chips">${Object.entries(delta)
+        .map(([k, v]) => `<span class="chip">${esc(k)}: ${v > 0 ? "+" : ""}${esc(v)}</span>`)
+        .join("")}</div>`
+    : `<p class="muted-small">Baseline: ${esc(shortSessionId(data.baseline_session_id || "—"))}</p>`;
+  el.innerHTML = `
+    <div class="trends-summary">${deltaHtml}</div>
+    <table class="trends-table">
+      <thead><tr>
+        <th>Session</th><th>Verdict</th><th>Issue</th><th>Skor</th><th>Aksiyon</th><th>Commit</th>
+      </tr></thead>
+      <tbody>
+        ${points
+          .map(
+            (p) => `
+          <tr>
+            <td><button type="button" class="link-btn session-link" data-open-session="${esc(p.session_id)}">${esc(shortSessionId(p.session_id))}</button></td>
+            <td>${p.verdict ? `<span class="verdict ${esc(p.verdict)}">${esc(p.verdict)}</span>` : "—"}</td>
+            <td>${esc(p.issue_count ?? 0)}</td>
+            <td>${p.avg_score != null ? `${esc(p.avg_score)}/10` : "—"}</td>
+            <td>${esc(p.issues_addressed ?? 0)}/${esc(p.issue_count ?? 0)}</td>
+            <td>${esc(p.fixes_committed ?? 0)}</td>
+          </tr>`
+          )
+          .join("")}
+      </tbody>
+    </table>`;
+  el.querySelectorAll("[data-open-session]").forEach((btn) => {
+    btn.addEventListener("click", () => openSessionFromImprovement(btn.dataset.openSession, null));
+  });
+}
+
+async function loadBacklog() {
+  const rows = await api("/api/backlog/blocked");
+  const el = document.getElementById("backlog-board");
+  if (!el) return;
+  if (!rows.length) {
+    el.innerHTML = `<div class="empty">Blocked backlog boş</div>`;
+    return;
+  }
+  el.innerHTML = rows
+    .map(
+      (row) => `
+    <article class="backlog-card">
+      <div class="backlog-card-head">
+        <span class="chip ${esc(row.kind || "blocked")}">${esc(row.kind || "blocked")}</span>
+        ${row.severity ? severityChip(row.severity) : ""}
+        <span class="chip">${esc(row.occurrences || 0)}×</span>
+      </div>
+      <p>${esc(row.description || "")}</p>
+      <p class="muted-small">Sessions: ${(row.sessions || [])
+        .map((s) => `<button type="button" class="link-btn session-link" data-open-session="${esc(s)}">${esc(shortSessionId(s))}</button>`)
+        .join(" ")}</p>
+    </article>`
+    )
+    .join("");
+  el.querySelectorAll("[data-open-session]").forEach((btn) => {
+    btn.addEventListener("click", () => openSessionFromImprovement(btn.dataset.openSession, null));
+  });
+}
+
 async function loadImprovements() {
-  const runs = await api("/api/runs");
+  const [runs, pending] = await Promise.all([api("/api/runs"), api("/api/deploy/pending")]);
   const withFixes = runs.filter(
     (r) => (r.summary?.fixes_applied || 0) > 0 || (r.summary?.fixes_skipped || 0) > 0
   );
-  if (!withFixes.length) {
+  if (!withFixes.length && !pending.length) {
     document.getElementById("improvements-board").innerHTML = `<div class="empty">Fix kaydı yok</div>`;
     return;
   }
-  const blocks = await Promise.all(
-    withFixes.slice(0, 20).map((r) => api(`/api/runs/${encodeURIComponent(r.run_id)}`))
-  );
-  document.getElementById("improvements-board").innerHTML = blocks
+  const blocks = withFixes.length
+    ? await Promise.all(withFixes.slice(0, 20).map((r) => api(`/api/runs/${encodeURIComponent(r.run_id)}`)))
+    : [];
+  document.getElementById("improvements-board").innerHTML =
+    renderDeployPendingPanel(pending) +
+    blocks
     .map((run) => {
       const sessionId = run.session_id || "";
       const sessionLink = sessionId
@@ -1659,6 +1850,7 @@ async function loadImprovements() {
     .join("");
 
   const board = document.getElementById("improvements-board");
+  wireDeployPendingActions(board);
   board.querySelectorAll("[data-open-session]").forEach((btn) => {
     btn.addEventListener("click", () => {
       openSessionFromImprovement(btn.dataset.openSession, btn.dataset.runId || null);

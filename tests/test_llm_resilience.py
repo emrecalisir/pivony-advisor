@@ -72,7 +72,17 @@ def test_make_rate_limit_retry_status():
 def test_is_terminal_llm_user_message():
     assert is_terminal_llm_user_message(RATE_LIMIT_USER_MESSAGE)
     assert is_terminal_llm_user_message(_mod.GENERIC_LLM_ERROR_MESSAGE)
+    assert is_terminal_llm_user_message(_mod.PROCESSING_USER_MESSAGE)
     assert not is_terminal_llm_user_message("Normal answer")
+
+
+def test_is_incomplete_advisor_reply():
+    incomplete = _mod.is_incomplete_advisor_reply
+    assert incomplete("")
+    assert incomplete("   ")
+    assert incomplete(_mod.PROCESSING_USER_MESSAGE)
+    assert incomplete(_mod.GENERIC_LLM_ERROR_MESSAGE)
+    assert not incomplete("Prima dashboard için NPS trendi şöyle.")
 
 
 def test_collect_stream_turn_invokes_retry_callback_then_succeeds():

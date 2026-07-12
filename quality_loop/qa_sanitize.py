@@ -59,4 +59,6 @@ def sanitize_qa_report(
                 "for this session (likely cross-session log contamination)."
             ),
         }
-    return out
+    from quality_loop.loop_insights import annotate_qa_issues
+
+    return annotate_qa_issues(out)

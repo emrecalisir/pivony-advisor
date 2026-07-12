@@ -9,8 +9,10 @@ from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 
 from quality_loop.advisor_client import (
+    AdvisorTurnIncomplete,
     build_page_context,
     chat,
+    is_advisor_turn_complete,
     messages_for_api,
 )
 from quality_loop.session_store import (
@@ -94,9 +96,23 @@ class PivonyAdvisorTool(BaseTool):
                 advisor_mode=session.get("advisor_mode") or "advisor",
                 page_context=page_context or None,
             )
-        except Exception as exc:
+        except (AdvisorTurnIncomplete, Exception) as exc:
             return json.dumps(
-                {"error": str(exc), "session_id": session_id},
+                {
+                    "error": str(exc),
+                    "session_id": session_id,
+                    "turn_incomplete": isinstance(exc, AdvisorTurnIncomplete),
+                },
+                ensure_ascii=False,
+            )
+
+        if not is_advisor_turn_complete(result.get("content")):
+            return json.dumps(
+                {
+                    "error": "Advisor turu tamamlanmadı: final yanıt yok.",
+                    "session_id": session_id,
+                    "turn_incomplete": True,
+                },
                 ensure_ascii=False,
             )
 

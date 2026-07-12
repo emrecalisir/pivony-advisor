@@ -139,6 +139,7 @@ def save_run(
     run_id: str | None = None,
     job_id: str | None = None,
     additional_phases: list[dict[str, Any]] | None = None,
+    verification: dict[str, Any] | None = None,
 ) -> Path:
     """Finalize unified cycle manifest (session file); mirror legacy runs/ for compat."""
     from quality_loop.cycle_store import cycle_as_run, finalize_cycle
@@ -169,6 +170,12 @@ def save_run(
         job_id=job_id or os.environ.get("QUALITY_LOOP_JOB_ID"),
         qa_report=qa_report if isinstance(qa_report, dict) else None,
     )
+    from quality_loop.loop_insights import build_issue_traceability
+
+    issue_traceability = build_issue_traceability(
+        qa_report if isinstance(qa_report, dict) else None,
+        fixes if isinstance(fixes, dict) else None,
+    )
     final_text = str(getattr(final_result, "raw", None) or final_result)
     summary = {
         "verdict": (qa_report or {}).get("overall_verdict") if isinstance(qa_report, dict) else None,
@@ -176,6 +183,9 @@ def save_run(
         "fixes_applied": len((fixes or {}).get("fixes_applied") or []) if isinstance(fixes, dict) else 0,
         "fixes_skipped": len((fixes or {}).get("fixes_skipped") or []) if isinstance(fixes, dict) else 0,
         "avg_score": _avg_score_from_qa(qa_report if isinstance(qa_report, dict) else None),
+        "issue_classification": (qa_report or {}).get("issue_classification") if isinstance(qa_report, dict) else {},
+        "issues_addressed": sum(1 for r in issue_traceability if r.get("status") == "fixed"),
+        "verification_status": (verification or {}).get("status") if verification else None,
         "turn_count": (phases[0].get("parsed_output") or {}).get("turn_count")
         if phases and phases[0].get("phase") == "conversation"
         and isinstance(phases[0].get("parsed_output"), dict)
@@ -194,6 +204,8 @@ def save_run(
             "fixes": fixes,
             "final_result": final_text,
             "summary": summary,
+            "issue_traceability": issue_traceability,
+            "verification": verification,
             "status": "done",
         },
     )

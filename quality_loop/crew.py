@@ -151,6 +151,40 @@ def _run_cursor_coding_if_enabled(
     )
 
 
+def _run_verification_if_enabled(
+    *,
+    session_id: str | None,
+    cursor_phase: dict[str, Any] | None,
+    qa_task: Any,
+) -> dict[str, Any] | None:
+    from quality_loop.loop_insights import auto_verify_enabled
+    from quality_loop.regression import run_regression_verification
+
+    if not auto_verify_enabled() or not session_id:
+        return None
+    scenarios: list[str] = []
+    if isinstance(cursor_phase, dict):
+        fixes = cursor_phase.get("fixes") or cursor_phase
+        if isinstance(fixes, dict):
+            scenarios = list(fixes.get("next_test_scenarios") or [])
+    if not scenarios:
+        qa_report = _qa_report_from_task(qa_task)
+        if isinstance(qa_report, dict):
+            for issue in qa_report.get("issues") or []:
+                if isinstance(issue, dict) and issue.get("issue_class") in ("code", None):
+                    desc = (issue.get("description") or "")[:120]
+                    if desc:
+                        scenarios.append(f"Doğrula: {desc}")
+    _update_job(phase="verify", message="Regression senaryoları doğrulanıyor")
+    result = run_regression_verification(session_id, scenarios)
+    return {
+        "phase": "verification",
+        "agent": "Regression Gate",
+        "parsed_output": result,
+        "status": result.get("status"),
+    }
+
+
 def _phase_rows(
     conversation_task: Any | None,
     qa_task: Any,
@@ -238,9 +272,12 @@ def run_loop(iterations: int = 1) -> None:
         )
 
         sector = _resolve_sector()
+        from quality_loop.loop_insights import collect_regression_scenarios
+
+        regression = collect_regression_scenarios(exclude_session_id=_latest_session_id())
         cx_director, qa_agent, coding_agent = create_agents(sector)
         conversation_task, qa_task, coding_task = create_tasks(
-            cx_director, qa_agent, coding_agent, sector=sector
+            cx_director, qa_agent, coding_agent, sector=sector, regression_scenarios=regression
         )
 
         tasks = [t for t in (conversation_task, qa_task, coding_task) if t is not None]
@@ -277,6 +314,15 @@ def run_loop(iterations: int = 1) -> None:
         )
         phase_rows = _phase_rows(conversation_task, qa_task, coding_task)
 
+        verification_phase = _run_verification_if_enabled(
+            session_id=_latest_session_id(),
+            cursor_phase=cursor_phase,
+            qa_task=qa_task,
+        )
+        extra_phases = _additional_phases(cursor_phase)
+        if verification_phase:
+            extra_phases = (extra_phases or []) + [verification_phase]
+
         run_path = save_run(
             mode="full",
             tasks=phase_rows,
@@ -284,7 +330,8 @@ def run_loop(iterations: int = 1) -> None:
             iteration=i,
             advisor_url=_advisor_url(),
             job_id=_JOB_ID,
-            additional_phases=_additional_phases(cursor_phase),
+            additional_phases=extra_phases,
+            verification=verification_phase,
         )
 
         run_data = json.loads(run_path.read_text(encoding="utf-8"))
@@ -354,6 +401,15 @@ def run_analyze(session_id: str) -> None:
     )
     phase_rows = _phase_rows(None, qa_task, coding_task)
 
+    verification_phase = _run_verification_if_enabled(
+        session_id=session_id,
+        cursor_phase=cursor_phase,
+        qa_task=qa_task,
+    )
+    extra_phases = _additional_phases(cursor_phase)
+    if verification_phase:
+        extra_phases = (extra_phases or []) + [verification_phase]
+
     run_path = save_run(
         mode="analyze",
         tasks=phase_rows,
@@ -361,7 +417,8 @@ def run_analyze(session_id: str) -> None:
         session_id=session_id,
         advisor_url=_advisor_url(),
         job_id=_JOB_ID,
-        additional_phases=_additional_phases(cursor_phase),
+        additional_phases=extra_phases,
+        verification=verification_phase,
     )
 
     run_data = json.loads(run_path.read_text(encoding="utf-8"))

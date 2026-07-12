@@ -143,6 +143,21 @@ def finalize_cursor_fixes(
     """Build fixes payload and log lines from git state after Cursor coding."""
     from quality_loop.fix_snapshots import record_fix_snapshot
 
+    try:
+        from quality_loop.deploy_gate import (
+            auto_deploy_enabled,
+            git_push_allowed,
+            push_requires_approval,
+            queue_push_approval,
+            run_canary_deploy,
+        )
+    except ImportError:
+        auto_deploy_enabled = lambda: False  # type: ignore[assignment,misc]
+        git_push_allowed = None  # type: ignore[assignment]
+        push_requires_approval = lambda: False  # type: ignore[assignment,misc]
+        queue_push_approval = None  # type: ignore[assignment]
+        run_canary_deploy = lambda: (False, "deploy_gate unavailable")  # type: ignore[assignment,misc]
+
     messages: list[str] = []
     if runtime == "cloud":
         messages.extend(pull_write_repos())
@@ -275,21 +290,33 @@ def finalize_cursor_fixes(
                         )
                         if rev.returncode == 0 and rev.stdout.strip():
                             commit_hash = rev.stdout.strip()
-                        push_proc = subprocess.run(
-                            git_push_command(after.path),
-                            capture_output=True,
-                            text=True,
-                            env=_git_env(),
-                        )
-                        git_push_status = "success" if push_proc.returncode == 0 else "failed"
-                        if push_proc.returncode != 0:
-                            deploy_status = "commit_push_failed"
-                            messages.append(
-                                f"⚠ push {slug}/{rel}: {(push_proc.stderr or push_proc.stdout or '')[:200]}"
+                        can_push = git_push_allowed(job_id=job_id or None) if git_push_allowed else _git_allowed()
+                        if can_push:
+                            push_proc = subprocess.run(
+                                git_push_command(after.path),
+                                capture_output=True,
+                                text=True,
+                                env=_git_env(),
                             )
+                            git_push_status = "success" if push_proc.returncode == 0 else "failed"
+                            if push_proc.returncode != 0:
+                                deploy_status = "commit_push_failed"
+                                messages.append(
+                                    f"⚠ push {slug}/{rel}: {(push_proc.stderr or push_proc.stdout or '')[:200]}"
+                                )
+                            else:
+                                deploy_status = "committed_and_pushed"
+                                messages.append(f"✓ pushed {slug}/{rel} ({commit_hash})")
+                                if auto_deploy_enabled():
+                                    ok, dep_msg = run_canary_deploy()
+                                    messages.append(f"{'✓' if ok else '⚠'} deploy: {dep_msg}")
+                        elif push_requires_approval():
+                            deploy_status = "pending_approval"
+                            git_push_status = "pending_approval"
+                            messages.append(f"⏳ push onayı bekleniyor: {slug}/{rel} ({commit_hash})")
                         else:
-                            deploy_status = "committed_and_pushed"
-                            messages.append(f"✓ pushed {slug}/{rel} ({commit_hash})")
+                            deploy_status = "committed_not_pushed"
+                            git_push_status = "skipped"
 
                     if job_id and commit_hash:
                         try:
@@ -333,4 +360,23 @@ def finalize_cursor_fixes(
         "next_test_scenarios": (qa_report or {}).get("next_test_scenarios") or [],
         "coding_backend": "cursor",
     }
+    if job_id and fixes_applied:
+        try:
+            from quality_loop.deploy_gate import push_requires_approval, queue_push_approval
+
+            if push_requires_approval():
+                hashes = [
+                    str(f.get("commit_hash"))
+                    for f in fixes_applied
+                    if f.get("commit_hash") and f.get("deploy_status") == "pending_approval"
+                ]
+                if hashes:
+                    queue_push_approval(
+                        job_id=job_id,
+                        session_id=None,
+                        fixes=fixes_applied,
+                        commit_hashes=hashes,
+                    )
+        except Exception:
+            pass
     return payload, messages

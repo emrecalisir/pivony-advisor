@@ -1489,6 +1489,36 @@ header p { margin: 0.2rem 0 0; color: var(--muted); font-size: 0.84rem; }
   font-size: 0.8rem;
 }
 
+.trends-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.trends-table th,
+.trends-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.45rem 0.5rem;
+  text-align: left;
+}
+.trends-summary { margin-bottom: 0.75rem; }
+.deploy-card,
+.backlog-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.75rem;
+  margin-bottom: 0.65rem;
+}
+.deploy-card-head,
+.backlog-card-head {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+}
+.deploy-card-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+.deploy-pending-panel { margin-bottom: 1rem; }
+
 @media (max-width: 960px) {
   .layout, .detail-grid, .pipeline, .score-grid, .settings, .phase-summary, .workbench { grid-template-columns: 1fr; }
   .workbench { grid-template-rows: auto 1fr; }

@@ -43,7 +43,7 @@ OUTPUT_DIR = _PACKAGE_ROOT / "outputs"
 SESSIONS_DIR = OUTPUT_DIR / "sessions"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 _UI_TOKEN = os.environ.get("QUALITY_LOOP_UI_TOKEN", "").strip()
-_SPA_VIEWS = frozenset({"feedback", "architecture", "runs", "sessions", "qa", "improvements"})
+_SPA_VIEWS = frozenset({"feedback", "architecture", "runs", "sessions", "qa", "improvements", "trends", "backlog"})
 
 app = FastAPI(title="Pivony Quality Loop UI", version="2.0.0")
 
@@ -148,6 +148,28 @@ def _quick_warning_count(messages: list[dict[str, Any]]) -> int:
     return warnings
 
 
+def _fix_stats(session: dict[str, Any]) -> dict[str, int]:
+    """Summarize coding actions vs QA issues for session list badges."""
+    fixes = session.get("fixes") if isinstance(session.get("fixes"), dict) else {}
+    summary = session.get("summary") if isinstance(session.get("summary"), dict) else {}
+    applied = [f for f in fixes.get("fixes_applied") or [] if isinstance(f, dict)]
+    skipped = [f for f in fixes.get("fixes_skipped") or [] if isinstance(f, dict)]
+    issue_indices = {
+        f.get("qa_issue_index")
+        for f in applied
+        if f.get("qa_issue_index") is not None
+    }
+    committed = sum(
+        1 for f in applied if str(f.get("commit_hash") or "").strip() not in ("", "—")
+    )
+    return {
+        "fixes_applied": len(applied) or int(summary.get("fixes_applied") or 0),
+        "fixes_skipped": len(skipped) or int(summary.get("fixes_skipped") or 0),
+        "fixes_committed": committed,
+        "issues_addressed": len(issue_indices) if issue_indices else len(applied),
+    }
+
+
 def _session_performance(session_id: str) -> dict[str, Any]:
     from quality_loop.cycle_store import is_completed_cycle
     from quality_loop.session_store import load_session
@@ -161,6 +183,10 @@ def _session_performance(session_id: str) -> dict[str, Any]:
             "issue_count": 0,
             "avg_score": None,
             "has_qa": False,
+            "fixes_applied": 0,
+            "fixes_skipped": 0,
+            "fixes_committed": 0,
+            "issues_addressed": 0,
         }
     cid = str(session.get("cycle_id") or session.get("session_id") or session_id)
     qa = session.get("qa_report") if isinstance(session.get("qa_report"), dict) else {}
@@ -169,6 +195,7 @@ def _session_performance(session_id: str) -> dict[str, Any]:
     avg = summary.get("avg_score")
     if avg is None:
         avg = _avg_score_from_qa(qa)
+    fix_stats = _fix_stats(session)
     return {
         "run_id": cid if has_qa else None,
         "cycle_id": cid,
@@ -176,6 +203,7 @@ def _session_performance(session_id: str) -> dict[str, Any]:
         "issue_count": len(qa.get("issues") or []) or summary.get("issue_count") or 0,
         "avg_score": avg,
         "has_qa": has_qa,
+        **fix_stats,
     }
 
 
@@ -256,6 +284,10 @@ def _session_summary(
         "qa_verdict": perf["qa_verdict"],
         "issue_count": perf["issue_count"],
         "avg_score": perf["avg_score"],
+        "fixes_applied": perf["fixes_applied"],
+        "fixes_skipped": perf["fixes_skipped"],
+        "fixes_committed": perf["fixes_committed"],
+        "issues_addressed": perf["issues_addressed"],
         "deletable": status["status"] != "ongoing",
         **status,
     }
@@ -532,6 +564,15 @@ def _job_live_payload(job: dict[str, Any]) -> dict[str, Any]:
                 "title": "İyileştirme",
                 "desc": "QA raporundaki fix_hint'lere göre kod düzeltir",
                 "active": job.get("phase") == "coding",
+                "done": job.get("phase") in ("verify", "done"),
+            },
+            {
+                "step": 4,
+                "id": "verify",
+                "agent": "Regression Gate",
+                "title": "Doğrulama",
+                "desc": "Önceki regression senaryoları tekrar test edilir",
+                "active": job.get("phase") == "verify",
                 "done": job.get("phase") == "done",
             },
         ],
@@ -678,6 +719,53 @@ def api_stop_job() -> dict[str, Any]:
     return _job_live_payload(job)
 
 
+@app.get("/api/trends")
+def api_trends(limit: int = 20) -> dict[str, Any]:
+    from quality_loop.loop_insights import collect_session_trends
+
+    return collect_session_trends(limit=min(max(limit, 1), 50))
+
+
+@app.get("/api/backlog/blocked")
+def api_blocked_backlog(limit: int = 40) -> list[dict[str, Any]]:
+    from quality_loop.loop_insights import collect_blocked_backlog
+
+    return collect_blocked_backlog(limit=min(max(limit, 1), 100))
+
+
+@app.get("/api/deploy/pending")
+def api_deploy_pending() -> list[dict[str, Any]]:
+    from quality_loop.deploy_gate import list_pending_approvals
+
+    return list_pending_approvals()
+
+
+class DeployApproveRequest(BaseModel):
+    approved_by: str | None = None
+
+
+@app.post("/api/deploy/approve/{job_id}")
+def api_deploy_approve(job_id: str, body: DeployApproveRequest | None = None) -> dict[str, Any]:
+    from quality_loop.deploy_gate import approve_push
+
+    try:
+        return approve_push(job_id, approved_by=(body.approved_by if body else None))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="pending deploy not found") from exc
+
+
+@app.post("/api/deploy/push/{job_id}")
+def api_deploy_push(job_id: str) -> dict[str, Any]:
+    from quality_loop.deploy_gate import push_approved_job
+
+    try:
+        return push_approved_job(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="approved deploy not found") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
 @app.get("/api/observability")
 def api_observability() -> dict[str, Any]:
     return observability_status()
@@ -753,7 +841,20 @@ def api_get_run(run_id: str) -> dict[str, Any]:
         job_id=run.get("job_id"),
         qa_report=run.get("qa_report") if isinstance(run.get("qa_report"), dict) else None,
     )
-    return {**run, "fixes": fixes, "session_detail": session_detail}
+    traceability = run.get("issue_traceability")
+    if not traceability:
+        from quality_loop.loop_insights import build_issue_traceability
+
+        traceability = build_issue_traceability(
+            run.get("qa_report") if isinstance(run.get("qa_report"), dict) else None,
+            fixes if isinstance(fixes, dict) else None,
+        )
+    return {
+        **run,
+        "fixes": fixes,
+        "issue_traceability": traceability,
+        "session_detail": session_detail,
+    }
 
 
 @app.get("/api/runs/{run_id}/improvements/export.json")
@@ -870,6 +971,12 @@ def get_session(session_id: str) -> dict[str, Any]:
         qa_report = latest_run.get("qa_report") if latest_run else None
     _attach_qa_to_turns(turns, qa_report if isinstance(qa_report, dict) else None)
     cid = str(data.get("cycle_id") or data.get("session_id") or session_id)
+    traceability = data.get("issue_traceability")
+    if not traceability and isinstance(qa_report, dict):
+        from quality_loop.loop_insights import build_issue_traceability
+
+        fixes = data.get("fixes") if isinstance(data.get("fixes"), dict) else None
+        traceability = build_issue_traceability(qa_report, fixes)
     return {
         **data,
         "cycle_id": cid,
@@ -879,6 +986,7 @@ def get_session(session_id: str) -> dict[str, Any]:
         "linked_runs": linked_runs,
         "run_id": cid if perf_has_qa(qa_report, data.get("status")) else (linked_runs[0].get("run_id") if linked_runs else None),
         "qa_report": qa_report,
+        "issue_traceability": traceability or [],
         "modified_at": _file_mtime(path),
     }
 

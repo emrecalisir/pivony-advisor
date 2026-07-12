@@ -11,6 +11,26 @@ import requests
 DEFAULT_MODEL = os.environ.get("PIVONY_ADVISOR_MODEL", "pivony-local-llm")
 DEFAULT_TIMEOUT = int(os.environ.get("PIVONY_ADVISOR_TIMEOUT_SEC", "120"))
 
+# Keep in sync with core.agent.EMPTY_AGENT_REPLY — incomplete synthesis fallback.
+_EMPTY_AGENT_REPLY = (
+    "Üzgünüm, yanıt oluşturulamadı. Lütfen sorunuzu daha dar bir kapsamla "
+    "(tek dashboard veya tek otel) tekrar deneyin."
+)
+_PROCESSING_USER_MESSAGE = "Verileri işliyorum, lütfen bir an bekleyin…"
+
+
+class AdvisorTurnIncomplete(Exception):
+    """Advisor stream ended without a final user-facing answer."""
+
+
+def is_advisor_turn_complete(content: str | None) -> bool:
+    text = (content or "").strip()
+    if not text:
+        return False
+    if text in (_PROCESSING_USER_MESSAGE, _EMPTY_AGENT_REPLY):
+        return False
+    return True
+
 
 def _base_url() -> str:
     return os.environ.get("PIVONY_ADVISOR_URL", "http://127.0.0.1:8000").rstrip("/")
@@ -218,6 +238,11 @@ def chat_stream(
                 raise RuntimeError(event.get("message") or "advisor stream error")
 
     content = final_content or "".join(content_parts)
+    if not is_advisor_turn_complete(content):
+        raise AdvisorTurnIncomplete(
+            "Advisor turu tamamlanmadı: kullanıcıya final yanıt üretilemedi. "
+            "Tekrar deneyin veya daraltılmış kapsamla sorun."
+        )
     return {
         "content": content,
         "reasoning": "".join(reasoning_parts).strip(),
