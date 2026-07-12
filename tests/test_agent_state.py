@@ -253,6 +253,17 @@ def test_pin_tool_args_for_new_topic_intent_tool():
     assert args["dashboard_id"] == 6208
 
 
+def test_dashboard_selection_payload_from_hard_state():
+    state = HardAgentState(
+        dashboard_id=4076,
+        dashboard_name="Generali 2026",
+        dashboard_locked=True,
+        source="dashboard_selection",
+    )
+    payload = state.dashboard_selection_payload()
+    assert payload == {"id": 4076, "name": "Generali 2026"}
+
+
 def test_new_dashboard_tools_registered_for_scope_pinning():
     missing = _NEW_DASHBOARD_TOOLS - _DASHBOARD_ARG_TOOLS
     assert not missing, f"Missing from _DASHBOARD_ARG_TOOLS: {missing}"

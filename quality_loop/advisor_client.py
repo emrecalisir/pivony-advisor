@@ -126,7 +126,7 @@ def chat_stream(
     Stream a chat turn; aggregate thought/content/tool events.
 
     Returns dict with: content, reasoning, tool_actions, suggested_followups,
-    guidance, dashboard_picker.
+    guidance, dashboard_picker, dashboard_selection.
     """
     payload: dict[str, Any] = {
         "model": model or DEFAULT_MODEL,
@@ -151,6 +151,7 @@ def chat_stream(
     suggested_followups: list[str] = []
     guidance = ""
     dashboard_picker = None
+    dashboard_selection = None
     final_content = ""
 
     with requests.post(
@@ -208,6 +209,11 @@ def chat_stream(
                 picker = event.get("pivony_dashboard_picker")
                 if isinstance(picker, dict):
                     dashboard_picker = picker
+                sel = event.get("pivony_dashboard_selection") or event.get(
+                    "dashboard_selection"
+                )
+                if isinstance(sel, dict):
+                    dashboard_selection = sel
             elif etype == "error":
                 raise RuntimeError(event.get("message") or "advisor stream error")
 
@@ -219,6 +225,7 @@ def chat_stream(
         "suggested_followups": suggested_followups,
         "guidance": guidance,
         "dashboard_picker": dashboard_picker,
+        "dashboard_selection": dashboard_selection,
     }
 
 
@@ -273,4 +280,5 @@ def chat(
         "suggested_followups": data.get("pivony_suggested_followups") or [],
         "guidance": data.get("pivony_guidance") or "",
         "dashboard_picker": data.get("pivony_dashboard_picker"),
+        "dashboard_selection": data.get("pivony_dashboard_selection"),
     }

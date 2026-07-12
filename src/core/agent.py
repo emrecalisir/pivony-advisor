@@ -33,7 +33,13 @@ from core.tool_routing import (
     validated_tool_invoke,
 )
 from core.compute import compare_pivot_ratings
-from core.metrics_normalize import normalize_metrics_response
+from core.metrics_normalize import (
+    normalize_key_drivers_response,
+    normalize_metrics_response,
+    normalize_root_causes_response,
+    normalize_topic_intent_response,
+    normalize_topic_sentiment_response,
+)
 from core.pivony_platform import (
     fetch_dashboards,
     fetch_decisions,
@@ -677,7 +683,10 @@ def _build_tools(
                 {"error": "Konu bazında niyet servisi şu anda kullanılamıyor."},
                 ensure_ascii=False,
             )
-        return json.dumps(data, ensure_ascii=False)
+        return json.dumps(
+            normalize_topic_intent_response(data),
+            ensure_ascii=False,
+        )
 
     def _topic_sentiment(
         dashboard_id: int,
@@ -705,7 +714,10 @@ def _build_tools(
                 {"error": "Konu bazında duygu servisi şu anda kullanılamıyor."},
                 ensure_ascii=False,
             )
-        return json.dumps(data, ensure_ascii=False)
+        return json.dumps(
+            normalize_topic_sentiment_response(data),
+            ensure_ascii=False,
+        )
 
     def _topic_participation(
         dashboard_id: int,
@@ -897,7 +909,10 @@ def _build_tools(
                 {"error": "Temel etkenler (KDA) servisi şu anda kullanılamıyor."},
                 ensure_ascii=False,
             )
-        return json.dumps(data, ensure_ascii=False)
+        return json.dumps(
+            normalize_key_drivers_response(data),
+            ensure_ascii=False,
+        )
 
     def _digital_experience_score(
         dashboard_id: int,
@@ -978,7 +993,10 @@ def _build_tools(
                 {"error": "Kök-neden servisi şu anda kullanılamıyor."},
                 ensure_ascii=False,
             )
-        return json.dumps(data, ensure_ascii=False)
+        return json.dumps(
+            normalize_root_causes_response(data),
+            ensure_ascii=False,
+        )
 
     def _metrics(
         dashboard_id: int | None = None,

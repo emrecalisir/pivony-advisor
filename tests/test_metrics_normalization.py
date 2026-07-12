@@ -15,6 +15,10 @@ def _load_normalize():
 
 _mod = _load_normalize()
 normalize_metrics_response = _mod.normalize_metrics_response
+normalize_topic_intent_response = _mod.normalize_topic_intent_response
+normalize_topic_sentiment_response = _mod.normalize_topic_sentiment_response
+normalize_root_causes_response = _mod.normalize_root_causes_response
+normalize_key_drivers_response = _mod.normalize_key_drivers_response
 
 
 def test_nps_zero_with_no_reviews_becomes_unavailable():
@@ -41,3 +45,43 @@ def test_real_nps_preserved():
     assert out["nps"] == 38.5
     assert out["nps_status"] == "ok"
     assert out["nps_available"] is True
+
+
+def test_topic_intent_no_complaint_topics_flags_guidance():
+    out = normalize_topic_intent_response(
+        {
+            "topics": [
+                {"topic": "Acente", "complaint_pct": 0, "intent_pcts": {"complaint": 0}},
+            ]
+        }
+    )
+    assert out["intent_status"] == "no_complaint_intent_topics"
+    assert "intent_guidance" in out
+
+
+def test_topic_sentiment_flags_all_mixed_topics():
+    out = normalize_topic_sentiment_response(
+        {
+            "topic_sentiment": [
+                {
+                    "topic": "Hasar",
+                    "positive_pct": 0,
+                    "neutral_pct": 0,
+                    "negative_pct": 0,
+                    "mixed_pct": 100,
+                }
+            ]
+        }
+    )
+    assert out["sentiment_status"] == "suspiciously_100_percent_mixed_topics"
+    assert "Hasar" in out["sentiment_guidance"]
+
+
+def test_root_causes_not_generated_adds_synthesis_guidance():
+    out = normalize_root_causes_response({"status": "not_generated"})
+    assert "synthesis_guidance" in out
+
+
+def test_key_drivers_no_config_adds_synthesis_guidance():
+    out = normalize_key_drivers_response({"status": "no_config"})
+    assert "synthesis_guidance" in out

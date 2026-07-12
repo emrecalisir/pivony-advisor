@@ -214,6 +214,7 @@ def _yield_llm_failure(
     exc: LlmTurnFailed,
     current_picker: dict | None,
     current_charts: list[dict[str, Any]],
+    dashboard_selection: dict[str, Any] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Single replaceable error bubble after automatic retries are exhausted."""
     yield {
@@ -225,6 +226,7 @@ def _yield_llm_failure(
         "type": "done",
         "content": exc.user_message,
         "dashboard_picker": current_picker,
+        "dashboard_selection": dashboard_selection,
         "charts": current_charts,
     }
 
@@ -260,14 +262,20 @@ def stream_advisor_agent(
     user_id: str | None = None,
     page_context: dict | None = None,
     max_iterations: int | None = None,
+    llm: Any | None = None,
 ) -> Iterator[dict[str, Any]]:
     """
     Run the tool-calling loop and yield streaming events:
       - {"type": "thought", "delta": str}
       - {"type": "content", "delta": str}  (final answer only)
       - {"type": "chart", "chart": dict}  (Welcome-compatible chart payload)
-      - {"type": "done", "content": str, "dashboard_picker": dict | None, "charts": list}
+      - {"type": "done", "content": str, "dashboard_picker": dict | None,
+        "dashboard_selection": dict | None, "charts": list}
     """
+    if llm is not None:
+        logger.debug(
+            "stream_advisor_agent: llm kwarg ignored (streaming uses Vertex genai client)"
+        )
     slug = sector_slugify(sector_slug or DEFAULT_SECTOR)
     _hard = resolve_hard_agent_state(turns, page_context)
     tools = filter_tools_for_state(
@@ -315,6 +323,7 @@ def stream_advisor_agent(
     picker: dict | None = None
     tools_called: set[str] = set()
     failed_tools: set[str] = set()
+    dashboard_selection = _hard.dashboard_selection_payload()
     limit = max_iterations or AGENT_MAX_TOOL_ITERATIONS
     final_text = ""
     charts: list[dict[str, Any]] = []
@@ -334,10 +343,11 @@ def stream_advisor_agent(
             failed_tools=failed_tools,
             final_text=final_text,
             charts=charts,
+            dashboard_selection=dashboard_selection,
         )
     except LlmTurnFailed as exc:
         logger.warning("Agent stream aborted: %s", exc.user_message)
-        yield from _yield_llm_failure(exc, picker, charts)
+        yield from _yield_llm_failure(exc, picker, charts, dashboard_selection)
         return
 
 
@@ -356,6 +366,7 @@ def _run_agent_stream_loop(
     failed_tools: set[str],
     final_text: str,
     charts: list[dict[str, Any]],
+    dashboard_selection: dict[str, Any] | None,
 ) -> Iterator[dict[str, Any]]:
     for step in range(limit):
         status_events, events, model_content, function_calls = (
@@ -483,6 +494,7 @@ def _run_agent_stream_loop(
         "type": "done",
         "content": answer,
         "dashboard_picker": picker,
+        "dashboard_selection": dashboard_selection,
         "charts": charts,
     }
 
@@ -527,7 +539,7 @@ def stream_simple_completion(
             )
         )
     except LlmTurnFailed as exc:
-        yield from _yield_llm_failure(exc, None, [])
+        yield from _yield_llm_failure(exc, None, [], None)
         return
 
     for event in _yield_turn_events(status_events, turn_events):
@@ -535,4 +547,10 @@ def stream_simple_completion(
 
     final_text = "".join(p.text for p in model_content.parts if p.text).strip()
     answer = _finalize_agent_reply(final_text or EMPTY_AGENT_REPLY)
-    yield {"type": "done", "content": answer, "dashboard_picker": None, "charts": []}
+    yield {
+        "type": "done",
+        "content": answer,
+        "dashboard_picker": None,
+        "dashboard_selection": None,
+        "charts": [],
+    }

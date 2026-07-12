@@ -100,6 +100,11 @@ class PivonyAdvisorTool(BaseTool):
                 ensure_ascii=False,
             )
 
+        if dashboard_selection is None:
+            sel = result.get("dashboard_selection")
+            if isinstance(sel, dict) and sel.get("id") is not None:
+                dashboard_selection = sel
+
         append_turn(
             session_id,
             user_content=message,
@@ -128,6 +133,7 @@ class PivonyAdvisorTool(BaseTool):
             "suggested_followups": result.get("suggested_followups"),
             "guidance": result.get("guidance"),
             "dashboard_picker": result.get("dashboard_picker"),
+            "dashboard_selection": result.get("dashboard_selection"),
             "locked_dashboard_id": dashboard_id,
         }
         return json.dumps(payload, ensure_ascii=False)

@@ -53,6 +53,15 @@ class HardAgentState:
     def scope_resolved(self) -> bool:
         return self.has_dashboard or self.org_wide
 
+    def dashboard_selection_payload(self) -> dict[str, Any] | None:
+        """UI-facing dashboard pick for assistant responses and SSE done events."""
+        if self.dashboard_id is None:
+            return None
+        return {
+            "id": self.dashboard_id,
+            "name": self.dashboard_name or f"Dashboard {self.dashboard_id}",
+        }
+
     def as_established(self) -> EstablishedAnalyticsScope | None:
         if not self.scope_resolved and self.days is None and not (self.since and self.until):
             return None

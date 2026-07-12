@@ -23,6 +23,7 @@ from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
 
 from core.agent import DEFAULT_ADVISOR_MODE, run_advisor_agent
+from core.agent_state import resolve_hard_agent_state
 from core.config import (
     CREDS_PATH,
     DEFAULT_SECTOR,
@@ -34,6 +35,7 @@ from core.llm_resilience import (
     GENERIC_LLM_ERROR_MESSAGE,
     LlmTurnFailed,
     is_terminal_llm_user_message,
+    user_message_for_llm_error,
 )
 from core.conversation import extract_turns, prepare_conversational_input
 from core.agent_stream import stream_advisor_agent, stream_simple_completion
@@ -193,6 +195,10 @@ class ChatCompletionResponse(BaseModel):
         default=None,
         description="When set, the UI should render a searchable dashboard picker: {dashboards:[{id,name}], default_dashboard_id}",
     )
+    pivony_dashboard_selection: dict | None = Field(
+        default=None,
+        description="Active dashboard scope for this turn: {id, name}",
+    )
     pivony_charts: list[dict] = Field(
         default_factory=list,
         description="Welcome-compatible chart payloads rendered inline with the assistant reply.",
@@ -238,6 +244,7 @@ def _openai_chat_completion(
     suggested_followups: list[str] | None = None,
     guidance: str | None = None,
     dashboard_picker: dict | None = None,
+    dashboard_selection: dict | None = None,
     charts: list[dict] | None = None,
 ) -> ChatCompletionResponse:
     return ChatCompletionResponse(
@@ -250,6 +257,7 @@ def _openai_chat_completion(
         pivony_suggested_followups=suggested_followups or [],
         pivony_guidance=guidance or "",
         pivony_dashboard_picker=dashboard_picker,
+        pivony_dashboard_selection=dashboard_selection,
         pivony_charts=charts or [],
     )
 
@@ -297,6 +305,7 @@ async def _stream_chat_events(
     turns = extract_turns(request.messages)
     answer = ""
     dashboard_picker: dict | None = None
+    dashboard_selection: dict | None = None
     charts: list[dict] = []
 
     if USE_AGENT:
@@ -321,6 +330,9 @@ async def _stream_chat_events(
             if event.get("type") == "done":
                 answer = str(event.get("content") or "")
                 dashboard_picker = event.get("dashboard_picker")
+                sel = event.get("dashboard_selection")
+                if isinstance(sel, dict):
+                    dashboard_selection = sel
                 raw_charts = event.get("charts")
                 if isinstance(raw_charts, list):
                     charts = [c for c in raw_charts if isinstance(c, dict)]
@@ -341,7 +353,7 @@ async def _stream_chat_events(
         )
     except Exception as exc:
         logger.error("Advisor stream failed: %s", exc, exc_info=True)
-        answer = GENERIC_LLM_ERROR_MESSAGE
+        answer = user_message_for_llm_error(exc)
         yield _sse_payload(
             {"type": "content", "delta": answer, "replace": True}
         )
@@ -374,6 +386,7 @@ async def _stream_chat_events(
             "pivony_suggested_followups": followups,
             "pivony_guidance": guidance,
             "pivony_dashboard_picker": dashboard_picker,
+            "pivony_dashboard_selection": dashboard_selection,
             "pivony_charts": charts,
         }
     )
@@ -439,6 +452,7 @@ async def chat_completions(
     try:
         embeddings, client, llm = _components()
         dashboard_picker: dict | None = None
+        dashboard_selection: dict | None = None
         if USE_AGENT:
             answer, dashboard_picker = run_advisor_agent(
                 turns=extract_turns(request.messages),
@@ -451,6 +465,11 @@ async def chat_completions(
                 user_id=user_id,
                 page_context=request.pivony_page_context,
             )
+            _hard = resolve_hard_agent_state(
+                extract_turns(request.messages),
+                request.pivony_page_context,
+            )
+            dashboard_selection = _hard.dashboard_selection_payload()
         else:
             chain = _get_chain(sector, api_system)
             answer = chain.invoke(chat_input)
@@ -481,6 +500,7 @@ async def chat_completions(
             suggested_followups=followups,
             guidance=guidance,
             dashboard_picker=dashboard_picker,
+            dashboard_selection=dashboard_selection,
         )
     except HTTPException:
         raise
