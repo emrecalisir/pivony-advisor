@@ -99,6 +99,21 @@ def _model_selection():
 
 
 def _origin_https_url(repo_path: str | os.PathLike[str]) -> str | None:
+    override_key = None
+    slug = Path(repo_path).name
+    from quality_loop.repo_scope import read_scope
+
+    scope = read_scope()
+    if slug == scope.get("write_repo"):
+        override_key = "QUALITY_LOOP_CURSOR_CLOUD_REPO_URL"
+    for extra in scope.get("extra_write_repos") or []:
+        if slug == extra:
+            override_key = f"QUALITY_LOOP_CURSOR_CLOUD_REPO_URL_{extra.upper().replace('-', '_')}"
+    if override_key:
+        override = os.environ.get(override_key, "").strip()
+        if override:
+            return override.rstrip("/").removesuffix(".git")
+
     proc = subprocess.run(
         ["git", "-C", str(repo_path), "remote", "get-url", "origin"],
         capture_output=True,
@@ -109,10 +124,17 @@ def _origin_https_url(repo_path: str | os.PathLike[str]) -> str | None:
     url = proc.stdout.strip()
     if not url:
         return None
+    if url.startswith("/") or url.startswith("file:"):
+        return None
     if url.startswith("git@"):
         host, path = url.split(":", 1)
         host = host.split("@", 1)[1]
-        url = f"https://{host}/{path}"
+        if "github" in host.lower():
+            url = f"https://github.com/{path}"
+        else:
+            url = f"https://{host}/{path}"
+    if not url.startswith("https://"):
+        return None
     if url.endswith(".git"):
         url = url[:-4]
     return url
