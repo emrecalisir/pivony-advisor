@@ -121,3 +121,17 @@ def test_collect_stream_turn_raises_after_retry_exhaustion():
             assert exc.user_message == RATE_LIMIT_USER_MESSAGE
     finally:
         _mod.time.sleep = original_sleep
+
+
+def test_user_message_for_function_call_mismatch():
+    exc = RuntimeError(
+        "400 INVALID_ARGUMENT. Please ensure that the number of function "
+        "response parts is equal to the number of function call parts of "
+        "the function call turn."
+    )
+    assert _mod.user_message_for_llm_error(exc) == _mod.FUNCTION_CALL_MISMATCH_USER_MESSAGE
+
+
+def test_user_message_for_invalid_argument():
+    exc = _Fake400ClientError("400 INVALID_ARGUMENT. bad request")
+    assert _mod.user_message_for_llm_error(exc) == _mod.INVALID_ARGUMENT_USER_MESSAGE

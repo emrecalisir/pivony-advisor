@@ -143,9 +143,16 @@ def pin_tool_args_for_state(
     out = dict(args or {})
     if state.has_dashboard and state.dashboard_id is not None:
         out["dashboard_id"] = state.dashboard_id
+        out.pop("org_wide", None)
+    elif state.org_wide:
+        out.pop("dashboard_id", None)
+        if tool_name == METRICS:
+            out["org_wide"] = True
+        else:
+            out.pop("org_wide", None)
     else:
         out.pop("dashboard_id", None)
-        if tool_name == METRICS and not state.org_wide:
+        if tool_name == METRICS:
             out.pop("org_wide", None)
     return out
 
@@ -179,12 +186,28 @@ def validated_tool_invoke(
             args = parsed.model_dump(exclude_none=True)
         except ValidationError as exc:
             logger.warning("Tool %s arg validation failed: %s", tool.name, exc)
+            detail = str(exc)
+            user_message = (
+                "Maalesef, talebinizdeki bazı parametreleri anlayamadım. "
+                "Lütfen isteğinizi farklı bir şekilde ifade etmeyi veya detayları netleştirmeyi deneyin."
+            )
+            if "dashboard_id" in detail and "Field required" in detail:
+                if state is not None and state.has_dashboard:
+                    user_message = (
+                        f"Dashboard kapsamı (id={state.dashboard_id}) sunucu tarafından "
+                        "ayarlandı ancak araç çağrısı doğrulanamadı. Lütfen tekrar deneyin."
+                    )
+                else:
+                    user_message = (
+                        "Bu işlem için bir dashboard seçilmesi gerekiyor. "
+                        "Lütfen önce bir dashboard seçin veya dashboard listesini isteyin."
+                    )
             return json.dumps(
                 {
                     "error": "invalid_tool_arguments",
-                    "tool": tool_name,
-                    "detail": str(exc),
-                    "user_message": "Maalesef, talebinizdeki bazı parametreleri anlayamadım. Lütfen isteğinizi farklı bir şekilde ifade etmeyi veya detayları netleştirmeyi deneyin.",
+                    "tool": tool.name,
+                    "detail": detail,
+                    "user_message": user_message,
                     "instruction": "Fix arguments and retry the tool once. The `user_message` field contains a user-friendly version of the error.",
                 },
                 ensure_ascii=False,
@@ -218,7 +241,7 @@ def validated_tool_invoke(
         return json.dumps(
             {
                 "error": "tool_execution_failed",
-                "tool": tool_name,
+                "tool": tool.name,
                 "detail": str(exc),
                 "user_message": user_facing_error,
                 "instruction": (
@@ -231,6 +254,42 @@ def validated_tool_invoke(
             },
             ensure_ascii=False,
         )
+
+
+def tool_result_indicates_failure(result: str) -> bool:
+    """True when a tool returned a structured error payload."""
+    if not result:
+        return False
+    try:
+        payload = json.loads(result)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    return bool(payload.get("error")) or bool(payload.get("skipped"))
+
+
+def repeated_tool_failure_result(tool_name: str, prior_failures: set[str]) -> str | None:
+    """Block a second attempt at the same tool after a system-level failure this turn."""
+    if tool_name not in prior_failures:
+        return None
+    return json.dumps(
+        {
+            "skipped": True,
+            "tool": tool_name,
+            "error": "tool_already_failed",
+            "user_message": (
+                f"'{tool_name}' aracı bu turda zaten başarısız oldu. "
+                "Aynı aracı tekrar çağırmayın; kullanıcıya hatayı açıklayın veya "
+                "farklı bir yaklaşım önerin."
+            ),
+            "instruction": (
+                "Do NOT call this tool again in this turn. Explain the prior failure "
+                "to the user and suggest contacting support if the issue persists."
+            ),
+        },
+        ensure_ascii=False,
+    )
 
 
 def blocked_tool_result(tool_name: str, state: HardAgentState) -> str | None:

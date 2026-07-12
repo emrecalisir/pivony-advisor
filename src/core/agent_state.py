@@ -98,28 +98,33 @@ def resolve_hard_agent_state(
     user_explicit_dashboard_id = None
     user_explicit_dashboard_name = None
     user_explicit_dashboard_locked = False
+    last_dashboard_selection_id = None
+    last_dashboard_selection_name = None
     for key in ("dashboard_selection", "last_dashboard_selection"):
         selection = pc.get(key)
         if isinstance(selection, dict):
             sel_id = _int_or_none(selection.get("id"))
             sel_name = selection.get("name")
             if sel_id is not None:
-                user_explicit_dashboard_id = sel_id
-                user_explicit_dashboard_name = str(sel_name) if sel_name else None
-                user_explicit_dashboard_locked = True  # If user selected, it's locked until changed
-                break  # Use the first one found (dashboard_selection > last_dashboard_selection)
+                if key == "dashboard_selection":
+                    user_explicit_dashboard_id = sel_id
+                    user_explicit_dashboard_name = str(sel_name) if sel_name else None
+                    user_explicit_dashboard_locked = True
+                    break
+                last_dashboard_selection_id = sel_id
+                last_dashboard_selection_name = str(sel_name) if sel_name else None
 
     if pc.get("fresh_session") is True:
-        # For a fresh session, if a dashboard was just selected, respect it.
+        # Fresh session: honour only an explicit pick on this turn, not stale context.
         if user_explicit_dashboard_id is not None:
             return HardAgentState(
                 dashboard_id=user_explicit_dashboard_id,
-                dashboard_name=user_explicit_dashboard_name,  # Pass name
+                dashboard_name=user_explicit_dashboard_name,
                 since=since_pc,
                 until=until_pc,
                 days=days_pc,
                 dashboard_locked=user_explicit_dashboard_locked,
-                source="dashboard_selection_fresh_session",
+                source="dashboard_selection",
             )
         return HardAgentState(
             since=since_pc,
@@ -163,36 +168,42 @@ def resolve_hard_agent_state(
             )
             return HardAgentState(
                 dashboard_id=scope_dash,
-                dashboard_name=resolved_dashboard_name,  # Pass name if available
+                dashboard_name=resolved_dashboard_name,
                 since=str(scope_since).strip() if scope_since else since_pc,
                 until=str(scope_until).strip() if scope_until else until_pc,
                 days=scope_days if scope_days is not None else days_pc,
-                # Locked if it matches user's explicit selection, otherwise not necessarily locked
-                dashboard_locked=scope_dash == user_explicit_dashboard_id,
+                dashboard_locked=True,
                 source="analytics_scope",
             )
         if raw_scope.get("org_wide"):
-            # If org_wide, but user selected a specific dashboard, carry that dashboard along
-            # as a primary focus within the org-wide context, but it's not "locked"
-            # in the sense of overriding org-wide.
-            dash_id_for_org_wide = (
-                user_explicit_dashboard_id
-                if user_explicit_dashboard_id is not None
-                else None
-            )
-            resolved_dashboard_name = (
+            deferred_dash_id = user_explicit_dashboard_id or last_dashboard_selection_id
+            deferred_dash_name = (
                 user_explicit_dashboard_name
-                if dash_id_for_org_wide == user_explicit_dashboard_id
-                else None
+                if user_explicit_dashboard_id is not None
+                else last_dashboard_selection_name
             )
+            if deferred_dash_id is not None:
+                deferred_source = (
+                    "dashboard_selection"
+                    if user_explicit_dashboard_id is not None
+                    else "last_dashboard_selection"
+                )
+                return HardAgentState(
+                    dashboard_id=deferred_dash_id,
+                    dashboard_name=deferred_dash_name,
+                    org_wide=False,
+                    since=str(scope_since).strip() if scope_since else since_pc,
+                    until=str(scope_until).strip() if scope_until else until_pc,
+                    days=scope_days or days_pc or 7,
+                    dashboard_locked=True,
+                    source=deferred_source,
+                )
             return HardAgentState(
-                dashboard_id=dash_id_for_org_wide,
-                dashboard_name=resolved_dashboard_name, # Pass name if available
                 org_wide=True,
                 since=str(scope_since).strip() if scope_since else since_pc,
-                until=str(until_pc).strip() if until_pc else until_pc,
-                days=scope_days or 7,
-                dashboard_locked=False,  # Org-wide is generally not "locked" to a specific dashboard
+                until=str(scope_until).strip() if scope_until else until_pc,
+                days=scope_days or days_pc or 7,
+                dashboard_locked=False,
                 source="analytics_scope_org_wide",
             )
 
@@ -201,12 +212,22 @@ def resolve_hard_agent_state(
     if user_explicit_dashboard_id is not None:
         return HardAgentState(
             dashboard_id=user_explicit_dashboard_id,
-            dashboard_name=user_explicit_dashboard_name,  # Pass name
+            dashboard_name=user_explicit_dashboard_name,
             since=since_pc,
             until=until_pc,
             days=days_pc,
             dashboard_locked=user_explicit_dashboard_locked,
-            source="dashboard_selection_persistent",
+            source="dashboard_selection",
+        )
+    if last_dashboard_selection_id is not None:
+        return HardAgentState(
+            dashboard_id=last_dashboard_selection_id,
+            dashboard_name=last_dashboard_selection_name,
+            since=since_pc,
+            until=until_pc,
+            days=days_pc,
+            dashboard_locked=True,
+            source="last_dashboard_selection",
         )
 
     # 4. Fallback: Inferred established scope from prior turns

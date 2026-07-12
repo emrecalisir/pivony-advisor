@@ -32,7 +32,9 @@ from core.llm_resilience import (
 from core.tool_routing import (
     blocked_tool_result,
     filter_tools_for_state,
+    repeated_tool_failure_result,
     sanitize_function_calls,
+    tool_result_indicates_failure,
     validated_tool_invoke,
 )
 from core.config import (
@@ -312,6 +314,7 @@ def stream_advisor_agent(
             default_dash = None
     picker: dict | None = None
     tools_called: set[str] = set()
+    failed_tools: set[str] = set()
     limit = max_iterations or AGENT_MAX_TOOL_ITERATIONS
     final_text = ""
     charts: list[dict[str, Any]] = []
@@ -328,6 +331,7 @@ def stream_advisor_agent(
             limit=limit,
             picker=picker,
             tools_called=tools_called,
+            failed_tools=failed_tools,
             final_text=final_text,
             charts=charts,
         )
@@ -349,6 +353,7 @@ def _run_agent_stream_loop(
     limit: int,
     picker: dict | None,
     tools_called: set[str],
+    failed_tools: set[str],
     final_text: str,
     charts: list[dict[str, Any]],
 ) -> Iterator[dict[str, Any]]:
@@ -408,6 +413,8 @@ def _run_agent_stream_loop(
 
             if blocked := blocked_tool_result(name, _hard) if name else None:
                 result = blocked
+            elif repeat := repeated_tool_failure_result(name, failed_tools) if name else None:
+                result = repeat
             elif tool is None:
                 result = f"Bilinmeyen araç: {name}"
             else:
@@ -417,6 +424,8 @@ def _run_agent_stream_loop(
                     logger.warning("Tool %s invocation failed: %s", name, exc)
                     result = f"Araç hatası ({name}): {exc}"
             
+            if name and result is not None and tool_result_indicates_failure(str(result)):
+                failed_tools.add(name)
             # Append the response for this processed (executed or blocked by _tool_routing) call.
             if result is not None:
                 responses_to_send_back.append(

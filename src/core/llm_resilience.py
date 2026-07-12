@@ -24,11 +24,16 @@ RATE_LIMIT_USER_MESSAGE = (
 GENERIC_LLM_ERROR_MESSAGE = (
     "Yanıt oluşturulurken bir hata oluştu. Lütfen tekrar deneyin."
 )
-INVALID_FUNCTION_CALL_ARGUMENT_ERROR_MESSAGE = (
-    "Yapay zeka modelimizle iletişim sırasında bir sorun oluştu. "
-    "Komutlarınızın işlenmesinde beklenmedik bir hata meydana geldi. "
-    "Lütfen daha sonra tekrar deneyin veya farklı bir yaklaşımla sorunuzu tekrar sorun."
+FUNCTION_CALL_MISMATCH_USER_MESSAGE = (
+    "İç sistemde araç yanıtları senkronize edilemedi (geçici model hatası). "
+    "Lütfen sorunuzu bir kez daha gönderin."
 )
+INVALID_ARGUMENT_USER_MESSAGE = (
+    "Yapay zeka modeline gönderilen istek geçersiz parametreler içeriyor. "
+    "Lütfen sorunuzu farklı şekilde ifade edip tekrar deneyin."
+)
+# Backward-compatible alias for callers that import the old constant name.
+INVALID_FUNCTION_CALL_ARGUMENT_ERROR_MESSAGE = FUNCTION_CALL_MISMATCH_USER_MESSAGE
 
 
 class RateLimitRetryCallback(Protocol):
@@ -53,8 +58,33 @@ def is_terminal_llm_user_message(text: str) -> bool:
     return normalized in (
         RATE_LIMIT_USER_MESSAGE,
         GENERIC_LLM_ERROR_MESSAGE,
+        FUNCTION_CALL_MISMATCH_USER_MESSAGE,
+        INVALID_ARGUMENT_USER_MESSAGE,
         INVALID_FUNCTION_CALL_ARGUMENT_ERROR_MESSAGE,
     )
+
+
+def is_function_call_mismatch_error(exc: BaseException) -> bool:
+    """True when Gemini rejected a turn due to function-call/response count mismatch."""
+    text = str(exc)
+    return "function response parts is equal to the number of function call parts" in text
+
+
+def is_invalid_argument_error(exc: BaseException) -> bool:
+    """True for Vertex/Gemini 400 INVALID_ARGUMENT (excluding rate limits)."""
+    if is_function_call_mismatch_error(exc):
+        return True
+    try:
+        from google.genai.errors import ClientError
+    except ImportError:
+        ClientError = ()  # type: ignore[misc, assignment]
+
+    if isinstance(exc, ClientError):
+        code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+        if code == 400:
+            return True
+    text = str(exc)
+    return "400" in text and "INVALID_ARGUMENT" in text
 
 
 class LlmTurnFailed(Exception):
@@ -95,15 +125,10 @@ def is_rate_limit_error(exc: BaseException) -> bool:
 def user_message_for_llm_error(exc: BaseException) -> str:
     if is_rate_limit_error(exc):
         return RATE_LIMIT_USER_MESSAGE
-
-    try:
-        from google.genai.errors import ClientError
-        if isinstance(exc, ClientError):
-            if exc.code == 400 and "function response parts is equal to the number of function call parts" in str(exc):
-                return INVALID_FUNCTION_CALL_ARGUMENT_ERROR_MESSAGE
-    except ImportError:
-        pass
-
+    if is_function_call_mismatch_error(exc):
+        return FUNCTION_CALL_MISMATCH_USER_MESSAGE
+    if is_invalid_argument_error(exc):
+        return INVALID_ARGUMENT_USER_MESSAGE
     return GENERIC_LLM_ERROR_MESSAGE
 
 

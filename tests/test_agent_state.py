@@ -195,10 +195,37 @@ def test_pin_tool_args_injects_user_selected_dashboard_id():
     )
     args = pin_tool_args_for_state(
         "get_trends",
-        {"dashboard_id": 9999, "days": 7},
+        {"dashboard_id": 9999, "days": 7, "org_wide": True},
         state,
     )
     assert args["dashboard_id"] == 6208
+    assert "org_wide" not in args
+
+
+def test_pin_tool_args_sets_org_wide_for_metrics():
+    state = HardAgentState(org_wide=True, days=7, source="analytics_scope_org_wide")
+    args = pin_tool_args_for_state(
+        "get_pivony_metrics",
+        {"days": 7},
+        state,
+    )
+    assert "dashboard_id" not in args
+    assert args["org_wide"] is True
+
+
+def test_pin_tool_args_strips_org_wide_from_dashboard_tools():
+    state = HardAgentState(
+        dashboard_id=6208,
+        dashboard_locked=True,
+        source="dashboard_selection",
+    )
+    args = pin_tool_args_for_state(
+        "get_trends",
+        {"days": 7, "org_wide": True},
+        state,
+    )
+    assert args["dashboard_id"] == 6208
+    assert "org_wide" not in args
 
 
 def test_pin_tool_args_for_new_topic_intent_tool():
