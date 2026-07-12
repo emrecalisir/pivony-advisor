@@ -157,159 +157,175 @@ def finalize_cursor_fixes(
         after = after_map.get(slug)
         if not after:
             continue
-        ok, detail = ensure_git_branch(after.path, env=_git_env())
-        if not ok:
-            fixes_skipped.append(
-                {
-                    "file": "N/A",
-                    "repo": slug,
-                    "issue": "git branch checkout",
-                    "reason": detail,
-                }
-            )
-            continue
-        messages.append(f"✓ {slug}: {detail}")
+        from quality_loop.git_write_lock import acquire_git_write_lock, release_git_write_lock
 
-        changed = _changed_files(before, after)
-        if not changed:
-            continue
-
-        for rel in changed:
-            full = (after.path / rel).resolve()
-            if not str(full).startswith(str(after.path.resolve())):
+        git_lock_fh = None
+        try:
+            git_lock_fh = acquire_git_write_lock(slug)
+            ok, detail = ensure_git_branch(after.path, env=_git_env())
+            if not ok:
                 fixes_skipped.append(
                     {
-                        "file": rel,
+                        "file": "N/A",
                         "repo": slug,
-                        "issue": "path escape",
-                        "reason": "refusing to finalize outside repo",
+                        "issue": "git branch checkout",
+                        "reason": detail,
                     }
                 )
                 continue
+            messages.append(f"✓ {slug}: {detail}")
 
-            before_text = _git_show(after.path, before.head, rel) if before.head else ""
-            if not before_text and full.exists():
-                before_text = _read_file(full)
-            after_text = _read_file(full) if full.exists() else ""
+            changed = _changed_files(before, after)
+            if not changed:
+                continue
 
-            if is_python_path(full) and after_text:
-                valid, err = validate_python_source(after_text)
-                if not valid:
-                    subprocess.run(
-                        ["git", "-C", str(after.path), "checkout", "--", rel],
-                        capture_output=True,
-                        text=True,
-                        env=_git_env(),
-                    )
+            for rel in changed:
+                full = (after.path / rel).resolve()
+                if not str(full).startswith(str(after.path.resolve())):
                     fixes_skipped.append(
                         {
                             "file": rel,
                             "repo": slug,
-                            "issue": "syntax validation",
-                            "reason": f"syntax_error: {err}",
-                            "deploy_status": "syntax_error",
-                        }
-                    )
-                    messages.append(f"✗ rolled back {slug}/{rel}: {err}")
-                    continue
-
-            commit_hash: str | None = None
-            git_push_status = "skipped"
-            deploy_status = "file_written_and_valid"
-
-            if job_id:
-                try:
-                    record_fix_snapshot(job_id, rel, before_text, after_text, repo=slug)
-                except Exception as exc:
-                    messages.append(f"⚠ snapshot {slug}/{rel}: {exc}")
-
-            if _git_allowed():
-                commit_msg = f"[quality-loop] cursor fix {rel}"
-                add_proc = subprocess.run(
-                    ["git", "-C", str(after.path), "add", rel],
-                    capture_output=True,
-                    text=True,
-                    env=_git_env(),
-                )
-                if add_proc.returncode != 0:
-                    fixes_skipped.append(
-                        {
-                            "file": rel,
-                            "repo": slug,
-                            "issue": "git add",
-                            "reason": (add_proc.stderr or add_proc.stdout or "add failed").strip(),
+                            "issue": "path escape",
+                            "reason": "refusing to finalize outside repo",
                         }
                     )
                     continue
-                commit_proc = subprocess.run(
-                    ["git", "-C", str(after.path), "commit", "-m", commit_msg],
-                    capture_output=True,
-                    text=True,
-                    env=_git_env(),
-                )
-                if commit_proc.returncode != 0:
-                    err = (commit_proc.stderr or commit_proc.stdout or "commit failed").strip()
-                    if "nothing to commit" in err.lower():
-                        deploy_status = "file_written_and_valid"
-                    else:
+
+                before_text = _git_show(after.path, before.head, rel) if before.head else ""
+                if not before_text and full.exists():
+                    before_text = _read_file(full)
+                after_text = _read_file(full) if full.exists() else ""
+
+                if is_python_path(full) and after_text:
+                    valid, err = validate_python_source(after_text)
+                    if not valid:
+                        subprocess.run(
+                            ["git", "-C", str(after.path), "checkout", "--", rel],
+                            capture_output=True,
+                            text=True,
+                            env=_git_env(),
+                        )
                         fixes_skipped.append(
                             {
                                 "file": rel,
                                 "repo": slug,
-                                "issue": "git commit",
-                                "reason": err[:300],
+                                "issue": "syntax validation",
+                                "reason": f"syntax_error: {err}",
+                                "deploy_status": "syntax_error",
+                            }
+                        )
+                        messages.append(f"✗ rolled back {slug}/{rel}: {err}")
+                        continue
+
+                commit_hash: str | None = None
+                git_push_status = "skipped"
+                deploy_status = "file_written_and_valid"
+
+                if job_id:
+                    try:
+                        record_fix_snapshot(job_id, rel, before_text, after_text, repo=slug)
+                    except Exception as exc:
+                        messages.append(f"⚠ snapshot {slug}/{rel}: {exc}")
+
+                if _git_allowed():
+                    commit_msg = f"[quality-loop] cursor fix {rel}"
+                    add_proc = subprocess.run(
+                        ["git", "-C", str(after.path), "add", rel],
+                        capture_output=True,
+                        text=True,
+                        env=_git_env(),
+                    )
+                    if add_proc.returncode != 0:
+                        fixes_skipped.append(
+                            {
+                                "file": rel,
+                                "repo": slug,
+                                "issue": "git add",
+                                "reason": (add_proc.stderr or add_proc.stdout or "add failed").strip(),
                             }
                         )
                         continue
-                else:
-                    rev = subprocess.run(
-                        ["git", "-C", str(after.path), "rev-parse", "--short", "HEAD"],
+                    commit_proc = subprocess.run(
+                        ["git", "-C", str(after.path), "commit", "-m", commit_msg],
                         capture_output=True,
                         text=True,
                         env=_git_env(),
                     )
-                    if rev.returncode == 0 and rev.stdout.strip():
-                        commit_hash = rev.stdout.strip()
-                    push_proc = subprocess.run(
-                        git_push_command(after.path),
-                        capture_output=True,
-                        text=True,
-                        env=_git_env(),
-                    )
-                    git_push_status = "success" if push_proc.returncode == 0 else "failed"
-                    if push_proc.returncode != 0:
-                        deploy_status = "commit_push_failed"
-                        messages.append(
-                            f"⚠ push {slug}/{rel}: {(push_proc.stderr or push_proc.stdout or '')[:200]}"
-                        )
+                    if commit_proc.returncode != 0:
+                        err = (commit_proc.stderr or commit_proc.stdout or "commit failed").strip()
+                        if "nothing to commit" in err.lower():
+                            deploy_status = "file_written_and_valid"
+                        else:
+                            fixes_skipped.append(
+                                {
+                                    "file": rel,
+                                    "repo": slug,
+                                    "issue": "git commit",
+                                    "reason": err[:300],
+                                }
+                            )
+                            continue
                     else:
-                        deploy_status = "committed_and_pushed"
-                        messages.append(f"✓ pushed {slug}/{rel} ({commit_hash})")
-
-                if job_id and commit_hash:
-                    try:
-                        from quality_loop.fix_snapshots import annotate_fix_snapshot
-
-                        annotate_fix_snapshot(
-                            job_id,
-                            rel,
-                            repo=slug,
-                            commit_hash=commit_hash,
-                            commit_message=commit_msg,
-                            git_push_status=git_push_status,
+                        rev = subprocess.run(
+                            ["git", "-C", str(after.path), "rev-parse", "--short", "HEAD"],
+                            capture_output=True,
+                            text=True,
+                            env=_git_env(),
                         )
-                    except Exception:
-                        pass
+                        if rev.returncode == 0 and rev.stdout.strip():
+                            commit_hash = rev.stdout.strip()
+                        push_proc = subprocess.run(
+                            git_push_command(after.path),
+                            capture_output=True,
+                            text=True,
+                            env=_git_env(),
+                        )
+                        git_push_status = "success" if push_proc.returncode == 0 else "failed"
+                        if push_proc.returncode != 0:
+                            deploy_status = "commit_push_failed"
+                            messages.append(
+                                f"⚠ push {slug}/{rel}: {(push_proc.stderr or push_proc.stdout or '')[:200]}"
+                            )
+                        else:
+                            deploy_status = "committed_and_pushed"
+                            messages.append(f"✓ pushed {slug}/{rel} ({commit_hash})")
 
-            fixes_applied.append(
+                    if job_id and commit_hash:
+                        try:
+                            from quality_loop.fix_snapshots import annotate_fix_snapshot
+
+                            annotate_fix_snapshot(
+                                job_id,
+                                rel,
+                                repo=slug,
+                                commit_hash=commit_hash,
+                                commit_message=commit_msg,
+                                git_push_status=git_push_status,
+                            )
+                        except Exception:
+                            pass
+
+                fixes_applied.append(
+                    {
+                        "file": rel,
+                        "repo": slug,
+                        "issue_fixed": f"Cursor fix: {rel}",
+                        "deploy_status": deploy_status,
+                        "commit_hash": commit_hash,
+                    }
+                )
+        except Exception as exc:
+            fixes_skipped.append(
                 {
-                    "file": rel,
+                    "file": "N/A",
                     "repo": slug,
-                    "issue_fixed": f"Cursor fix: {rel}",
-                    "deploy_status": deploy_status,
-                    "commit_hash": commit_hash,
+                    "issue": "git write lock",
+                    "reason": str(exc),
                 }
             )
+        finally:
+            release_git_write_lock(git_lock_fh)
 
     payload: dict[str, Any] = {
         "fixes_applied": fixes_applied,

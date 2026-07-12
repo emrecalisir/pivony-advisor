@@ -22,7 +22,7 @@ _REPO_ROOT = _PACKAGE_ROOT.parent
 
 _lock = threading.Lock()
 _active_job_id: str | None = None
-_processes: dict[str, subprocess.Popen] = {}
+_lock_handles: dict[str, Any] = {}
 
 
 def _utcnow_iso() -> str:
@@ -135,14 +135,33 @@ def _spawn_job(
     sector: str | None = None,
 ) -> dict[str, Any]:
     global _active_job_id
+    from quality_loop.job_lock import (
+        JobLockBusy,
+        acquire_job_lock,
+        job_queue_mode,
+        job_queue_timeout_sec,
+        reconcile_stale_job_lock,
+        release_job_lock,
+    )
+
     with _lock:
-        reconcile_stale_jobs()
+        reconcile_stale_job_lock()
         active = get_active_job()
-        if active:
+        if active and job_queue_mode() != "wait":
             raise RuntimeError(f"Job already running: {active['job_id']}")
 
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         job_id = f"job_{stamp}"
+
+        try:
+            lock_fh = acquire_job_lock(
+                job_id,
+                block=job_queue_mode() == "wait",
+                timeout_sec=job_queue_timeout_sec(),
+            )
+        except JobLockBusy as exc:
+            raise RuntimeError(str(exc)) from exc
+
         _active_job_id = job_id
 
         cycle_id: str | None = session_id
@@ -210,6 +229,7 @@ def _spawn_job(
             start_new_session=True,
         )
         _processes[job_id] = proc
+        _lock_handles[job_id] = lock_fh
         write_job(job_id, {"pid": proc.pid, "status": "running", "message": "Çalışıyor"})
 
         def _wait() -> None:
@@ -217,6 +237,7 @@ def _spawn_job(
             code = proc.wait()
             log_fh.close()
             _processes.pop(job_id, None)
+            release_job_lock(_lock_handles.pop(job_id, None))
             try:
                 current = load_job(job_id)
             except FileNotFoundError:
@@ -318,6 +339,7 @@ def stop_job(job_id: str | None = None) -> dict[str, Any]:
             },
         )
         _processes.pop(job_id, None)
+        release_job_lock(_lock_handles.pop(job_id, None))
         if _active_job_id == job_id:
             _active_job_id = None
         return load_job(job_id)

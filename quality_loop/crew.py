@@ -399,6 +399,17 @@ def main() -> None:
     args = parser.parse_args()
     _JOB_ID = args.job_id
 
+    cli_lock_fh = None
+    if not _JOB_ID:
+        from quality_loop.job_lock import JobLockBusy, acquire_job_lock, release_job_lock
+
+        _JOB_ID = f"cli_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        os.environ["QUALITY_LOOP_JOB_ID"] = _JOB_ID
+        try:
+            cli_lock_fh = acquire_job_lock(_JOB_ID, block=False)
+        except JobLockBusy as exc:
+            raise SystemExit(str(exc)) from exc
+
     if _JOB_ID:
         set_status_callback(_vertex_status_callback)
         _update_job(status="running", message="Başlatılıyor")
@@ -419,6 +430,10 @@ def main() -> None:
         raise
     finally:
         set_status_callback(None)
+        if cli_lock_fh is not None:
+            from quality_loop.job_lock import release_job_lock
+
+            release_job_lock(cli_lock_fh)
 
 
 if __name__ == "__main__":
