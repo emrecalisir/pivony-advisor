@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import subprocess
+from pathlib import Path
 from typing import Any
 
 from quality_loop.coding_git_finalize import capture_repo_states, finalize_cursor_fixes
