@@ -36,4 +36,5 @@ def test_build_cursor_coding_prompt_includes_qa_and_branch(monkeypatch):
     assert "development" in prompt
     assert "tool routing bug" in prompt
     assert "fixes_applied" in prompt
-    assert "masterr_root" in prompt or "write_repo" in prompt
+    assert "ÖNCEKİ FIX ÖZETİ" in prompt or "önceki fix" in prompt.lower()
+    assert "Kural 2" in prompt

@@ -10,6 +10,11 @@ import subprocess
 from typing import Any
 
 from quality_loop.coding_git_finalize import capture_repo_states, finalize_cursor_fixes
+from quality_loop.cursor_context import (
+    build_known_open_issues,
+    build_previous_fixes_summary,
+    render_cursor_prompt_template,
+)
 from quality_loop.repo_scope import get_masterr_root, read_scope, repo_path
 from quality_loop.run_store import try_parse_json
 
@@ -71,31 +76,14 @@ def build_cursor_coding_prompt(
 ) -> str:
     branch = os.environ.get("QUALITY_LOOP_GIT_BRANCH", "development").strip() or "development"
     qa_json = json.dumps(qa_report, ensure_ascii=False, indent=2)
-    return (
-        "You are the Pivony quality-loop Coding Agent.\n"
-        "Fix QA issues in this monorepo with minimal, focused changes.\n\n"
-        f"Session: {session_id or 'n/a'}\n"
-        f"Git branch: ALWAYS work on `{branch}` only.\n\n"
-        "## Repo scope\n"
-        f"{_scope_block()}\n\n"
-        "## Coding brief\n"
-        f"{_coding_brief(sector)}\n\n"
-        "## QA report (JSON)\n"
-        f"{qa_json}\n\n"
-        "## Instructions\n"
-        "1. Start with critical/high severity issues.\n"
-        "2. Read relevant files before editing; keep fixes minimal.\n"
-        "3. Never write to pivony-api / pivony-api-dev.\n"
-        "4. Do not manually escape Python source (no \\\" hacks in triple-quoted strings).\n"
-        "5. Ensure every edited .py file passes Python syntax validation.\n"
-        "6. Prefer editing files under the scoped write repos only.\n\n"
-        "## Required final JSON (last message)\n"
-        "Return a single JSON object:\n"
-        "{\n"
-        '  "fixes_applied": [{"repo":"...", "file":"...", "qa_issue_index":0, "issue_fixed":"...", "deploy_status":"file_written_and_valid"}],\n'
-        '  "fixes_skipped": [{"repo":null, "file":"N/A", "qa_issue_index":1, "issue":"...", "reason":"..."}],\n'
-        '  "next_test_scenarios": ["..."]\n'
-        "}\n"
+    return render_cursor_prompt_template(
+        repo_scope=_scope_block(),
+        coding_brief=_coding_brief(sector),
+        qa_report_json=qa_json,
+        previous_fixes_summary=build_previous_fixes_summary(exclude_session_id=session_id),
+        known_open_issues=build_known_open_issues(qa_report, exclude_session_id=session_id),
+        session_id=session_id,
+        branch=branch,
     )
 
 
@@ -204,11 +192,14 @@ def _merge_fix_payload(cursor_json: dict[str, Any] | None, git_payload: dict[str
     if not cursor_json:
         return git_payload
     merged = dict(git_payload)
-    for key in ("fixes_applied", "fixes_skipped", "next_test_scenarios"):
+    for key in ("fixes_applied", "fixes_skipped", "next_test_scenarios", "failed_validation"):
         cursor_val = cursor_json.get(key)
-        git_val = git_payload.get(key)
+        git_val = merged.get(key)
         if cursor_val and not git_val:
             merged[key] = cursor_val
+        elif cursor_val and key == "fixes_applied" and git_val:
+            merged[key] = git_val
+            merged["cursor_fixes_applied"] = cursor_val
     merged["cursor_summary"] = cursor_json
     return merged
 
