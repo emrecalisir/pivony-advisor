@@ -141,6 +141,19 @@ def _origin_https_url(repo_path: str | os.PathLike[str]) -> str | None:
     return url
 
 
+def _cloud_repo_slugs() -> list[str]:
+    scope = read_scope()
+    slugs = [scope.get("write_repo")]
+    include_extra = os.environ.get("QUALITY_LOOP_CURSOR_CLOUD_INCLUDE_EXTRA", "false").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if include_extra:
+        slugs.extend(scope.get("extra_write_repos") or [])
+    return [s for s in slugs if s]
+
+
 def _cloud_repositories():
     from cursor_sdk import CloudRepository
 
@@ -148,10 +161,9 @@ def _cloud_repositories():
 
     branch = git_target_branch()
     repos = []
-    scope = read_scope()
     seen: set[str] = set()
-    for slug in [scope.get("write_repo"), *(scope.get("extra_write_repos") or [])]:
-        if not slug or slug in seen:
+    for slug in _cloud_repo_slugs():
+        if slug in seen:
             continue
         seen.add(slug)
         path = repo_path(slug)
@@ -159,7 +171,7 @@ def _cloud_repositories():
             continue
         url = _origin_https_url(path)
         if not url:
-            logger.warning("skip cloud repo %s: no origin url", slug)
+            logger.warning("skip cloud repo %s: no resolvable https origin", slug)
             continue
         repos.append(CloudRepository(url=url, starting_ref=branch))
     if not repos:
