@@ -17,9 +17,9 @@ def _coding_brief(sector: str | None = None) -> str:
 def create_tasks(
     cx_director: Agent | None,
     qa_agent: Agent,
-    coding_agent: Agent,
+    coding_agent: Agent | None,
     sector: str | None = None,
-) -> tuple[Task | None, Task, Task]:
+) -> tuple[Task | None, Task, Task | None]:
     conversation_task = None
     if cx_director is not None:
         conversation_task = Task(
@@ -90,54 +90,56 @@ def create_tasks(
         context=[conversation_task] if conversation_task else [],
     )
 
-    coding_task = Task(
-        description=(
-            "QA Agent'ın raporundaki sorunları düzelt (önce pivony-advisor, brief'teki geniş scope varsa onu da uygula).\n\n"
-            "Adımlar:\n"
-            "1. list_project_files ile proje yapısını gör\n"
-            "2. QA raporundaki fix_hint'lere göre read_project_file ile dosyaları oku\n"
-            "3. Sorunu tam olarak anla\n"
-            "4. Fix'i yaz — minimal, odaklı\n"
-            "5. apply_fix_and_deploy ile dosyayı güncelle (yalnızca PIVONY_REPO_ROOT altı; git/deploy env flag'leri gerekir)\n"
-            "6. Kritik severity sorunlardan başla\n\n"
-            "ÖNEMLİ:\n"
-            "- Dosyayı değiştirmeden önce MUTLAKA oku\n"
-            "- new_content dosyanın TAM güncel içeriği olmalı\n"
-            "- new_content HAM metin olmalı; karakterleri manuel escape etme (framework JSON encoding yapar)\n"
-            "- apply_fix_and_deploy geçersiz Python syntax'ında yazmayı reddeder (deploy_status: syntax_error)\n"
-            "- api/ prefix read-only keşif içindir; yazma yalnızca advisor dosyalarına\n\n"
-            "--- Coding Agent Brief ---\n"
-            f"{_coding_brief(sector)}"
-        ),
-        expected_output=(
-            "JSON formatında:\n"
-            "{\n"
-            "  'fixes_applied': [\n"
-            "    {\n"
-            "      'file': 'src/... veya pivony-mcp/src/...',\n"
-            "      'repo': 'pivony-advisor veya pivony-mcp (write/extra-write repo slug)',\n"
-            "      'qa_issue_index': 0,\n"
-            "      'issue_fixed': '...',\n"
-            "      'deploy_status': 'file_written_and_valid|syntax_error|success|skipped|failed'\n"
-            "    }\n"
-            "  ],\n"
-            "  'fixes_skipped': [\n"
-            "    {'file': 'N/A', 'repo': null, 'qa_issue_index': 1, 'issue': '...', 'reason': '...'}\n"
-            "  ],\n"
-            "  'next_test_scenarios': ['...']\n"
-            "}\n"
-            "qa_issue_index: QA raporundaki issues[] dizisinin 0-tabanlı indeksi."
-        ),
-        agent=coding_agent,
-        context=[qa_task],
-    )
+    coding_task = None
+    if coding_agent is not None:
+        coding_task = Task(
+            description=(
+                "QA Agent'ın raporundaki sorunları düzelt (önce pivony-advisor, brief'teki geniş scope varsa onu da uygula).\n\n"
+                "Adımlar:\n"
+                "1. list_project_files ile proje yapısını gör\n"
+                "2. QA raporundaki fix_hint'lere göre read_project_file ile dosyaları oku\n"
+                "3. Sorunu tam olarak anla\n"
+                "4. Fix'i yaz — minimal, odaklı\n"
+                "5. apply_fix_and_deploy ile dosyayı güncelle (yalnızca PIVONY_REPO_ROOT altı; git/deploy env flag'leri gerekir)\n"
+                "6. Kritik severity sorunlardan başla\n\n"
+                "ÖNEMLİ:\n"
+                "- Dosyayı değiştirmeden önce MUTLAKA oku\n"
+                "- new_content dosyanın TAM güncel içeriği olmalı\n"
+                "- new_content HAM metin olmalı; karakterleri manuel escape etme (framework JSON encoding yapar)\n"
+                "- apply_fix_and_deploy geçersiz Python syntax'ında yazmayı reddeder (deploy_status: syntax_error)\n"
+                "- api/ prefix read-only keşif içindir; yazma yalnızca advisor dosyalarına\n\n"
+                "--- Coding Agent Brief ---\n"
+                f"{_coding_brief(sector)}"
+            ),
+            expected_output=(
+                "JSON formatında:\n"
+                "{\n"
+                "  'fixes_applied': [\n"
+                "    {\n"
+                "      'file': 'src/... veya pivony-mcp/src/...',\n"
+                "      'repo': 'pivony-advisor veya pivony-mcp (write/extra-write repo slug)',\n"
+                "      'qa_issue_index': 0,\n"
+                "      'issue_fixed': '...',\n"
+                "      'deploy_status': 'file_written_and_valid|syntax_error|success|skipped|failed'\n"
+                "    }\n"
+                "  ],\n"
+                "  'fixes_skipped': [\n"
+                "    {'file': 'N/A', 'repo': null, 'qa_issue_index': 1, 'issue': '...', 'reason': '...'}\n"
+                "  ],\n"
+                "  'next_test_scenarios': ['...']\n"
+                "}\n"
+                "qa_issue_index: QA raporundaki issues[] dizisinin 0-tabanlı indeksi."
+            ),
+            agent=coding_agent,
+            context=[qa_task],
+        )
 
     return conversation_task, qa_task, coding_task
 
 
 def create_analyze_tasks(
-    session_id: str, qa_agent: Agent, coding_agent: Agent, sector: str | None = None
-) -> tuple[Task, Task]:
+    session_id: str, qa_agent: Agent, coding_agent: Agent | None, sector: str | None = None
+) -> tuple[Task, Task | None]:
     """QA + coding only, for an existing session id."""
     import json
 
@@ -152,17 +154,19 @@ def create_analyze_tasks(
         expected_output="qa_rubric.txt JSON formatında tam rapor.",
         agent=qa_agent,
     )
-    coding_task = Task(
-        description=(
-            "QA raporundaki kritik sorunları düzelt. Önce dosyaları oku, sonra apply_fix_and_deploy.\n\n"
-            "--- Coding Agent Brief ---\n"
-            f"{_coding_brief(sector)}"
-        ),
-        expected_output=(
-            "fixes_applied / fixes_skipped JSON; her fix'te repo, qa_issue_index, "
-            "file, issue_fixed/deploy_status zorunlu."
-        ),
-        agent=coding_agent,
-        context=[qa_task],
-    )
+    coding_task = None
+    if coding_agent is not None:
+        coding_task = Task(
+            description=(
+                "QA raporundaki kritik sorunları düzelt. Önce dosyaları oku, sonra apply_fix_and_deploy.\n\n"
+                "--- Coding Agent Brief ---\n"
+                f"{_coding_brief(sector)}"
+            ),
+            expected_output=(
+                "fixes_applied / fixes_skipped JSON; her fix'te repo, qa_issue_index, "
+                "file, issue_fixed/deploy_status zorunlu."
+            ),
+            agent=coding_agent,
+            context=[qa_task],
+        )
     return qa_task, coding_task

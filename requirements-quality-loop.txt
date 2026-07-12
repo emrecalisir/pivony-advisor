@@ -20,3 +20,5 @@ uvicorn>=0.28.0
 langsmith>=0.3.0
 opentelemetry-instrumentation-crewai>=0.1.0
 opentelemetry-instrumentation-openai>=0.1.0
+# Cursor SDK coding backend (optional — set CURSOR_API_KEY + QUALITY_LOOP_CODING_BACKEND=cursor)
+cursor-sdk>=0.1.9

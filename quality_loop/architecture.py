@@ -11,6 +11,54 @@ _PACKAGE_ROOT = Path(__file__).resolve().parent
 _REPO_ROOT = _PACKAGE_ROOT.parent
 
 
+def _coding_agent_meta() -> dict:
+    backend = os.environ.get("QUALITY_LOOP_CODING_BACKEND", "cursor").strip().lower() or "cursor"
+    has_key = bool(os.environ.get("CURSOR_API_KEY", "").strip())
+    use_cursor = backend == "cursor" and has_key
+    if use_cursor:
+        model = os.environ.get("QUALITY_LOOP_CURSOR_MODEL", "composer-2.5")
+        fast = os.environ.get("QUALITY_LOOP_CURSOR_FAST", "true").strip().lower() in ("1", "true", "yes")
+        runtime = os.environ.get("QUALITY_LOOP_CURSOR_RUNTIME", "local").strip().lower() or "local"
+        return {
+            "id": "coding_agent",
+            "role": "Coding Agent (Cursor Composer)",
+            "llm_env": "QUALITY_LOOP_CURSOR_MODEL",
+            "llm_default": f"{model}{' + fast' if fast else ''} ({runtime})",
+            "goal": "QA fix'leri Cursor SDK ile monorepo context'inde uygular",
+            "tools": [
+                {"name": "cursor_agent", "desc": "Composer repo context (read/edit files)"},
+                {"name": "git_finalize", "desc": "syntax gate + development branch commit/push"},
+            ],
+            "outputs": ["fixes_applied", "fixes_skipped", "next_test_scenarios"],
+            "prompt_file": "config/coding_agent_brief.txt",
+            "prompt_agent_id": "coding_agent",
+            "env": [
+                "CURSOR_API_KEY",
+                "QUALITY_LOOP_CODING_BACKEND",
+                "QUALITY_LOOP_CURSOR_RUNTIME",
+                "QUALITY_LOOP_MASTERR_ROOT",
+            ],
+            "backend": "cursor",
+        }
+    return {
+        "id": "coding_agent",
+        "role": "Coding Agent",
+        "llm_env": "QUALITY_LOOP_CODING_LLM",
+        "llm_default": "anthropic/claude-sonnet-4-20250514",
+        "goal": "QA fix'leri + brief'teki API↔MCP parity talimatlarını uygular",
+        "tools": [
+            {"name": "read_project_file", "desc": "<repo-slug>/path ile scoped repoları okur"},
+            {"name": "list_project_files", "desc": "Write + seçili read repoları listeler"},
+            {"name": "apply_fix_and_deploy", "desc": "Yalnızca write repo'ya yazar"},
+        ],
+        "outputs": ["fixes_applied", "fixes_skipped", "next_test_scenarios"],
+        "prompt_file": "config/coding_agent_brief.txt",
+        "prompt_agent_id": "coding_agent",
+        "env": ["QUALITY_LOOP_MASTERR_ROOT"],
+        "backend": "crewai",
+    }
+
+
 def get_architecture() -> dict:
     return {
         "framework": "CrewAI",
@@ -87,22 +135,7 @@ def get_architecture() -> dict:
                 "prompt_file": "config/qa_rubric.txt",
                 "prompt_agent_id": "qa",
             },
-            {
-                "id": "coding_agent",
-                "role": "Coding Agent",
-                "llm_env": "QUALITY_LOOP_CODING_LLM",
-                "llm_default": "anthropic/claude-sonnet-4-20250514",
-                "goal": "QA fix'leri + brief'teki API↔MCP parity talimatlarını uygular",
-                "tools": [
-                    {"name": "read_project_file", "desc": "<repo-slug>/path ile scoped repoları okur"},
-                    {"name": "list_project_files", "desc": "Write + seçili read repoları listeler"},
-                    {"name": "apply_fix_and_deploy", "desc": "Yalnızca write repo'ya yazar"},
-                ],
-                "outputs": ["fixes_applied", "fixes_skipped", "next_test_scenarios"],
-                "prompt_file": "config/coding_agent_brief.txt",
-                "prompt_agent_id": "coding_agent",
-                "env": ["QUALITY_LOOP_MASTERR_ROOT"],
-            },
+            _coding_agent_meta(),
         ],
         "tasks": [
             {
@@ -145,6 +178,9 @@ def get_architecture() -> dict:
             "QUALITY_LOOP_CX_LLM": os.environ.get("QUALITY_LOOP_CX_LLM", "gemini/gemini-2.0-flash"),
             "QUALITY_LOOP_QA_LLM": os.environ.get("QUALITY_LOOP_QA_LLM", "anthropic/claude-sonnet-4-20250514"),
             "QUALITY_LOOP_CODING_LLM": os.environ.get("QUALITY_LOOP_CODING_LLM", "anthropic/claude-sonnet-4-20250514"),
+            "QUALITY_LOOP_CODING_BACKEND": os.environ.get("QUALITY_LOOP_CODING_BACKEND", "cursor"),
+            "QUALITY_LOOP_CURSOR_MODEL": os.environ.get("QUALITY_LOOP_CURSOR_MODEL", "composer-2.5"),
+            "QUALITY_LOOP_CURSOR_RUNTIME": os.environ.get("QUALITY_LOOP_CURSOR_RUNTIME", "local"),
         },
         "repo_root": str(get_write_repo_root()),
         "masterr_root": str(get_masterr_root()),

@@ -68,6 +68,13 @@ QUALITY_LOOP_CX_LLM=gemini/gemini-2.0-flash
 QUALITY_LOOP_QA_LLM=anthropic/claude-sonnet-4-20250514
 QUALITY_LOOP_CODING_LLM=anthropic/claude-sonnet-4-20250514
 
+# Coding backend (default: cursor when CURSOR_API_KEY is set, else crewai fallback)
+QUALITY_LOOP_CODING_BACKEND=cursor
+CURSOR_API_KEY=
+QUALITY_LOOP_CURSOR_MODEL=composer-2.5
+QUALITY_LOOP_CURSOR_FAST=true
+QUALITY_LOOP_CURSOR_RUNTIME=cloud
+
 # Optional: read prod UI sessions from pivony-api Postgres
 QUALITY_LOOP_DATABASE_URL=postgresql://...
 
@@ -82,7 +89,7 @@ DEPLOY_CMD=systemctl restart pivony-advisor
 
 1. **CX Director** — drives 6–10 turn conversation via `pivony_advisor_chat`
 2. **QA Agent** — `fetch_conversation` + `fetch_advisor_logs` + rubric JSON report
-3. **Coding Agent** — reads/fixes code; git/deploy gated by env flags
+3. **Coding Agent** — Cursor Composer (`composer-2.5` + fast) when `CURSOR_API_KEY` is set; otherwise CrewAI + `apply_fix_and_deploy`. Git/deploy gated by env flags; always targets `development`.
 
 ## Outputs
 

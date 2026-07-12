@@ -8,6 +8,7 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -117,6 +118,61 @@ def _latest_session_id() -> str | None:
     return best_id
 
 
+def _qa_report_from_task(qa_task: Any) -> dict[str, Any] | None:
+    output = getattr(qa_task, "output", None)
+    if output is None:
+        return None
+    parsed = getattr(output, "json_dict", None)
+    if isinstance(parsed, dict):
+        return parsed
+    from quality_loop.run_store import try_parse_json
+
+    return try_parse_json(str(getattr(output, "raw", None) or output))
+
+
+def _run_cursor_coding_if_enabled(
+    qa_task: Any,
+    *,
+    session_id: str | None,
+    sector: str | None,
+) -> dict[str, Any] | None:
+    from quality_loop.coding_cursor import is_cursor_coding_enabled, run_cursor_coding
+
+    if not is_cursor_coding_enabled():
+        return None
+    qa_report = _qa_report_from_task(qa_task)
+    if not isinstance(qa_report, dict):
+        qa_report = {"issues": [], "overall_verdict": "unknown"}
+    return run_cursor_coding(
+        qa_report,
+        session_id=session_id,
+        sector=sector,
+        job_id=os.environ.get("QUALITY_LOOP_JOB_ID", ""),
+    )
+
+
+def _phase_rows(
+    conversation_task: Any | None,
+    qa_task: Any,
+    coding_task: Any | None,
+    *,
+    cursor_phase: dict[str, Any] | None = None,
+) -> list[tuple]:
+    rows: list[tuple] = []
+    if conversation_task is not None:
+        rows.append((conversation_task, "conversation", "CX Director"))
+    rows.append((qa_task, "qa", "QA Agent"))
+    if coding_task is not None:
+        rows.append((coding_task, "coding", "Coding Agent"))
+    return rows
+
+
+def _additional_phases(cursor_phase: dict[str, Any] | None) -> list[dict[str, Any]] | None:
+    if cursor_phase is None:
+        return None
+    return [cursor_phase]
+
+
 def _session_turn_count(session_id: str | None) -> int:
     if not session_id:
         return 0
@@ -207,15 +263,19 @@ def run_loop(iterations: int = 1) -> None:
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        _update_job(phase="qa", message="QA Agent değerlendiriyor (quality checker)")
+        from quality_loop.coding_cursor import is_cursor_coding_enabled
 
-        phase_rows: list[tuple] = []
-        if conversation_task is not None:
-            phase_rows.append((conversation_task, "conversation", "CX Director"))
-        phase_rows.append((qa_task, "qa", "QA Agent"))
-        phase_rows.append((coding_task, "coding", "Coding Agent"))
+        if is_cursor_coding_enabled():
+            _update_job(phase="coding", message="Cursor Composer fix'leri uyguluyor")
+        else:
+            _update_job(phase="coding", message="Coding Agent iyileştirme önerilerini uyguluyor")
 
-        _update_job(phase="coding", message="Coding Agent iyileştirme önerilerini uyguluyor")
+        cursor_phase = _run_cursor_coding_if_enabled(
+            qa_task,
+            session_id=_latest_session_id(),
+            sector=sector,
+        )
+        phase_rows = _phase_rows(conversation_task, qa_task, coding_task)
 
         run_path = save_run(
             mode="full",
@@ -224,6 +284,7 @@ def run_loop(iterations: int = 1) -> None:
             iteration=i,
             advisor_url=_advisor_url(),
             job_id=_JOB_ID,
+            additional_phases=_additional_phases(cursor_phase),
         )
 
         run_data = json.loads(run_path.read_text(encoding="utf-8"))
@@ -269,22 +330,38 @@ def run_analyze(session_id: str) -> None:
         session_id, qa_agent, coding_agent, sector=sector
     )
 
+    agents = [a for a in (qa_agent, coding_agent) if a is not None]
+    tasks = [t for t in (qa_task, coding_task) if t is not None]
+
     crew = Crew(
-        agents=[qa_agent, coding_agent],
-        tasks=[qa_task, coding_task],
+        agents=agents,
+        tasks=tasks,
         process=Process.sequential,
         verbose=True,
     )
     result = _kickoff_crew(crew, phase="qa", message="Analyze: QA + coding", mode="analyze")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+    from quality_loop.coding_cursor import is_cursor_coding_enabled
+
+    if is_cursor_coding_enabled():
+        _update_job(phase="coding", message="Cursor Composer fix'leri uyguluyor", session_id=session_id)
+
+    cursor_phase = _run_cursor_coding_if_enabled(
+        qa_task,
+        session_id=session_id,
+        sector=sector,
+    )
+    phase_rows = _phase_rows(None, qa_task, coding_task)
+
     run_path = save_run(
         mode="analyze",
-        tasks=[(qa_task, "qa", "QA Agent"), (coding_task, "coding", "Coding Agent")],
+        tasks=phase_rows,
         final_result=result,
         session_id=session_id,
         advisor_url=_advisor_url(),
         job_id=_JOB_ID,
+        additional_phases=_additional_phases(cursor_phase),
     )
 
     run_data = json.loads(run_path.read_text(encoding="utf-8"))

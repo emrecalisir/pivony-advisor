@@ -65,27 +65,31 @@ def create_agents(sector: str | None = None):
         allow_delegation=False,
     )
 
-    coding_agent = Agent(
-        role="Coding Agent",
-        goal=(
-            "QA Agent'ın raporundaki sorunları pivony-advisor Python projesinde düzelt. "
-            "Önce ilgili dosyaları oku, sorunu anla, fix yaz. "
-            "Git push ve deploy yalnızca QUALITY_LOOP_ALLOW_GIT_PUSH / QUALITY_LOOP_AUTO_DEPLOY açıksa."
-        ),
-        backstory=(
-            "Kıdemli bir Python geliştiricisisin. AI agent sistemleri, "
-            "tool call implementasyonu ve prompt engineering konusunda uzmanlaşmışsın.\n\n"
-            + coding_brief
-        ),
-        tools=[
-            ReadFileTool(),
-            ListProjectFilesTool(),
-            ApplyAndDeployTool(),
-        ],
-        llm=_llm("QUALITY_LOOP_CODING_LLM", "anthropic/claude-sonnet-4-20250514"),
-        verbose=True,
-        allow_delegation=False,
-        max_iter=20,
-    )
+    coding_agent = None
+    from quality_loop.coding_cursor import is_cursor_coding_enabled
+
+    if not is_cursor_coding_enabled():
+        coding_agent = Agent(
+            role="Coding Agent",
+            goal=(
+                "QA Agent'ın raporundaki sorunları pivony-advisor Python projesinde düzelt. "
+                "Önce ilgili dosyaları oku, sorunu anla, fix yaz. "
+                "Git push ve deploy yalnızca QUALITY_LOOP_ALLOW_GIT_PUSH / QUALITY_LOOP_AUTO_DEPLOY açıksa."
+            ),
+            backstory=(
+                "Kıdemli bir Python geliştiricisisin. AI agent sistemleri, "
+                "tool call implementasyonu ve prompt engineering konusunda uzmanlaşmışsın.\n\n"
+                + coding_brief
+            ),
+            tools=[
+                ReadFileTool(),
+                ListProjectFilesTool(),
+                ApplyAndDeployTool(),
+            ],
+            llm=_llm("QUALITY_LOOP_CODING_LLM", "anthropic/claude-sonnet-4-20250514"),
+            verbose=True,
+            allow_delegation=False,
+            max_iter=20,
+        )
 
     return cx_director, qa_agent, coding_agent

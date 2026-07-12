@@ -138,6 +138,7 @@ def save_run(
     advisor_url: str | None = None,
     run_id: str | None = None,
     job_id: str | None = None,
+    additional_phases: list[dict[str, Any]] | None = None,
 ) -> Path:
     """Finalize unified cycle manifest (session file); mirror legacy runs/ for compat."""
     from quality_loop.cycle_store import cycle_as_run, finalize_cycle
@@ -145,6 +146,8 @@ def save_run(
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     phases = [_task_output(task, phase=phase, agent=agent) for task, phase, agent in tasks]
+    if additional_phases:
+        phases.extend(additional_phases)
     linked_session = session_id or _extract_session_id(phases)
     if not linked_session:
         raise ValueError("session_id is required to finalize a cycle")
