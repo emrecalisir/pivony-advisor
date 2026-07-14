@@ -20,8 +20,8 @@ RATE_LIMIT_RETRY_USER_MESSAGE = (
     "Yapay zeka servisi yoğun; otomatik tekrar deneniyor, lütfen bekleyin…"
 )
 RATE_LIMIT_USER_MESSAGE = (
-    "Şu anda yapay zeka servisi yoğun (istek limiti aşıldı). "
-    "Lütfen birkaç saniye bekleyip tekrar deneyin."
+    "Yoğunluk nedeniyle yapay zeka servisinde geçici bir sorun oluştu (istek limiti aşıldı). "
+    "Lütfen birkaç dakika bekleyip tekrar deneyin."
 )
 GENERIC_LLM_ERROR_MESSAGE = (
     "Yanıt oluşturulurken bir hata oluştu. Lütfen tekrar deneyin."

@@ -21,7 +21,7 @@ from core.agent import (
     _resolve_dashboard_picker_fallback,
     _to_langchain_messages,
 )
-from core.agent_state import hard_context_prompt_block, resolve_hard_agent_state
+from core.agent_state import hard_context_prompt_block, parse_dashboard_id, resolve_hard_agent_state
 from core.chart_specs import charts_from_tool_result, merge_chart_lists
 from core.llm_resilience import (
     GENERIC_LLM_ERROR_MESSAGE,
@@ -232,6 +232,42 @@ def _yield_llm_failure(
     }
 
 
+def _model_content_for_executed_calls(
+    model_content: types.Content,
+    executable_calls: list[Any],
+) -> types.Content:
+    """Keep only function-call parts that will receive a matching FunctionResponse."""
+    text_parts = [
+        p for p in (model_content.parts or []) if getattr(p, "text", None)
+    ]
+    fc_parts = [
+        types.Part(function_call=fc)
+        for fc in executable_calls
+    ]
+    return types.Content(role="model", parts=[*text_parts, *fc_parts])
+
+
+def _scope_locked_tool_nudge(_hard: Any) -> types.Content:
+    """User nudge when the model proposed only suppressed tool calls (e.g. list_dashboards)."""
+    if _hard.has_dashboard:
+        text = (
+            f"Dashboard scope is already locked to id={_hard.dashboard_id}. "
+            "Do not call list_dashboards. Use analysis tools such as get_pivony_metrics "
+            "or get_trends with the locked dashboard."
+        )
+    elif _hard.org_wide:
+        text = (
+            "Organization-wide scope is already established. Do not call list_dashboards. "
+            "Use get_pivony_metrics with org_wide=true."
+        )
+    else:
+        text = (
+            "Do not repeat list_dashboards without user intent. "
+            "Ask the user to pick a dashboard or proceed with an analysis tool."
+        )
+    return types.Content(role="user", parts=[types.Part(text=text)])
+
+
 def _yield_turn_events(
     status_events: list[dict[str, Any]],
     events: list[dict[str, Any]],
@@ -316,11 +352,7 @@ def stream_advisor_agent(
 
     default_dash = _hard.dashboard_id
     if default_dash is None and isinstance(page_context, dict):
-        raw = page_context.get("dashboard_id")
-        try:
-            default_dash = int(raw) if raw is not None else None
-        except (TypeError, ValueError):
-            default_dash = None
+        default_dash = parse_dashboard_id(page_context.get("dashboard_id"))
     picker: dict | None = None
     tools_called: set[str] = set()
     failed_tools: set[str] = set()
@@ -474,10 +506,22 @@ def _run_agent_stream_loop(
                     for chart in new_charts:
                         yield {"type": "chart", "chart": chart}
 
-        # After processing all raw_function_calls, append the collected responses to contents.
-        # This ensures that contents only contains responses for calls that were not suppressed
-        # by sanitize_function_calls, maintaining the expected count for the Gemini API.
-        contents.append(model_content)
+        # After processing all raw_function_calls, append model turn + responses.
+        # Strip suppressed function calls from model_content so Gemini sees equal counts.
+        if not function_calls_after_sanitization:
+            logger.info(
+                "Agent stream step %s: all %s proposed tool call(s) suppressed; nudging model.",
+                step + 1,
+                len(raw_function_calls_from_model),
+            )
+            contents.append(_scope_locked_tool_nudge(_hard))
+            continue
+
+        turn_model_content = _model_content_for_executed_calls(
+            model_content,
+            function_calls_after_sanitization,
+        )
+        contents.append(turn_model_content)
         contents.extend(responses_to_send_back)
 
         logger.info(

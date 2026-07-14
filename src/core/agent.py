@@ -24,6 +24,7 @@ from core.analytics_scope import EstablishedAnalyticsScope
 from core.agent_state import (
     HardAgentState,
     hard_context_prompt_block,
+    parse_dashboard_id,
     resolve_hard_agent_state,
 )
 from core.tool_routing import (
@@ -304,9 +305,10 @@ class MetricsArgs(BaseModel):
         if value is None or value == "":
             return None
         try:
-            return int(value)
+            parsed = int(value)
         except (TypeError, ValueError):
             return value
+        return parsed if parsed > 0 else None
 
 
 def _build_tools(
@@ -1579,11 +1581,7 @@ def run_advisor_agent(
 
     default_dash = _hard.dashboard_id
     if default_dash is None and isinstance(page_context, dict):
-        raw = page_context.get("dashboard_id")
-        try:
-            default_dash = int(raw) if raw is not None else None
-        except (TypeError, ValueError):
-            default_dash = None
+        default_dash = parse_dashboard_id(page_context.get("dashboard_id"))
     picker: dict | None = None
     tools_called: set[str] = set()
 

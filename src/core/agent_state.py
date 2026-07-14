@@ -13,12 +13,19 @@ from core.analytics_scope import (
 
 
 def _int_or_none(value: Any) -> int | None:
+    """Parse a dashboard id; treat 0 and negatives as unset (UI placeholder)."""
     if value is None or value == "":
         return None
     try:
-        return int(value)
+        parsed = int(value)
     except (TypeError, ValueError):
         return None
+    return parsed if parsed > 0 else None
+
+
+def parse_dashboard_id(value: Any) -> int | None:
+    """Public helper: parse dashboard id; 0/negative are treated as unset."""
+    return _int_or_none(value)
 
 
 def _dashboard_from_picker_context(pc: dict) -> int | None:

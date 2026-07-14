@@ -100,3 +100,16 @@ def test_scope_prompt_org_wide():
     )
     assert "org_wide=true" in block
     assert "list_dashboards" in block
+
+
+def test_dashboard_id_zero_placeholder_ignored():
+    scope = infer_established_analytics_scope(
+        [("user", "NPS?")],
+        {
+            "dashboard_selection": {"id": 0, "name": "Dashboard 0"},
+            "last_dashboard_selection": {"id": 6208, "name": "SURVEY"},
+        },
+    )
+    assert scope is not None
+    assert scope.dashboard_id == 6208
+    assert scope.org_wide is False

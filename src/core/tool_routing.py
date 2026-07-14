@@ -238,6 +238,16 @@ def validated_tool_invoke(
             user_facing_error = "Maalesef, sistemlerimize erişirken geçici bir sorun oluştu. Lütfen kısa bir süre sonra tekrar deneyin."
         elif "permission denied" in detail_str or "unauthorized" in detail_str:
             user_facing_error = "Bu işlemi gerçekleştirmek için yetkiniz bulunmamaktadır. Lütfen yöneticinizle iletişime geçin."
+        elif (
+            "doesn't exist" in detail_str
+            or "does not exist" in detail_str
+            or ("collection" in detail_str and "not found" in detail_str)
+        ):
+            user_facing_error = (
+                "Seçilen dashboard için veri koleksiyonu bulunamadı veya geçersiz bir "
+                "dashboard kullanılıyor olabilir (ör. dashboard_id=0). Lütfen geçerli bir "
+                "dashboard seçin veya list_dashboards ile mevcut dashboard'ları görüntüleyin."
+            )
         elif "dashboard_not_accessible" in detail_str or "dashboard'a erişilemiyor" in detail_str:
             user_facing_error = (
                 "Seçtiğiniz veya belirtilen dashboard'a erişim yetkiniz bulunmamaktadır "

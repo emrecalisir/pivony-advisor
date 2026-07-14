@@ -264,6 +264,38 @@ def test_dashboard_selection_payload_from_hard_state():
     assert payload == {"id": 4076, "name": "Generali 2026"}
 
 
+def test_dashboard_id_zero_treated_as_unset():
+    state = resolve_hard_agent_state(
+        [("user", "NPS trendi")],
+        {
+            "dashboard_selection": {"id": 0, "name": "Dashboard 0"},
+            "last_dashboard_selection": {"id": 6208, "name": "SURVEY"},
+        },
+    )
+    assert state.dashboard_id == 6208
+    assert state.source == "last_dashboard_selection"
+    assert state.dashboard_selection_payload() == {"id": 6208, "name": "SURVEY"}
+
+
+def test_page_dashboard_id_zero_ignored():
+    state = resolve_hard_agent_state(
+        [("user", "trend")],
+        {"dashboard_id": 0, "last_dashboard_selection": {"id": 6208, "name": "SURVEY"}},
+    )
+    assert state.dashboard_id == 6208
+    assert state.dashboard_selection_payload() is not None
+    assert state.dashboard_selection_payload()["id"] == 6208
+
+
+def test_unresolved_scope_does_not_emit_dashboard_zero_payload():
+    state = resolve_hard_agent_state(
+        [("user", "trend")],
+        {"dashboard_selection": {"id": 0, "name": "Dashboard 0"}},
+    )
+    assert state.dashboard_id is None
+    assert state.dashboard_selection_payload() is None
+
+
 def test_new_dashboard_tools_registered_for_scope_pinning():
     missing = _NEW_DASHBOARD_TOOLS - _DASHBOARD_ARG_TOOLS
     assert not missing, f"Missing from _DASHBOARD_ARG_TOOLS: {missing}"
