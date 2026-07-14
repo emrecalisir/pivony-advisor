@@ -180,12 +180,45 @@ def repo_path(slug: str) -> Path | None:
     return None
 
 
+def effective_write_repo_path(slug: str | None = None) -> Path | None:
+    """Resolve the git checkout used for coding writes (supports *-dev worktrees)."""
+    from quality_loop.git_branch import current_git_branch, git_target_branch, worktree_path_on_branch
+
+    scope = read_scope()
+    write_slug = (slug or scope["write_repo"] or "").strip()
+    if not write_slug:
+        return None
+
+    override = os.environ.get("QUALITY_LOOP_WRITE_REPO_PATH", "").strip()
+    if override:
+        candidate = Path(override).expanduser().resolve()
+        if candidate.is_dir():
+            return candidate
+
+    path = repo_path(write_slug)
+    if not path:
+        return None
+
+    branch = git_target_branch()
+    if current_git_branch(path) == branch:
+        return path.resolve()
+
+    alt = repo_path(f"{write_slug}-dev")
+    if alt and current_git_branch(alt) == branch:
+        return alt.resolve()
+
+    wt = worktree_path_on_branch(path, branch)
+    if wt is not None:
+        return wt.resolve()
+
+    return path.resolve()
+
+
 def get_write_repo_root() -> Path:
     env_root = os.environ.get("PIVONY_REPO_ROOT", "").strip()
     if env_root:
         return Path(env_root).expanduser().resolve()
-    scope = read_scope()
-    path = repo_path(scope["write_repo"])
+    path = effective_write_repo_path()
     if path:
         return path
     return _DEFAULT_ADVISOR_ROOT.resolve()
@@ -274,7 +307,7 @@ def list_scoped_repos() -> list[tuple[str, Path]]:
 def apply_scope_to_env(env: dict[str, str] | None = None) -> dict[str, str]:
     out = dict(env or os.environ)
     scope = read_scope()
-    write_path = repo_path(scope["write_repo"])
+    write_path = effective_write_repo_path(scope["write_repo"])
     if write_path:
         out["PIVONY_REPO_ROOT"] = str(write_path)
     read_paths = []

@@ -38,7 +38,7 @@ def run_regression_verification(
         if dashboard_id is not None:
             kwargs["dashboard_id"] = dashboard_id
             kwargs["dashboard_name"] = dashboard_name
-        raw = tool._run(**kwargs)
+        raw = tool._run(**kwargs, persist_turn=False)
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:

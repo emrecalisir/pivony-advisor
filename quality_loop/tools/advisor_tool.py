@@ -37,6 +37,10 @@ class AdvisorInput(BaseModel):
         default=None,
         description="Display name for dashboard_id when simulating a picker selection.",
     )
+    persist_turn: bool = Field(
+        default=True,
+        description="When false, call advisor without appending this turn to the session store (e.g. regression verify).",
+    )
 
 
 class PivonyAdvisorTool(BaseTool):
@@ -55,12 +59,14 @@ class PivonyAdvisorTool(BaseTool):
         message: str,
         dashboard_id: int | None = None,
         dashboard_name: str | None = None,
+        persist_turn: bool = True,
     ) -> str:
         session = load_session(session_id)
         if session is None:
             return json.dumps({"error": f"unknown session_id: {session_id}"}, ensure_ascii=False)
 
         dashboard_selection = None
+        analytics_scope = session.get("analytics_scope")
         if dashboard_id is not None:
             dashboard_selection = {
                 "id": int(dashboard_id),
@@ -70,14 +76,15 @@ class PivonyAdvisorTool(BaseTool):
                 "dashboardId": int(dashboard_id),
                 "orgWide": False,
             }
-            session = update_session_context(
-                session_id,
-                analytics_scope=analytics_scope,
-                last_dashboard_selection=dashboard_selection,
-            )
+            if persist_turn:
+                session = update_session_context(
+                    session_id,
+                    analytics_scope=analytics_scope,
+                    last_dashboard_selection=dashboard_selection,
+                )
 
         page_context = build_page_context(
-            analytics_scope=session.get("analytics_scope"),
+            analytics_scope=analytics_scope,
             dashboard_id=dashboard_id,
             dashboard_name=dashboard_name,
             last_dashboard_selection=session.get("last_dashboard_selection"),
@@ -121,25 +128,26 @@ class PivonyAdvisorTool(BaseTool):
             if isinstance(sel, dict) and sel.get("id") is not None:
                 dashboard_selection = sel
 
-        append_turn(
-            session_id,
-            user_content=message,
-            assistant_content=result.get("content") or "",
-            suggested_followups=result.get("suggested_followups"),
-            guidance=result.get("guidance"),
-            dashboard_picker=result.get("dashboard_picker"),
-            reasoning=result.get("reasoning"),
-            tool_actions=result.get("tool_actions"),
-            dashboard_selection=dashboard_selection,
-        )
-
-        if dashboard_id is not None:
-            update_session_context(
+        if persist_turn:
+            append_turn(
                 session_id,
-                page_context=page_context,
-                analytics_scope=session.get("analytics_scope"),
-                last_dashboard_selection=dashboard_selection,
+                user_content=message,
+                assistant_content=result.get("content") or "",
+                suggested_followups=result.get("suggested_followups"),
+                guidance=result.get("guidance"),
+                dashboard_picker=result.get("dashboard_picker"),
+                reasoning=result.get("reasoning"),
+                tool_actions=result.get("tool_actions"),
+                dashboard_selection=dashboard_selection,
             )
+
+            if dashboard_id is not None:
+                update_session_context(
+                    session_id,
+                    page_context=page_context,
+                    analytics_scope=analytics_scope,
+                    last_dashboard_selection=dashboard_selection,
+                )
 
         payload: dict[str, Any] = {
             "session_id": session_id,
@@ -151,6 +159,7 @@ class PivonyAdvisorTool(BaseTool):
             "dashboard_picker": result.get("dashboard_picker"),
             "dashboard_selection": result.get("dashboard_selection"),
             "locked_dashboard_id": dashboard_id,
+            "persist_turn": persist_turn,
         }
         return json.dumps(payload, ensure_ascii=False)
 

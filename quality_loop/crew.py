@@ -6,7 +6,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -485,6 +485,14 @@ def main() -> None:
             msg = str(exc)
         _update_job(status="failed", phase="error", message=msg)
         raise
+    else:
+        if _JOB_ID:
+            _update_job(
+                status="completed",
+                phase="done",
+                message="Tamamlandı",
+                finished_at=datetime.now(timezone.utc).isoformat(),
+            )
     finally:
         set_status_callback(None)
         if cli_lock_fh is not None:

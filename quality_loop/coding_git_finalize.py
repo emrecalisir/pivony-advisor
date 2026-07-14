@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from quality_loop.git_branch import ensure_git_branch, git_push_command, git_target_branch
+from quality_loop.git_branch import ensure_git_branch, git_push_command, git_target_branch, resolve_git_repo
 from quality_loop.python_syntax import is_python_path, validate_python_source
 
 
@@ -36,7 +36,7 @@ def _git_allowed() -> bool:
 
 
 def list_write_repos() -> list[tuple[str, Path]]:
-    from quality_loop.repo_scope import read_scope, repo_path
+    from quality_loop.repo_scope import effective_write_repo_path, read_scope, repo_path
 
     scope = read_scope()
     rows: list[tuple[str, Path]] = []
@@ -45,7 +45,10 @@ def list_write_repos() -> list[tuple[str, Path]]:
         if not slug or slug in seen:
             continue
         seen.add(slug)
-        path = repo_path(slug)
+        if slug == scope.get("write_repo"):
+            path = effective_write_repo_path(slug)
+        else:
+            path = repo_path(slug)
         if path and path.is_dir():
             rows.append((slug, path.resolve()))
     return rows
@@ -177,7 +180,7 @@ def finalize_cursor_fixes(
         git_lock_fh = None
         try:
             git_lock_fh = acquire_git_write_lock(slug)
-            ok, detail = ensure_git_branch(after.path, env=_git_env())
+            git_path, ok, detail = resolve_git_repo(after.path, env=_git_env())
             if not ok:
                 fixes_skipped.append(
                     {
@@ -188,7 +191,10 @@ def finalize_cursor_fixes(
                     }
                 )
                 continue
-            messages.append(f"✓ {slug}: {detail}")
+            if git_path.resolve() != after.path.resolve():
+                messages.append(f"✓ {slug}: git ops via {git_path.name} ({detail})")
+            else:
+                messages.append(f"✓ {slug}: {detail}")
 
             changed = _changed_files(before, after)
             if not changed:
@@ -246,7 +252,7 @@ def finalize_cursor_fixes(
                 if _git_allowed():
                     commit_msg = f"[quality-loop] cursor fix {rel}"
                     add_proc = subprocess.run(
-                        ["git", "-C", str(after.path), "add", rel],
+                        ["git", "-C", str(git_path), "add", rel],
                         capture_output=True,
                         text=True,
                         env=_git_env(),
@@ -262,7 +268,7 @@ def finalize_cursor_fixes(
                         )
                         continue
                     commit_proc = subprocess.run(
-                        ["git", "-C", str(after.path), "commit", "-m", commit_msg],
+                        ["git", "-C", str(git_path), "commit", "-m", commit_msg],
                         capture_output=True,
                         text=True,
                         env=_git_env(),
@@ -283,7 +289,7 @@ def finalize_cursor_fixes(
                             continue
                     else:
                         rev = subprocess.run(
-                            ["git", "-C", str(after.path), "rev-parse", "--short", "HEAD"],
+                            ["git", "-C", str(git_path), "rev-parse", "--short", "HEAD"],
                             capture_output=True,
                             text=True,
                             env=_git_env(),
@@ -293,7 +299,7 @@ def finalize_cursor_fixes(
                         can_push = git_push_allowed(job_id=job_id or None) if git_push_allowed else _git_allowed()
                         if can_push:
                             push_proc = subprocess.run(
-                                git_push_command(after.path),
+                                git_push_command(git_path),
                                 capture_output=True,
                                 text=True,
                                 env=_git_env(),
