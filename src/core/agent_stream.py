@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable, Iterator
 from typing import Any
@@ -33,6 +34,7 @@ from core.llm_resilience import (
 from core.tool_routing import (
     blocked_tool_result,
     filter_tools_for_state,
+    invalid_dashboard_scope_message,
     repeated_tool_failure_result,
     sanitize_function_calls,
     tool_result_indicates_failure,
@@ -52,6 +54,28 @@ from core.prompts import build_agent_system_prompt
 logger = logging.getLogger(__name__)
 
 _genai_client: genai.Client | None = None
+
+
+def _extract_tool_user_message(result: str) -> str | None:
+    """Return user_message from a structured tool JSON payload, if present."""
+    try:
+        payload = json.loads(result)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    user_message = payload.get("user_message")
+    if isinstance(user_message, str) and user_message.strip():
+        return user_message.strip()
+    return None
+
+
+def _stream_failure_message(
+    fallback: str,
+    last_tool_user_message: str | None,
+) -> str:
+    """Prefer the most specific tool/API error over a generic LLM failure."""
+    return last_tool_user_message or fallback
 
 
 def _get_genai_client() -> genai.Client:
@@ -401,28 +425,38 @@ def _run_agent_stream_loop(
     charts: list[dict[str, Any]],
     dashboard_selection: dict[str, Any] | None,
 ) -> Iterator[dict[str, Any]]:
+    last_tool_user_message: str | None = None
     for step in range(limit):
-        status_events, events, model_content, function_calls = (
-            _collect_turn_with_rate_limit_status(
-                lambda: _stream_model_turn(
-                    client=genai_client,
-                    model=ADVISOR_LLM_MODEL,
-                    contents=contents,
-                    config=base_config,
-                    emit_content=False,
+        try:
+            status_events, events, model_content, function_calls = (
+                _collect_turn_with_rate_limit_status(
+                    lambda: _stream_model_turn(
+                        client=genai_client,
+                        model=ADVISOR_LLM_MODEL,
+                        contents=contents,
+                        config=base_config,
+                        emit_content=False,
+                    )
                 )
             )
-        )
+        except LlmTurnFailed as exc:
+            if last_tool_user_message:
+                raise LlmTurnFailed(last_tool_user_message) from exc
+            raise
         for event in _yield_turn_events(status_events, events):
             yield event
 
         if not model_content.parts and not function_calls:
             logger.error("Agent stream: empty model turn after retries at step %s", step + 1)
-            raise LlmTurnFailed(GENERIC_LLM_ERROR_MESSAGE)
+            raise LlmTurnFailed(
+                _stream_failure_message(GENERIC_LLM_ERROR_MESSAGE, last_tool_user_message)
+            )
 
         if not model_content.parts:
             if tools_called:
-                raise LlmTurnFailed(GENERIC_LLM_ERROR_MESSAGE)
+                raise LlmTurnFailed(
+                    _stream_failure_message(GENERIC_LLM_ERROR_MESSAGE, last_tool_user_message)
+                )
             break
 
         # Store the original function calls from the model before sanitization
@@ -435,7 +469,9 @@ def _run_agent_stream_loop(
                 final_text = synthesis
                 yield {"type": "content", "delta": synthesis}
                 break
-            raise LlmTurnFailed(GENERIC_LLM_ERROR_MESSAGE)
+            raise LlmTurnFailed(
+                _stream_failure_message(GENERIC_LLM_ERROR_MESSAGE, last_tool_user_message)
+            )
         # Sanitize function calls: this list will contain only executable calls.
         function_calls_after_sanitization = sanitize_function_calls(function_calls, _hard)
         executable_ids = {id(fc) for fc in function_calls_after_sanitization}
@@ -479,6 +515,10 @@ def _run_agent_stream_loop(
             
             if name and result is not None and tool_result_indicates_failure(str(result)):
                 failed_tools.add(name)
+            if result is not None:
+                tool_user_message = _extract_tool_user_message(str(result))
+                if tool_user_message:
+                    last_tool_user_message = tool_user_message
             # Append the response for this processed (executed or blocked by _tool_routing) call.
             if result is not None:
                 responses_to_send_back.append(
@@ -509,6 +549,9 @@ def _run_agent_stream_loop(
         # After processing all raw_function_calls, append model turn + responses.
         # Strip suppressed function calls from model_content so Gemini sees equal counts.
         if not function_calls_after_sanitization:
+            invalid_msg = invalid_dashboard_scope_message(_hard)
+            if invalid_msg:
+                raise LlmTurnFailed(invalid_msg)
             logger.info(
                 "Agent stream step %s: all %s proposed tool call(s) suppressed; nudging model.",
                 step + 1,
@@ -544,7 +587,9 @@ def _run_agent_stream_loop(
             yield {"type": "dashboard_picker", "picker": picker}
 
     if is_incomplete_advisor_reply(final_text):
-        raise LlmTurnFailed(GENERIC_LLM_ERROR_MESSAGE)
+        raise LlmTurnFailed(
+            _stream_failure_message(GENERIC_LLM_ERROR_MESSAGE, last_tool_user_message)
+        )
 
     answer = _finalize_agent_reply(final_text)
     yield {

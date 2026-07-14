@@ -54,7 +54,8 @@ class HardAgentState:
 
     @property
     def has_dashboard(self) -> bool:
-        return self.dashboard_id is not None
+        """True only for positive dashboard ids; 0/negative are UI placeholders."""
+        return self.dashboard_id is not None and self.dashboard_id > 0
 
     @property
     def scope_resolved(self) -> bool:

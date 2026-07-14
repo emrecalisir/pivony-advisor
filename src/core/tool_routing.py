@@ -49,8 +49,26 @@ _DASHBOARD_ARG_TOOLS = frozenset(
 )
 
 
+def invalid_dashboard_scope_message(state: HardAgentState) -> str | None:
+    """User-facing hint when scope is locked but dashboard id is invalid or missing."""
+    if state.dashboard_id is not None and state.dashboard_id <= 0:
+        return (
+            "Geçersiz bir dashboard seçimi algılandı (dashboard_id=0). "
+            "Lütfen listeden geçerli bir dashboard seçin veya mevcut "
+            "dashboard'ların listesini isteyin."
+        )
+    if state.dashboard_locked and not state.has_dashboard and not state.org_wide:
+        return (
+            "Dashboard kapsamı geçersiz veya eksik. "
+            "Lütfen geçerli bir dashboard seçin veya dashboard listesini isteyin."
+        )
+    return None
+
+
 def should_expose_list_dashboards(state: HardAgentState) -> bool:
     """Hide list_dashboards when scope already pins a dashboard or org-wide mode."""
+    if invalid_dashboard_scope_message(state) is not None:
+        return True
     if state.dashboard_locked or state.has_dashboard:
         return False
     if state.org_wide:
@@ -321,11 +339,16 @@ def blocked_tool_result(tool_name: str, state: HardAgentState) -> str | None:
         return None
     if should_expose_list_dashboards(state):
         return None
+    user_message = (
+        f"Dashboard kapsamı zaten id={state.dashboard_id} ile kilitli. "
+        "Analiz araçlarını bu dashboard ile kullanın."
+    )
     return json.dumps(
         {
             "skipped": True,
             "tool": tool_name,
             "dashboard_id": state.dashboard_id,
+            "user_message": user_message,
             "instruction": (
                 f"Dashboard scope is already locked to id={state.dashboard_id}. "
                 "Do not call list_dashboards. Use get_pivony_metrics and other analysis tools."

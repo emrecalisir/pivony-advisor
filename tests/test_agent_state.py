@@ -299,3 +299,16 @@ def test_unresolved_scope_does_not_emit_dashboard_zero_payload():
 def test_new_dashboard_tools_registered_for_scope_pinning():
     missing = _NEW_DASHBOARD_TOOLS - _DASHBOARD_ARG_TOOLS
     assert not missing, f"Missing from _DASHBOARD_ARG_TOOLS: {missing}"
+
+
+def test_has_dashboard_rejects_zero_placeholder():
+    state = HardAgentState(dashboard_id=0, dashboard_locked=True, source="page_dashboard_id")
+    assert state.has_dashboard is False
+    assert should_expose_list_dashboards(state) is True
+
+
+def test_invalid_dashboard_scope_message_for_zero():
+    state = HardAgentState(dashboard_id=0, dashboard_locked=True, source="page_dashboard_id")
+    msg = _tool_routing.invalid_dashboard_scope_message(state)
+    assert msg is not None
+    assert "dashboard_id=0" in msg
