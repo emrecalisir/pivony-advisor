@@ -199,7 +199,7 @@ def _stream_model_turn(
                 yield {"type": "thought", "delta": part.text}
             elif part.text and not part.function_call:
                 content_parts.append(part.text)
-                if emit_content:
+                if emit_content and part.text.strip():
                     yield {"type": "content", "delta": part.text}
             if part.function_call:
                 _merge_function_calls(function_calls, part)
@@ -327,8 +327,9 @@ def stream_advisor_agent(
 ) -> Iterator[dict[str, Any]]:
     """
     Run the tool-calling loop and yield streaming events:
+      - {"type": "status", "phase": "thinking"}  (first — no empty content bubble)
       - {"type": "thought", "delta": str}
-      - {"type": "content", "delta": str}  (final answer only)
+      - {"type": "content", "delta": str}  (final answer only; never empty)
       - {"type": "chart", "chart": dict}  (Welcome-compatible chart payload)
       - {"type": "done", "content": str, "dashboard_picker": dict | None,
         "dashboard_selection": dict | None, "charts": list}

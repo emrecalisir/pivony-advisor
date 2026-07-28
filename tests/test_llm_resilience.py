@@ -21,6 +21,7 @@ RATE_LIMIT_USER_MESSAGE = _mod.RATE_LIMIT_USER_MESSAGE
 RATE_LIMIT_RETRY_USER_MESSAGE = _mod.RATE_LIMIT_RETRY_USER_MESSAGE
 collect_stream_turn = _mod.collect_stream_turn
 make_rate_limit_retry_status = _mod.make_rate_limit_retry_status
+make_thinking_status = _mod.make_thinking_status
 is_terminal_llm_user_message = _mod.is_terminal_llm_user_message
 
 
@@ -67,6 +68,13 @@ def test_make_rate_limit_retry_status():
         "attempt": 2,
         "max_attempts": 4,
     }
+
+
+def test_make_thinking_status():
+    event = make_thinking_status()
+    assert event["type"] == "status"
+    assert event["phase"] == "thinking"
+    assert event.get("suppress_content_bubble") is True
 
 
 def test_is_terminal_llm_user_message():

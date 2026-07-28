@@ -35,6 +35,7 @@ from core.llm_resilience import (
     GENERIC_LLM_ERROR_MESSAGE,
     LlmTurnFailed,
     is_terminal_llm_user_message,
+    make_thinking_status,
     user_message_for_llm_error,
 )
 from core.conversation import extract_turns, prepare_conversational_input
@@ -301,6 +302,9 @@ async def _stream_chat_events(
     api_system: str | None,
     advisor_mode: str,
 ):
+    yield _sse_payload(make_thinking_status())
+    await asyncio.sleep(0)
+
     embeddings, client, llm = _components()
     turns = extract_turns(request.messages)
     answer = ""

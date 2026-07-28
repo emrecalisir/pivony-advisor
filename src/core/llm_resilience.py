@@ -54,6 +54,16 @@ def make_rate_limit_retry_status(attempt: int, max_attempts: int) -> dict[str, A
     }
 
 
+def make_thinking_status() -> dict[str, Any]:
+    """First SSE event: clients should show thinking UI, not an empty content bubble."""
+    return {
+        "type": "status",
+        "phase": "thinking",
+        "detail": "model",
+        "suppress_content_bubble": True,
+    }
+
+
 def is_terminal_llm_user_message(text: str) -> bool:
     """True when follow-up LLM calls should be skipped (error replies)."""
     normalized = (text or "").strip()
