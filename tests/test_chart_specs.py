@@ -97,3 +97,22 @@ def test_review_statistics_payload_passthrough():
     assert len(charts) == 1
     assert charts[0]["chart_type"] == "review_statistics"
     assert charts[0]["header"]["value"] == 42
+
+
+def test_trends_rating_nulls_become_chart_gaps():
+    payload = json.dumps(
+        {
+            "ratings_daily": [
+                {"day": "2025-11", "avg_rating": 5.0},
+                {"day": "2025-12", "avg_rating": None},
+                {"day": "2026-01", "avg_rating": None},
+                {"day": "2026-04", "avg_rating": 2.26},
+            ]
+        }
+    )
+    charts = charts_from_tool_result("get_trends", payload)
+    rating = next(c for c in charts if "puan" in c["title"].lower())
+    assert rating["title"] == "Aylık ortalama puan"
+    assert rating["datasets"][0]["data"] == [5.0, None, None, 2.26]
+    assert rating["datasets"][0]["spanGaps"] is True
+    assert rating["datasets"][0]["gapStyle"] == "dashed"

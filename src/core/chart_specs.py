@@ -130,15 +130,21 @@ def _charts_from_trends(data: dict[str, Any]) -> list[dict[str, Any]]:
     ratings = data.get("ratings_daily") or []
     if isinstance(ratings, list) and ratings:
         labels = [str(r.get("day") or "") for r in ratings]
-        values = [
-            float(r.get("avg_rating"))
-            for r in ratings
-            if r.get("avg_rating") is not None
-        ]
-        if values and len(labels) == len(values):
+        values: list[float | None] = []
+        for r in ratings:
+            raw = r.get("avg_rating") if isinstance(r, dict) else None
+            if raw is None:
+                values.append(None)
+            else:
+                try:
+                    values.append(float(raw))
+                except (TypeError, ValueError):
+                    values.append(None)
+        if labels and any(v is not None for v in values):
+            monthly = all(len(lbl) == 7 and lbl[4:5] == "-" for lbl in labels if lbl)
             charts.append(
                 _line_chart(
-                    title="Günlük ortalama puan",
+                    title="Aylık ortalama puan" if monthly else "Günlük ortalama puan",
                     labels=labels,
                     datasets=[
                         {
@@ -146,6 +152,8 @@ def _charts_from_trends(data: dict[str, Any]) -> list[dict[str, Any]]:
                             "data": values,
                             "borderColor": "#0ea5e9",
                             "backgroundColor": "rgba(14,165,233,0.12)",
+                            "spanGaps": True,
+                            "gapStyle": "dashed",
                         }
                     ],
                     source_tool="get_trends",
