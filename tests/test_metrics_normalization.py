@@ -47,6 +47,24 @@ def test_real_nps_preserved():
     assert out["nps_available"] is True
 
 
+def test_nps_disabled_pipeline_not_reported_as_zero():
+    out = normalize_metrics_response(
+        {
+            "dashboard_id": 6208,
+            "review_count": 74,
+            "avg_rating": 3.65,
+            "nps": 0,
+            "nps_enabled": False,
+            "nps_status": "ok",
+            "dashboard_count": 1,
+        }
+    )
+    assert out["nps"] is None
+    assert out["nps_status"] == "unavailable"
+    assert out["nps_available"] is False
+    assert "yapılandırılmamış" in out["nps_guidance"]
+
+
 def test_topic_intent_no_complaint_topics_flags_guidance():
     out = normalize_topic_intent_response(
         {

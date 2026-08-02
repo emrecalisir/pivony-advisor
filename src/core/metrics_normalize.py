@@ -29,7 +29,17 @@ def normalize_metrics_response(data: dict[str, Any] | None) -> dict[str, Any] | 
     except (TypeError, ValueError):
         dash_count_i = 1
 
-    if out.get("nps_status") is None:
+    # Pipeline NPS disabled → search often returns sentinel 0; never treat as a score.
+    if out.get("nps_enabled") is False:
+        out["nps"] = None
+        out["nps_status"] = "unavailable"
+        out["nps_available"] = False
+        out["nps_guidance"] = (
+            "Bu dashboard için NPS yapılandırılmamış. NPS'i 0 olarak raporlama. "
+            "avg_rating varsa memnuniyet puanı olarak onu kullan; "
+            "positive_sentiment_score rating / NPS değildir."
+        )
+    elif out.get("nps_status") is None:
         if out.get("dashboard_id") is None and dash_count_i != 1:
             out["nps"] = None
             out["nps_status"] = "requires_single_dashboard"
