@@ -25,12 +25,12 @@ def extract_pdf_text(url: str, *, timeout_sec: int = 45) -> str:
 
     reader = PdfReader(io.BytesIO(raw))
     parts: list[str] = []
-    for page in reader.pages:
+    for page_num, page in enumerate(reader.pages, start=1):
         try:
             text = page.extract_text() or ""
         except Exception as exc:
             logger.warning("PDF page extract failed url=%s: %s", url, exc)
             text = ""
         if text.strip():
-            parts.append(text.strip())
+            parts.append(f"--- Page {page_num} ---\n{text.strip()}")
     return "\n\n".join(parts)
