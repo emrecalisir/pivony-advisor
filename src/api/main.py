@@ -557,5 +557,8 @@ async def advisor_query(
 
 
 from api.quality_loop_mount import mount_quality_loop_ui
+from api.prospect_routes import router as prospect_router
+
+app.include_router(prospect_router)
 
 mount_quality_loop_ui(app)
