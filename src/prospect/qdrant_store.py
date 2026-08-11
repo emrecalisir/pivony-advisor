@@ -119,13 +119,14 @@ def search_bot_knowledge(
     embeddings = embeddings or build_embeddings()
     ensure_collection(client)
     vector = embeddings.embed_query(query)
-    hits = client.search(
+    response = client.query_points(
         collection_name=PROSPECT_COLLECTION,
-        query_vector=vector,
+        query=vector,
         query_filter=tenant_filter(org_id, bot_id),
         limit=k or PROSPECT_RETRIEVER_K,
         with_payload=True,
     )
+    hits = response.points or []
     results: list[dict[str, Any]] = []
     for hit in hits:
         payload = hit.payload or {}
