@@ -18,10 +18,16 @@ def _load_analytics_scope():
 _mod = _load_analytics_scope()
 assistant_text_has_substantive_data = _mod.assistant_text_has_substantive_data
 infer_established_analytics_scope = _mod.infer_established_analytics_scope
+parse_days_from_text = _mod.parse_days_from_text
 scope_prompt_block = _mod.scope_prompt_block
 
 
-def test_substantive_data_detection():
+def test_parse_days_from_text_requires_a_number():
+    assert parse_days_from_text("son 30 günde şikayet konuları") == 30
+    assert parse_days_from_text("last 7 days") == 7
+    assert parse_days_from_text("son günlerde en çok şikayet edilen konular") is None
+    assert parse_days_from_text("son zamanlarda") is None
+    assert parse_days_from_text("recently") is None
     assert assistant_text_has_substantive_data("Pozitif: %61")
     assert not assistant_text_has_substantive_data("Merhaba!")
 

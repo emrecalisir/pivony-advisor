@@ -16,15 +16,22 @@ class EstablishedAnalyticsScope:
     until: str | None = None
 
 
-def _parse_days_from_text(text: str) -> int | None:
+def parse_days_from_text(text: str) -> int | None:
+    """Extract an explicit numeric look-back. Vague phrases like 'son günlerde' do not match."""
     lower = (text or "").lower()
     m = re.search(r"son\s+(\d+)\s+g", lower)
     if m:
-        return int(m.group(1))
+        days = int(m.group(1))
+        return days if days > 0 else None
     m = re.search(r"last\s+(\d+)\s+days?", lower)
     if m:
-        return int(m.group(1))
+        days = int(m.group(1))
+        return days if days > 0 else None
     return None
+
+
+def _parse_days_from_text(text: str) -> int | None:
+    return parse_days_from_text(text)
 
 
 def assistant_text_has_substantive_data(text: str) -> bool:

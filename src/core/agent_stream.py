@@ -17,9 +17,11 @@ from core.agent import (
     EMPTY_AGENT_REPLY,
     _build_tools,
     _extract_dashboard_picker,
+    _extract_period_picker,
     _finalize_agent_reply,
     _message_text,
     _resolve_dashboard_picker_fallback,
+    _resolve_period_picker_fallback,
     _to_langchain_messages,
 )
 from core.agent_state import hard_context_prompt_block, parse_dashboard_id, resolve_hard_agent_state
@@ -274,11 +276,18 @@ def _model_content_for_executed_calls(
 def _scope_locked_tool_nudge(_hard: Any) -> types.Content:
     """User nudge when the model proposed only suppressed tool calls (e.g. list_dashboards)."""
     if _hard.has_dashboard:
-        text = (
-            f"Dashboard scope is already locked to id={_hard.dashboard_id}. "
-            "Do not call list_dashboards. Use analysis tools such as get_pivony_metrics "
-            "or get_trends with the locked dashboard."
-        )
+        if not getattr(_hard, "period_resolved", True):
+            text = (
+                f"Dashboard scope is already locked to id={_hard.dashboard_id}. "
+                "Do not call list_dashboards. Period is not set — ask which window "
+                "(7/30/90 days) in one short sentence. Do not guess days."
+            )
+        else:
+            text = (
+                f"Dashboard scope is already locked to id={_hard.dashboard_id}. "
+                "Do not call list_dashboards. Use analysis tools such as get_pivony_metrics "
+                "or get_trends with the locked dashboard."
+            )
     elif _hard.org_wide:
         text = (
             "Organization-wide scope is already established. Do not call list_dashboards. "
@@ -332,7 +341,7 @@ def stream_advisor_agent(
       - {"type": "content", "delta": str}  (final answer only; never empty)
       - {"type": "chart", "chart": dict}  (Welcome-compatible chart payload)
       - {"type": "done", "content": str, "dashboard_picker": dict | None,
-        "dashboard_selection": dict | None, "charts": list}
+        "period_picker": dict | None, "dashboard_selection": dict | None, "charts": list}
     """
     if llm is not None:
         logger.debug(
@@ -397,6 +406,7 @@ def stream_advisor_agent(
             user_id=user_id,
             limit=limit,
             picker=picker,
+            period_picker=None,
             tools_called=tools_called,
             failed_tools=failed_tools,
             final_text=final_text,
@@ -420,6 +430,7 @@ def _run_agent_stream_loop(
     user_id: str | None,
     limit: int,
     picker: dict | None,
+    period_picker: dict | None,
     tools_called: set[str],
     failed_tools: set[str],
     final_text: str,
@@ -427,6 +438,7 @@ def _run_agent_stream_loop(
     dashboard_selection: dict[str, Any] | None,
 ) -> Iterator[dict[str, Any]]:
     last_tool_user_message: str | None = None
+    saw_period_selection = False
     for step in range(limit):
         try:
             status_events, events, model_content, function_calls = (
@@ -541,6 +553,12 @@ def _run_agent_stream_loop(
                 if built:
                     picker = built
                     yield {"type": "dashboard_picker", "picker": picker}
+                if period_picker is None:
+                    extracted_period = _extract_period_picker(result)
+                    if extracted_period:
+                        period_picker = extracted_period
+                        saw_period_selection = True
+                        yield {"type": "period_picker", "picker": period_picker}
                 new_charts = charts_from_tool_result(name, result)
                 if new_charts:
                     charts[:] = merge_chart_lists(charts, new_charts)
@@ -587,6 +605,19 @@ def _run_agent_stream_loop(
         if picker:
             yield {"type": "dashboard_picker", "picker": picker}
 
+    if period_picker is None:
+        period_picker = _resolve_period_picker_fallback(
+            hard=_hard,
+            dashboard_picker=picker,
+            assistant_text=final_text,
+            tools_called=tools_called,
+            saw_period_selection=saw_period_selection,
+        )
+        if period_picker:
+            yield {"type": "period_picker", "picker": period_picker}
+    if picker:
+        period_picker = None
+
     if is_incomplete_advisor_reply(final_text):
         raise LlmTurnFailed(
             _stream_failure_message(GENERIC_LLM_ERROR_MESSAGE, last_tool_user_message)
@@ -597,6 +628,7 @@ def _run_agent_stream_loop(
         "type": "done",
         "content": answer,
         "dashboard_picker": picker,
+        "period_picker": period_picker,
         "dashboard_selection": dashboard_selection,
         "charts": charts,
     }

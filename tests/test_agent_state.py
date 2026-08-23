@@ -200,6 +200,7 @@ def test_pin_tool_args_injects_user_selected_dashboard_id():
     )
     assert args["dashboard_id"] == 6208
     assert "org_wide" not in args
+    assert "days" not in args
 
 
 def test_pin_tool_args_sets_org_wide_for_metrics():
@@ -226,6 +227,7 @@ def test_pin_tool_args_strips_org_wide_from_dashboard_tools():
     )
     assert args["dashboard_id"] == 6208
     assert "org_wide" not in args
+    assert "days" not in args
 
 
 def test_pin_tool_args_strips_org_wide_when_scope_unresolved():
@@ -251,6 +253,7 @@ def test_pin_tool_args_for_new_topic_intent_tool():
         state,
     )
     assert args["dashboard_id"] == 6208
+    assert "days" not in args
 
 
 def test_dashboard_selection_payload_from_hard_state():
@@ -312,3 +315,63 @@ def test_invalid_dashboard_scope_message_for_zero():
     msg = _tool_routing.invalid_dashboard_scope_message(state)
     assert msg is not None
     assert "dashboard_id=0" in msg
+
+
+def test_vague_recent_phrase_does_not_resolve_period():
+    state = resolve_hard_agent_state(
+        [("user", "en çok şikayet edilen konular nelerdir son günlerde")],
+        {"dashboard_id": 6208, "analytics_scope": {"dashboard_id": 6208}},
+    )
+    assert state.has_dashboard is True
+    assert state.period_resolved is False
+
+
+def test_son_30_gun_resolves_period_on_pinned_dashboard():
+    state = resolve_hard_agent_state(
+        [("user", "son 30 günde en çok şikayet edilen konular nelerdir")],
+        {"dashboard_id": 6208},
+    )
+    assert state.dashboard_id == 6208
+    assert state.days == 30
+    assert state.period_resolved is True
+
+
+def test_analytics_scope_days_apply_when_dashboard_is_url_pinned():
+    state = resolve_hard_agent_state(
+        [("user", "şikayet konuları")],
+        {
+            "dashboard_id": 6208,
+            "analytics_scope": {"dashboard_id": 6208, "days": 30},
+        },
+    )
+    assert state.dashboard_id == 6208
+    assert state.days == 30
+    assert state.period_resolved is True
+
+
+def test_page_since_until_counts_as_period():
+    state = resolve_hard_agent_state(
+        [("user", "kaç yorum var")],
+        {"dashboard_id": 6208, "since": "2026-06-01", "until": "2026-06-08"},
+    )
+    assert state.period_resolved is True
+
+
+def test_pin_injects_days_when_period_is_resolved():
+    state = HardAgentState(
+        dashboard_id=6208,
+        dashboard_locked=True,
+        days=30,
+        source="dashboard_selection",
+    )
+    args = pin_tool_args_for_state("get_pivony_metrics", {}, state)
+    assert args["dashboard_id"] == 6208
+    assert args["days"] == 30
+
+
+def test_period_selection_payload_lists_7_30_90():
+    import json
+
+    payload = json.loads(_tool_routing.period_selection_required_payload())
+    assert payload["need_period_selection"] is True
+    assert [p["days"] for p in payload["periods"]] == [7, 30, 90]

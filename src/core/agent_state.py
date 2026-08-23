@@ -8,6 +8,7 @@ from typing import Any
 from core.analytics_scope import (
     EstablishedAnalyticsScope,
     infer_established_analytics_scope,
+    parse_days_from_text,
     scope_prompt_block,
 )
 
@@ -61,6 +62,13 @@ class HardAgentState:
     def scope_resolved(self) -> bool:
         return self.has_dashboard or self.org_wide
 
+    @property
+    def period_resolved(self) -> bool:
+        """True when the user or page supplied an explicit date window."""
+        if self.since and self.until:
+            return True
+        return self.days is not None and self.days > 0
+
     def dashboard_selection_payload(self) -> dict[str, Any] | None:
         """UI-facing dashboard pick for assistant responses and SSE done events."""
         if self.dashboard_id is None:
@@ -91,6 +99,28 @@ def _dates_from_page(pc: dict) -> tuple[str | None, str | None]:
     )
 
 
+def _latest_user_text(turns: list[tuple[str, str]]) -> str:
+    for role, content in reversed(turns or []):
+        if role == "user":
+            return content or ""
+    return ""
+
+
+def _days_from_page(pc: dict) -> int | None:
+    days = _int_or_none(pc.get("days"))
+    if days is not None:
+        return days
+    days = _int_or_none(pc.get("selectedDaysRange"))
+    if days is not None:
+        return days
+    raw_scope = pc.get("analytics_scope")
+    if isinstance(raw_scope, dict):
+        days = _int_or_none(raw_scope.get("days"))
+        if days is not None:
+            return days
+    return None
+
+
 def resolve_hard_agent_state(
     turns: list[tuple[str, str]],
     page_context: dict | None,
@@ -107,9 +137,15 @@ def resolve_hard_agent_state(
     """
     pc = page_context if isinstance(page_context, dict) else {}
     since_pc, until_pc = _dates_from_page(pc)
-    days_pc = _int_or_none(pc.get("days"))
+    raw_scope_early = pc.get("analytics_scope")
+    if isinstance(raw_scope_early, dict):
+        if not since_pc and raw_scope_early.get("since"):
+            since_pc = str(raw_scope_early.get("since")).strip() or None
+        if not until_pc and raw_scope_early.get("until"):
+            until_pc = str(raw_scope_early.get("until")).strip() or None
+    days_pc = _days_from_page(pc)
     if days_pc is None:
-        days_pc = _int_or_none(pc.get("selectedDaysRange"))
+        days_pc = parse_days_from_text(_latest_user_text(turns))
 
     # Determine explicit dashboard selection from UI (picker or last session) early
     user_explicit_dashboard_id = None
@@ -211,7 +247,7 @@ def resolve_hard_agent_state(
                     org_wide=False,
                     since=str(scope_since).strip() if scope_since else since_pc,
                     until=str(scope_until).strip() if scope_until else until_pc,
-                    days=scope_days or days_pc or 7,
+                    days=scope_days or days_pc,
                     dashboard_locked=True,
                     source=deferred_source,
                 )
@@ -219,7 +255,7 @@ def resolve_hard_agent_state(
                 org_wide=True,
                 since=str(scope_since).strip() if scope_since else since_pc,
                 until=str(scope_until).strip() if scope_until else until_pc,
-                days=scope_days or days_pc or 7,
+                days=scope_days or days_pc,
                 dashboard_locked=False,
                 source="analytics_scope_org_wide",
             )
@@ -298,6 +334,12 @@ def hard_context_prompt_block(state: HardAgentState) -> str:
             parts.append(f"Date window: {state.since} to {state.until}.")
         elif state.days:
             parts.append(f"Look-back: last {state.days} days.")
+        else:
+            parts.append(
+                "Period is NOT set. Do not guess days (not 90, not 'recent' / 'son günlerde'). "
+                "Ask in one short sentence which window to use. The UI shows 7/30/90 day chips. "
+                "Do not call analysis tools until the user picks a period."
+            )
         parts.append(
             "You SHOULD primarily use this locked dashboard for analysis. However, if the user "
             "explicitly asks to list other dashboards or change the current dashboard, "

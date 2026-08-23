@@ -47,6 +47,25 @@ _DASHBOARD_ARG_TOOLS = frozenset(
         "list_reviews",
     }
 )
+_PERIOD_ARG_TOOLS = _DASHBOARD_ARG_TOOLS - {"get_dashboard_pivots"}
+DEFAULT_PERIOD_PICKER = {
+    "need_period_selection": True,
+    "periods": [
+        {"days": 7},
+        {"days": 30},
+        {"days": 90},
+    ],
+    "instruction": (
+        "Do not guess a look-back window and do not use 90 days or 'son günlerde'. "
+        "Ask in one short sentence which period to use. The UI shows 7/30/90 day chips. "
+        "Do not call analysis tools until the user picks a period."
+    ),
+}
+
+
+def period_selection_required_payload() -> str:
+    """Structured tool result that tells the model and UI to ask for a period."""
+    return json.dumps(DEFAULT_PERIOD_PICKER, ensure_ascii=False)
 
 
 def invalid_dashboard_scope_message(state: HardAgentState) -> str | None:
@@ -173,6 +192,17 @@ def pin_tool_args_for_state(
         # org_wide is only valid for get_pivony_metrics; strip it from other
         # dashboard tools so validation does not fail with a misleading mix.
         out.pop("org_wide", None)
+    if tool_name in _PERIOD_ARG_TOOLS:
+        if state.period_resolved:
+            if state.since and state.until:
+                out["since"] = state.since
+                out["until"] = state.until
+            if state.days is not None:
+                out["days"] = state.days
+        elif state.scope_resolved:
+            out.pop("days", None)
+            out.pop("since", None)
+            out.pop("until", None)
     return out
 
 
@@ -186,6 +216,12 @@ def validated_tool_invoke(
     args = dict(raw_args or {})
     if state is not None:
         args = pin_tool_args_for_state(tool.name, args, state)
+        if (
+            tool.name in _PERIOD_ARG_TOOLS
+            and state.scope_resolved
+            and not state.period_resolved
+        ):
+            return period_selection_required_payload()
     if tool.name == "search_qdrant_reviews":
         query = args.get("query") or ""
         if looks_like_pivot_scoped_search(str(query)):

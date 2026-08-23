@@ -196,6 +196,10 @@ class ChatCompletionResponse(BaseModel):
         default=None,
         description="When set, the UI should render a searchable dashboard picker: {dashboards:[{id,name}], default_dashboard_id}",
     )
+    pivony_period_picker: dict | None = Field(
+        default=None,
+        description="When set, the UI should render 7/30/90 day period chips: {periods:[{days:int}]}",
+    )
     pivony_dashboard_selection: dict | None = Field(
         default=None,
         description="Active dashboard scope for this turn: {id, name}",
@@ -245,6 +249,7 @@ def _openai_chat_completion(
     suggested_followups: list[str] | None = None,
     guidance: str | None = None,
     dashboard_picker: dict | None = None,
+    period_picker: dict | None = None,
     dashboard_selection: dict | None = None,
     charts: list[dict] | None = None,
 ) -> ChatCompletionResponse:
@@ -258,6 +263,7 @@ def _openai_chat_completion(
         pivony_suggested_followups=suggested_followups or [],
         pivony_guidance=guidance or "",
         pivony_dashboard_picker=dashboard_picker,
+        pivony_period_picker=period_picker,
         pivony_dashboard_selection=dashboard_selection,
         pivony_charts=charts or [],
     )
@@ -309,6 +315,7 @@ async def _stream_chat_events(
     turns = extract_turns(request.messages)
     answer = ""
     dashboard_picker: dict | None = None
+    period_picker: dict | None = None
     dashboard_selection: dict | None = None
     charts: list[dict] = []
 
@@ -334,6 +341,7 @@ async def _stream_chat_events(
             if event.get("type") == "done":
                 answer = str(event.get("content") or "")
                 dashboard_picker = event.get("dashboard_picker")
+                period_picker = event.get("period_picker")
                 sel = event.get("dashboard_selection")
                 if isinstance(sel, dict):
                     dashboard_selection = sel
@@ -345,6 +353,13 @@ async def _stream_chat_events(
                 picker_payload = event.get("picker")
                 if isinstance(picker_payload, dict):
                     dashboard_picker = picker_payload
+                yield _sse_payload(event)
+                await asyncio.sleep(0)
+                continue
+            if event.get("type") == "period_picker":
+                picker_payload = event.get("picker")
+                if isinstance(picker_payload, dict):
+                    period_picker = picker_payload
                 yield _sse_payload(event)
                 await asyncio.sleep(0)
                 continue
@@ -362,7 +377,7 @@ async def _stream_chat_events(
             {"type": "content", "delta": answer, "replace": True}
         )
 
-    if dashboard_picker or is_terminal_llm_user_message(answer):
+    if dashboard_picker or period_picker or is_terminal_llm_user_message(answer):
         followups, guidance = [], ""
     else:
         followups, guidance = generate_contextual_navigation(
@@ -390,6 +405,7 @@ async def _stream_chat_events(
             "pivony_suggested_followups": followups,
             "pivony_guidance": guidance,
             "pivony_dashboard_picker": dashboard_picker,
+            "pivony_period_picker": period_picker,
             "pivony_dashboard_selection": dashboard_selection,
             "pivony_charts": charts,
         }
@@ -456,9 +472,10 @@ async def chat_completions(
     try:
         embeddings, client, llm = _components()
         dashboard_picker: dict | None = None
+        period_picker: dict | None = None
         dashboard_selection: dict | None = None
         if USE_AGENT:
-            answer, dashboard_picker = run_advisor_agent(
+            answer, dashboard_picker, period_picker = run_advisor_agent(
                 turns=extract_turns(request.messages),
                 sector_slug=sector,
                 extra_system_prompt=api_system,
@@ -477,7 +494,7 @@ async def chat_completions(
         else:
             chain = _get_chain(sector, api_system)
             answer = chain.invoke(chat_input)
-        if dashboard_picker:
+        if dashboard_picker or period_picker:
             followups, guidance = [], ""
         else:
             followups, guidance = generate_contextual_navigation(
@@ -504,6 +521,7 @@ async def chat_completions(
             suggested_followups=followups,
             guidance=guidance,
             dashboard_picker=dashboard_picker,
+            period_picker=period_picker,
             dashboard_selection=dashboard_selection,
         )
     except HTTPException:

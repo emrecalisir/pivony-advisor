@@ -28,6 +28,8 @@ from core.agent_state import (
     resolve_hard_agent_state,
 )
 from core.tool_routing import (
+    DEFAULT_PERIOD_PICKER,
+    _PERIOD_ARG_TOOLS,
     blocked_tool_result,
     filter_tools_for_state,
     sanitize_tool_calls,
@@ -1446,6 +1448,67 @@ def _extract_dashboard_picker(
     return _build_dashboard_picker(data, default_dashboard_id, tool_name=tool_name)
 
 
+def _build_period_picker(data: dict | None = None) -> dict:
+    raw = data.get("periods") if isinstance(data, dict) else None
+    periods = []
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            try:
+                days = int(item.get("days"))
+            except (TypeError, ValueError):
+                continue
+            if days > 0:
+                periods.append({"days": days})
+    if not periods:
+        periods = list(DEFAULT_PERIOD_PICKER["periods"])
+    return {"periods": periods}
+
+
+def _extract_period_picker(result: Any) -> dict | None:
+    """If a tool result asks the user to pick a look-back window, build UI chips."""
+    try:
+        data = json.loads(result) if isinstance(result, str) else result
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict) or not data.get("need_period_selection"):
+        return None
+    return _build_period_picker(data)
+
+
+def _assistant_asks_for_period(text: str) -> bool:
+    lower = (text or "").strip().lower()
+    if not lower or len(lower) > 120:
+        return False
+    if "?" not in lower:
+        return False
+    return any(
+        token in lower
+        for token in ("dönem", "donem", "period", "kaç gün", "kac gun", "hangi süre", "hangi sure")
+    )
+
+
+def _resolve_period_picker_fallback(
+    *,
+    hard: HardAgentState,
+    dashboard_picker: dict | None,
+    assistant_text: str,
+    tools_called: set[str],
+    saw_period_selection: bool,
+) -> dict | None:
+    """Attach period chips when dashboard is known but no date window is set."""
+    if dashboard_picker:
+        return None
+    if not hard.scope_resolved or hard.period_resolved:
+        return None
+    if saw_period_selection or _assistant_asks_for_period(assistant_text):
+        return _build_period_picker()
+    if tools_called & _PERIOD_ARG_TOOLS:
+        return _build_period_picker()
+    return None
+
+
 _DASHBOARD_SCOPE_TOOLS = frozenset(
     {
         "get_pivony_metrics",
@@ -1543,9 +1606,9 @@ def run_advisor_agent(
     user_id: str | None = None,
     page_context: dict | None = None,
     max_iterations: int | None = None,
-) -> tuple[str, dict | None]:
+) -> tuple[str, dict | None, dict | None]:
     """
-    Run the tool-calling loop and return (assistant_text, dashboard_picker).
+    Run the tool-calling loop and return (assistant_text, dashboard_picker, period_picker).
 
     `turns` is an ordered list of (role, content) user/assistant messages
     ending with the latest user message. `advisor_mode` selects the product
@@ -1553,6 +1616,7 @@ def run_advisor_agent(
     `user_id` scopes get_pivony_metrics to the caller's organization.
     `dashboard_picker` is non-None when the turn asks the user to choose a
     dashboard, so the UI can render a searchable/clickable list instead of prose.
+    `period_picker` is non-None when the turn asks the user to choose 7/30/90 days.
     """
     slug = sector_slugify(sector_slug or DEFAULT_SECTOR)
     mode = advisor_mode or DEFAULT_ADVISOR_MODE
@@ -1583,7 +1647,32 @@ def run_advisor_agent(
     if default_dash is None and isinstance(page_context, dict):
         default_dash = parse_dashboard_id(page_context.get("dashboard_id"))
     picker: dict | None = None
+    period_picker: dict | None = None
     tools_called: set[str] = set()
+    saw_period_selection = False
+
+    def _finish(text: str) -> tuple[str, dict | None, dict | None]:
+        dash = picker
+        if dash is None:
+            dash = _resolve_dashboard_picker_fallback(
+                user_id=user_id,
+                default_dashboard_id=default_dash,
+                assistant_text=text,
+                tools_called=tools_called,
+                established_scope=_hard.as_established(),
+            )
+        period = period_picker
+        if period is None:
+            period = _resolve_period_picker_fallback(
+                hard=_hard,
+                dashboard_picker=dash,
+                assistant_text=text,
+                tools_called=tools_called,
+                saw_period_selection=saw_period_selection,
+            )
+        if dash:
+            period = None
+        return _finalize_agent_reply(text), dash, period
 
     limit = max_iterations or AGENT_MAX_TOOL_ITERATIONS
     for step in range(limit):
@@ -1592,15 +1681,7 @@ def run_advisor_agent(
 
         tool_calls = getattr(ai_message, "tool_calls", None) or []
         if not tool_calls:
-            if picker is None:
-                picker = _resolve_dashboard_picker_fallback(
-                    user_id=user_id,
-                    default_dashboard_id=default_dash,
-                    assistant_text=_message_text(ai_message),
-                    tools_called=tools_called,
-                    established_scope=_hard.as_established(),
-                )
-            return _finalize_agent_reply(_message_text(ai_message)), picker
+            return _finish(_message_text(ai_message))
 
         tool_calls = sanitize_tool_calls(tool_calls, _hard)
         for call in tool_calls:
@@ -1622,6 +1703,11 @@ def run_advisor_agent(
                     result = f"Araç hatası ({name}): {exc}"
             if picker is None:
                 picker = _extract_dashboard_picker(name, result, default_dash)
+            if period_picker is None:
+                extracted_period = _extract_period_picker(result)
+                if extracted_period:
+                    period_picker = extracted_period
+                    saw_period_selection = True
             messages.append(
                 ToolMessage(content=str(result), tool_call_id=call.get("id", name or ""))
             )
@@ -1629,16 +1715,7 @@ def run_advisor_agent(
 
     # Tool budget exhausted — force a plain (no-tool) final answer.
     final = llm.invoke(messages)
-    final_text = _message_text(final)
-    if picker is None:
-        picker = _resolve_dashboard_picker_fallback(
-            user_id=user_id,
-            default_dashboard_id=default_dash,
-            assistant_text=final_text,
-            tools_called=tools_called,
-            established_scope=_hard.as_established(),
-        )
-    return _finalize_agent_reply(final_text), picker
+    return _finish(_message_text(final))
 
 
 def _message_text(message: Any) -> str:
