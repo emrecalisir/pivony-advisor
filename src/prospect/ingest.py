@@ -56,6 +56,25 @@ def build_documents_from_payload(payload: dict[str, Any]) -> tuple[list[Document
             logger.warning(msg)
             errors.append(msg)
 
+    for chunk in payload.get("website_chunks") or []:
+        if not isinstance(chunk, dict):
+            continue
+        text = (chunk.get("text") or "").strip()
+        if not text:
+            continue
+        source_id = str(chunk.get("id") or "web").strip()
+        title = (chunk.get("title") or chunk.get("url") or "web").strip()
+        docs.extend(
+            text_documents(
+                org_id=org_id,
+                bot_id=bot_id,
+                source_type="web",
+                source_id=source_id,
+                title=title,
+                text=text,
+            )
+        )
+
     return docs, errors
 
 
@@ -73,8 +92,25 @@ def ingest_bot_knowledge(
     client = client or create_qdrant_client()
     embeddings = build_embeddings()
 
-    delete_bot_points(client, org_id=org_id, bot_id=bot_id)
     documents, pdf_errors = build_documents_from_payload(payload)
+    max_vectors = payload.get("max_vectors")
+    if max_vectors is not None:
+        try:
+            cap = int(max_vectors)
+        except (TypeError, ValueError):
+            cap = None
+        if cap is not None and cap >= 0 and len(documents) > cap:
+            return {
+                "status": "failed",
+                "error": "knowledge_limit_exceeded",
+                "chunk_count": len(documents),
+                "max_vectors": cap,
+                "pdf_errors": pdf_errors,
+                "org_id": org_id,
+                "bot_id": bot_id,
+            }
+
+    delete_bot_points(client, org_id=org_id, bot_id=bot_id)
     count = upsert_documents(
         client,
         embeddings,

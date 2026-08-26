@@ -35,6 +35,8 @@ class ProspectIngestRequest(BaseModel):
     language: str = "tr"
     faq_items: list[dict[str, Any]] = Field(default_factory=list)
     pdf_documents: list[dict[str, Any]] = Field(default_factory=list)
+    website_chunks: list[dict[str, Any]] = Field(default_factory=list)
+    max_vectors: int | None = None
 
 
 class ProspectChatRequest(BaseModel):
