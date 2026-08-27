@@ -9,7 +9,9 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from prospect.config import SONIC_PROSPECT_RAG_SECRET
+from core.rag import create_qdrant_client
 from prospect.ingest import ingest_bot_knowledge
+from prospect.qdrant_store import delete_bot_points
 from prospect.rag import answer_visitor_question
 
 logger = logging.getLogger(__name__)
@@ -48,6 +50,11 @@ class ProspectChatRequest(BaseModel):
     chat_history: list[dict[str, str]] = Field(default_factory=list)
 
 
+class ProspectPurgeRequest(BaseModel):
+    org_id: str = Field(..., min_length=1)
+    bot_id: int
+
+
 @router.post("/ingest")
 async def prospect_ingest(
     request: ProspectIngestRequest,
@@ -60,6 +67,26 @@ async def prospect_ingest(
     except Exception as exc:
         logger.exception("Prospect ingest failed bot_id=%s: %s", request.bot_id, exc)
         raise HTTPException(status_code=500, detail=f"Ingest failed: {exc}") from exc
+
+
+@router.post("/purge")
+async def prospect_purge(
+    request: ProspectPurgeRequest,
+    x_sonic_prospect_key: str | None = Header(default=None, alias="X-Sonic-Prospect-Key"),
+) -> dict[str, Any]:
+    _require_secret(x_sonic_prospect_key)
+    try:
+        client = create_qdrant_client()
+        delete_bot_points(client, org_id=request.org_id, bot_id=request.bot_id)
+        return {"ok": True, "purged": True}
+    except Exception as exc:
+        logger.exception(
+            "Prospect purge failed bot_id=%s org_id=%s: %s",
+            request.bot_id,
+            request.org_id,
+            exc,
+        )
+        raise HTTPException(status_code=500, detail=f"Purge failed: {exc}") from exc
 
 
 @router.post("/chat")
