@@ -180,6 +180,8 @@ def search_bot_knowledge(
                 "source_type": payload.get("source_type"),
                 "source_id": payload.get("source_id"),
                 "chunk_index": payload.get("chunk_index"),
+                "title": payload.get("title"),
+                "url": payload.get("url"),
                 "snippet": (payload.get("page_content") or "")[:500],
             }
         )
