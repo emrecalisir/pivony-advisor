@@ -12,12 +12,13 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from core.config import GCP_LOCATION, GCP_PROJECT, LLM_TEMPERATURE
 from core.rag import build_embeddings, create_qdrant_client
 from prospect.config import PROSPECT_LLM_MODEL, PROSPECT_RETRIEVER_K
+from prospect.languages import augment_prospect_system_prompt, normalize_page_locale
 from prospect.qdrant_store import search_bot_knowledge
 
 DEFAULT_SYSTEM = (
     "You are a helpful site assistant. Answer using ONLY the provided knowledge context. "
-    "If the answer is not in the context, say you do not have that information and suggest "
-    "contacting the team. Be concise, friendly, and match the visitor language when possible."
+    "Knowledge may be in any language — respond in the visitor's latest message language. "
+    "Be concise and friendly."
 )
 
 HUMAN_TEMPLATE = """Knowledge context:
@@ -164,9 +165,11 @@ def answer_visitor_question(
     context = _format_context(sources)
     history = _format_history(chat_history)
 
-    system = (system_prompt or "").strip() or DEFAULT_SYSTEM
-    if language:
-        system += f"\nPreferred response language: {language}."
+    page_locale = normalize_page_locale(language)
+    system = augment_prospect_system_prompt(
+        (system_prompt or "").strip() or DEFAULT_SYSTEM,
+        page_locale=page_locale,
+    )
 
     llm = ChatGoogleGenerativeAI(
         model=PROSPECT_LLM_MODEL,
