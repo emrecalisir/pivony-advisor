@@ -27,6 +27,17 @@ from core.agent_state import (
     parse_dashboard_id,
     resolve_hard_agent_state,
 )
+from core.kpi_flow import (
+    conversation_in_kpi_creation,
+    enrich_kpi_metric_list_response,
+    enrich_kpi_teams_response,
+    extract_kpi_metric_picker,
+    extract_kpi_team_picker,
+    kpi_creation_prompt_block,
+    resolve_dashboard_from_conversation,
+    resolve_kpi_team_from_conversation,
+    should_suppress_dashboard_picker,
+)
 from core.tool_routing import (
     DEFAULT_PERIOD_PICKER,
     _PERIOD_ARG_TOOLS,
@@ -464,6 +475,24 @@ def _build_tools(
         authorized = _authorized_dashboard_id(_llm_dashboard_id)
         if authorized is not None:
             return authorized
+        return _dashboard_selection_required()
+
+    _kpi_creation = conversation_in_kpi_creation(turns or [], _pc)
+
+    def _resolve_dashboard_for_kpi(_llm_dashboard_id: int | None = None) -> int | str:
+        """KPI tools: accept UI lock, prose/picker name match, then require picker."""
+        authorized = _authorized_dashboard_id(_llm_dashboard_id)
+        if authorized is not None:
+            return authorized
+        if _kpi_creation:
+            resolved_id, _ = resolve_dashboard_from_conversation(
+                user_id,
+                turns or [],
+                _pc,
+                _hard,
+            )
+            if resolved_id is not None:
+                return resolved_id
         return _dashboard_selection_required()
 
     def _eff_dates(since: str | None, until: str | None, days: int | None):
@@ -1158,6 +1187,11 @@ def _build_tools(
                 {"error": "KPI team servisi şu anda kullanılamıyor."},
                 ensure_ascii=False,
             )
+        if isinstance(data, dict):
+            resolved_team = resolve_kpi_team_from_conversation(
+                user_id, turns or [], _pc
+            )
+            data = enrich_kpi_teams_response(data, resolved_team)
         return json.dumps(data, ensure_ascii=False)
 
     def _list_kpi_cards(
@@ -1214,7 +1248,7 @@ def _build_tools(
         return json.dumps(data, ensure_ascii=False)
 
     def _get_kpi_metric_list(dashboard_id: int) -> str:
-        resolved = _require_locked_dashboard(dashboard_id)
+        resolved = _resolve_dashboard_for_kpi(dashboard_id)
         if isinstance(resolved, str):
             return resolved
         data = fetch_kpi_metric_list(user_id, [resolved])
@@ -1223,6 +1257,13 @@ def _build_tools(
                 {"error": "KPI metric list servisi şu anda kullanılamıyor."},
                 ensure_ascii=False,
             )
+        if isinstance(data, dict) and not data.get("error"):
+            _, dash_name = resolve_dashboard_from_conversation(
+                user_id, turns or [], _pc, _hard
+            )
+            if not dash_name and _hard.dashboard_name:
+                dash_name = _hard.dashboard_name
+            data = enrich_kpi_metric_list_response(data, resolved, dash_name)
         return json.dumps(data, ensure_ascii=False)
 
     def _create_kpi_view_metric(
@@ -1248,7 +1289,7 @@ def _build_tools(
                 ensure_ascii=False,
             )
 
-        resolved_dash = _require_locked_dashboard(dashboard_id)
+        resolved_dash = _resolve_dashboard_for_kpi(dashboard_id)
         if isinstance(resolved_dash, str):
             return resolved_dash
 
@@ -1766,8 +1807,12 @@ def _extract_dashboard_picker(
     tool_name: str,
     result: Any,
     default_dashboard_id: int | None,
+    *,
+    suppress: bool = False,
 ) -> dict | None:
     """If a tool result implies the user must pick a dashboard, build a UI picker."""
+    if suppress:
+        return None
     try:
         data = json.loads(result) if isinstance(result, str) else result
     except (ValueError, TypeError):
@@ -1896,14 +1941,29 @@ def _resolve_dashboard_picker_fallback(
     assistant_text: str,
     tools_called: set[str],
     established_scope: EstablishedAnalyticsScope | None = None,
+    kpi_creation: bool = False,
+    turns: list[tuple[str, str]] | None = None,
+    page_context: dict | None = None,
+    hard: HardAgentState | None = None,
 ) -> dict | None:
     """
     Attach picker when the model asks to choose a dashboard in prose without
     calling list_dashboards(), or when a metrics tool ran without a dashboard.
     """
+    if kpi_creation and should_suppress_dashboard_picker(
+        kpi_creation=True,
+        hard=hard or HardAgentState(),
+        turns=turns or [],
+        page_context=page_context,
+        user_id=user_id,
+        tools_called=tools_called,
+    ):
+        return None
     if established_scope and (
         established_scope.org_wide or established_scope.dashboard_id is not None
     ):
+        return None
+    if kpi_creation and "get_kpi_metric_list" in tools_called:
         return None
     if not user_id or default_dashboard_id is not None:
         return None
@@ -1935,9 +1995,10 @@ def run_advisor_agent(
     user_id: str | None = None,
     page_context: dict | None = None,
     max_iterations: int | None = None,
-) -> tuple[str, dict | None, dict | None]:
+) -> tuple[str, dict | None, dict | None, dict | None, dict | None]:
     """
-    Run the tool-calling loop and return (assistant_text, dashboard_picker, period_picker).
+    Run the tool-calling loop and return
+    (assistant_text, dashboard_picker, period_picker, kpi_metric_picker, kpi_team_picker).
 
     `turns` is an ordered list of (role, content) user/assistant messages
     ending with the latest user message. `advisor_mode` selects the product
@@ -1966,10 +2027,20 @@ def run_advisor_agent(
     tool_map = {tool.name: tool for tool in tools}
     llm_with_tools = llm.bind_tools(tools)
 
+    _kpi_creation = conversation_in_kpi_creation(turns, page_context)
     scope_hint = hard_context_prompt_block(_hard, page_context)
+    kpi_hint = kpi_creation_prompt_block(
+        kpi_creation=_kpi_creation,
+        hard=_hard,
+        page_context=page_context,
+        turns=turns,
+        user_id=user_id,
+    )
     system_prompt = build_agent_system_prompt(slug, extra_system_prompt, advisor_mode=mode)
     if scope_hint:
         system_prompt = f"{system_prompt}\n\n{scope_hint}"
+    if kpi_hint:
+        system_prompt = f"{system_prompt}\n\n{kpi_hint}"
     messages = _to_langchain_messages(system_prompt, turns)
 
     default_dash = _hard.dashboard_id
@@ -1977,10 +2048,27 @@ def run_advisor_agent(
         default_dash = parse_dashboard_id(page_context.get("dashboard_id"))
     picker: dict | None = None
     period_picker: dict | None = None
+    kpi_metric_picker: dict | None = None
+    kpi_team_picker: dict | None = None
     tools_called: set[str] = set()
     saw_period_selection = False
 
-    def _finish(text: str) -> tuple[str, dict | None, dict | None]:
+    def _dash_picker_suppressed() -> bool:
+        return should_suppress_dashboard_picker(
+            kpi_creation=_kpi_creation,
+            hard=_hard,
+            turns=turns,
+            page_context=page_context,
+            user_id=user_id,
+            tools_called=tools_called,
+        )
+
+    def _resolved_kpi_dashboard() -> tuple[int | None, str | None]:
+        return resolve_dashboard_from_conversation(
+            user_id, turns, page_context, _hard
+        )
+
+    def _finish(text: str) -> tuple[str, dict | None, dict | None, dict | None, dict | None]:
         dash = picker
         if dash is None:
             dash = _resolve_dashboard_picker_fallback(
@@ -1989,6 +2077,10 @@ def run_advisor_agent(
                 assistant_text=text,
                 tools_called=tools_called,
                 established_scope=_hard.as_established(),
+                kpi_creation=_kpi_creation,
+                turns=turns,
+                page_context=page_context,
+                hard=_hard,
             )
         period = period_picker
         if period is None:
@@ -2001,7 +2093,7 @@ def run_advisor_agent(
             )
         if dash:
             period = None
-        return _finalize_agent_reply(text), dash, period
+        return _finalize_agent_reply(text), dash, period, kpi_metric_picker, kpi_team_picker
 
     limit = max_iterations or AGENT_MAX_TOOL_ITERATIONS
     for step in range(limit):
@@ -2031,7 +2123,19 @@ def run_advisor_agent(
                     logger.warning("Tool %s failed: %s", name, exc)
                     result = f"Araç hatası ({name}): {exc}"
             if picker is None:
-                picker = _extract_dashboard_picker(name, result, default_dash)
+                picker = _extract_dashboard_picker(
+                    name,
+                    result,
+                    default_dash,
+                    suppress=_dash_picker_suppressed(),
+                )
+            if kpi_team_picker is None:
+                kpi_team_picker = extract_kpi_team_picker(name, result)
+            if kpi_metric_picker is None:
+                dash_id, dash_name = _resolved_kpi_dashboard()
+                kpi_metric_picker = extract_kpi_metric_picker(
+                    name, result, dash_id, dash_name
+                )
             if period_picker is None:
                 extracted_period = _extract_period_picker(result)
                 if extracted_period:

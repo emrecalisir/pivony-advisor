@@ -199,6 +199,14 @@ class ChatCompletionResponse(BaseModel):
         default=None,
         description="When set, the UI should render 7/30/90 day period chips: {periods:[{days:int}]}",
     )
+    pivony_kpi_metric_picker: dict | None = Field(
+        default=None,
+        description="KPI creation metric chips: {metrics:[{label,kind}], dashboard_id, dashboard_name}",
+    )
+    pivony_kpi_team_picker: dict | None = Field(
+        default=None,
+        description="KPI board team chips: {teams:[{team_id,name}]}",
+    )
     pivony_dashboard_selection: dict | None = Field(
         default=None,
         description="Active dashboard scope for this turn: {id, name}",
@@ -249,6 +257,8 @@ def _openai_chat_completion(
     guidance: str | None = None,
     dashboard_picker: dict | None = None,
     period_picker: dict | None = None,
+    kpi_metric_picker: dict | None = None,
+    kpi_team_picker: dict | None = None,
     dashboard_selection: dict | None = None,
     charts: list[dict] | None = None,
 ) -> ChatCompletionResponse:
@@ -263,6 +273,8 @@ def _openai_chat_completion(
         pivony_guidance=guidance or "",
         pivony_dashboard_picker=dashboard_picker,
         pivony_period_picker=period_picker,
+        pivony_kpi_metric_picker=kpi_metric_picker,
+        pivony_kpi_team_picker=kpi_team_picker,
         pivony_dashboard_selection=dashboard_selection,
         pivony_charts=charts or [],
     )
@@ -315,6 +327,8 @@ async def _stream_chat_events(
     answer = ""
     dashboard_picker: dict | None = None
     period_picker: dict | None = None
+    kpi_metric_picker: dict | None = None
+    kpi_team_picker: dict | None = None
     dashboard_selection: dict | None = None
     charts: list[dict] = []
 
@@ -341,6 +355,12 @@ async def _stream_chat_events(
                 answer = str(event.get("content") or "")
                 dashboard_picker = event.get("dashboard_picker")
                 period_picker = event.get("period_picker")
+                kmp = event.get("kpi_metric_picker")
+                if isinstance(kmp, dict):
+                    kpi_metric_picker = kmp
+                ktp = event.get("kpi_team_picker")
+                if isinstance(ktp, dict):
+                    kpi_team_picker = ktp
                 sel = event.get("dashboard_selection")
                 if isinstance(sel, dict):
                     dashboard_selection = sel
@@ -359,6 +379,20 @@ async def _stream_chat_events(
                 picker_payload = event.get("picker")
                 if isinstance(picker_payload, dict):
                     period_picker = picker_payload
+                yield _sse_payload(event)
+                await asyncio.sleep(0)
+                continue
+            if event.get("type") == "kpi_metric_picker":
+                picker_payload = event.get("picker")
+                if isinstance(picker_payload, dict):
+                    kpi_metric_picker = picker_payload
+                yield _sse_payload(event)
+                await asyncio.sleep(0)
+                continue
+            if event.get("type") == "kpi_team_picker":
+                picker_payload = event.get("picker")
+                if isinstance(picker_payload, dict):
+                    kpi_team_picker = picker_payload
                 yield _sse_payload(event)
                 await asyncio.sleep(0)
                 continue
@@ -385,6 +419,8 @@ async def _stream_chat_events(
         use_vertex=USE_VERTEX_CONTEXTUAL_NAVIGATION,
         dashboard_picker=dashboard_picker,
         period_picker=period_picker,
+        kpi_metric_picker=kpi_metric_picker,
+        kpi_team_picker=kpi_team_picker,
     )
     log_conversation(
         user_id=user_id,
@@ -404,6 +440,8 @@ async def _stream_chat_events(
             "pivony_guidance": guidance,
             "pivony_dashboard_picker": dashboard_picker,
             "pivony_period_picker": period_picker,
+            "pivony_kpi_metric_picker": kpi_metric_picker,
+            "pivony_kpi_team_picker": kpi_team_picker,
             "pivony_dashboard_selection": dashboard_selection,
             "pivony_charts": charts,
         }
@@ -471,18 +509,22 @@ async def chat_completions(
         embeddings, client, llm = _components()
         dashboard_picker: dict | None = None
         period_picker: dict | None = None
+        kpi_metric_picker: dict | None = None
+        kpi_team_picker: dict | None = None
         dashboard_selection: dict | None = None
         if USE_AGENT:
-            answer, dashboard_picker, period_picker = run_advisor_agent(
-                turns=extract_turns(request.messages),
-                sector_slug=sector,
-                extra_system_prompt=api_system,
-                embeddings=embeddings,
-                client=client,
-                llm=llm,
-                advisor_mode=advisor_mode,
-                user_id=user_id,
-                page_context=request.pivony_page_context,
+            answer, dashboard_picker, period_picker, kpi_metric_picker, kpi_team_picker = (
+                run_advisor_agent(
+                    turns=extract_turns(request.messages),
+                    sector_slug=sector,
+                    extra_system_prompt=api_system,
+                    embeddings=embeddings,
+                    client=client,
+                    llm=llm,
+                    advisor_mode=advisor_mode,
+                    user_id=user_id,
+                    page_context=request.pivony_page_context,
+                )
             )
             _hard = resolve_hard_agent_state(
                 extract_turns(request.messages),
@@ -501,6 +543,8 @@ async def chat_completions(
             use_vertex=USE_VERTEX_CONTEXTUAL_NAVIGATION,
             dashboard_picker=dashboard_picker,
             period_picker=period_picker,
+            kpi_metric_picker=kpi_metric_picker,
+            kpi_team_picker=kpi_team_picker,
         )
         log_conversation(
             user_id=user_id,
@@ -519,6 +563,8 @@ async def chat_completions(
             guidance=guidance,
             dashboard_picker=dashboard_picker,
             period_picker=period_picker,
+            kpi_metric_picker=kpi_metric_picker,
+            kpi_team_picker=kpi_team_picker,
             dashboard_selection=dashboard_selection,
         )
     except HTTPException:

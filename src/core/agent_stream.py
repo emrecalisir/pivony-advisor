@@ -24,6 +24,14 @@ from core.agent import (
     _resolve_period_picker_fallback,
     _to_langchain_messages,
 )
+from core.kpi_flow import (
+    conversation_in_kpi_creation,
+    extract_kpi_metric_picker,
+    extract_kpi_team_picker,
+    kpi_creation_prompt_block,
+    resolve_dashboard_from_conversation,
+    should_suppress_dashboard_picker,
+)
 from core.agent_state import hard_context_prompt_block, parse_dashboard_id, resolve_hard_agent_state
 from core.chart_specs import charts_from_tool_result, merge_chart_lists
 from core.llm_resilience import (
@@ -366,11 +374,21 @@ def stream_advisor_agent(
     genai_client = _get_genai_client()
 
     scope_hint = hard_context_prompt_block(_hard, page_context)
+    _kpi_creation = conversation_in_kpi_creation(turns, page_context)
+    kpi_hint = kpi_creation_prompt_block(
+        kpi_creation=_kpi_creation,
+        hard=_hard,
+        page_context=page_context,
+        turns=turns,
+        user_id=user_id,
+    )
     system_prompt = build_agent_system_prompt(
         slug, extra_system_prompt, advisor_mode=advisor_mode
     )
     if scope_hint:
         system_prompt = f"{system_prompt}\n\n{scope_hint}"
+    if kpi_hint:
+        system_prompt = f"{system_prompt}\n\n{kpi_hint}"
     lc_messages = _to_langchain_messages(system_prompt, turns)
     contents = _langchain_to_genai_contents(lc_messages[1:])
 
@@ -411,6 +429,9 @@ def stream_advisor_agent(
             failed_tools=failed_tools,
             final_text=final_text,
             charts=charts,
+            kpi_creation=_kpi_creation,
+            turns=turns,
+            page_context=page_context,
             dashboard_selection=dashboard_selection,
         )
     except LlmTurnFailed as exc:
@@ -436,9 +457,29 @@ def _run_agent_stream_loop(
     final_text: str,
     charts: list[dict[str, Any]],
     dashboard_selection: dict[str, Any] | None,
+    kpi_creation: bool = False,
+    turns: list[tuple[str, str]] | None = None,
+    page_context: dict | None = None,
 ) -> Iterator[dict[str, Any]]:
     last_tool_user_message: str | None = None
     saw_period_selection = False
+    kpi_metric_picker: dict | None = None
+    kpi_team_picker: dict | None = None
+
+    def _dash_picker_suppressed() -> bool:
+        return should_suppress_dashboard_picker(
+            kpi_creation=kpi_creation,
+            hard=_hard,
+            turns=turns or [],
+            page_context=page_context,
+            user_id=user_id,
+            tools_called=tools_called,
+        )
+
+    def _resolved_kpi_dashboard() -> tuple[int | None, str | None]:
+        return resolve_dashboard_from_conversation(
+            user_id, turns or [], page_context, _hard
+        )
     for step in range(limit):
         try:
             status_events, events, model_content, function_calls = (
@@ -549,10 +590,28 @@ def _run_agent_stream_loop(
                 )
 
                 # Update UI elements for the executed/blocked tool
-                built = _extract_dashboard_picker(name, result, default_dash)
+                built = _extract_dashboard_picker(
+                    name,
+                    result,
+                    default_dash,
+                    suppress=_dash_picker_suppressed(),
+                )
                 if built:
                     picker = built
                     yield {"type": "dashboard_picker", "picker": picker}
+                if kpi_team_picker is None:
+                    team_built = extract_kpi_team_picker(name, result)
+                    if team_built:
+                        kpi_team_picker = team_built
+                        yield {"type": "kpi_team_picker", "picker": team_built}
+                if kpi_metric_picker is None:
+                    dash_id, dash_name = _resolved_kpi_dashboard()
+                    metric_built = extract_kpi_metric_picker(
+                        name, result, dash_id, dash_name
+                    )
+                    if metric_built:
+                        kpi_metric_picker = metric_built
+                        yield {"type": "kpi_metric_picker", "picker": metric_built}
                 if period_picker is None:
                     extracted_period = _extract_period_picker(result)
                     if extracted_period:
@@ -601,6 +660,10 @@ def _run_agent_stream_loop(
             assistant_text=final_text,
             tools_called=tools_called,
             established_scope=_hard.as_established(),
+            kpi_creation=kpi_creation,
+            turns=turns,
+            page_context=page_context,
+            hard=_hard,
         )
         if picker:
             yield {"type": "dashboard_picker", "picker": picker}
@@ -617,6 +680,8 @@ def _run_agent_stream_loop(
             yield {"type": "period_picker", "picker": period_picker}
     if picker:
         period_picker = None
+    if kpi_metric_picker or kpi_team_picker:
+        period_picker = None
 
     if is_incomplete_advisor_reply(final_text):
         raise LlmTurnFailed(
@@ -629,6 +694,8 @@ def _run_agent_stream_loop(
         "content": answer,
         "dashboard_picker": picker,
         "period_picker": period_picker,
+        "kpi_metric_picker": kpi_metric_picker,
+        "kpi_team_picker": kpi_team_picker,
         "dashboard_selection": dashboard_selection,
         "charts": charts,
     }

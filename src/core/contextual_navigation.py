@@ -219,6 +219,8 @@ def should_offer_navigation_chips(
     chat_history: str | None = None,
     dashboard_picker: dict | None = None,
     period_picker: dict | None = None,
+    kpi_metric_picker: dict | None = None,
+    kpi_team_picker: dict | None = None,
 ) -> bool:
     """
     Decide whether this turn should show suggested follow-up chips + guidance.
@@ -226,7 +228,7 @@ def should_offer_navigation_chips(
     Chips are optional navigation — skip when the UI or assistant reply already
     provides a clear next step (picker, KPI wizard, confirmation, errors).
     """
-    if dashboard_picker or period_picker:
+    if dashboard_picker or period_picker or kpi_metric_picker or kpi_team_picker:
         return False
     if is_terminal_llm_user_message(answer):
         return False
@@ -457,6 +459,8 @@ def maybe_generate_contextual_navigation(
     use_vertex: bool = True,
     dashboard_picker: dict | None = None,
     period_picker: dict | None = None,
+    kpi_metric_picker: dict | None = None,
+    kpi_team_picker: dict | None = None,
 ) -> tuple[list[str], str]:
     """Generate chips only when they add value for this turn."""
     if not should_offer_navigation_chips(
@@ -465,6 +469,8 @@ def maybe_generate_contextual_navigation(
         chat_history=chat_history,
         dashboard_picker=dashboard_picker,
         period_picker=period_picker,
+        kpi_metric_picker=kpi_metric_picker,
+        kpi_team_picker=kpi_team_picker,
     ):
         logger.info(
             "Navigation chips skipped (question=%r answer_len=%s)",
