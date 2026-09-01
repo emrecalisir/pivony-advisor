@@ -18,6 +18,63 @@ class RepoGitState:
     path: Path
     head: str
     dirty: tuple[str, ...]
+    origin_head: str = ""
+
+
+def _origin_head(path: Path, *, env: dict[str, str] | None = None) -> str:
+    branch = git_target_branch()
+    proc = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", f"origin/{branch}"],
+        capture_output=True,
+        text=True,
+        env=env or _git_env(),
+    )
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
+
+
+def capture_repo_states(*, fetch_origin: bool = False) -> list[RepoGitState]:
+    git_env = _git_env()
+    states: list[RepoGitState] = []
+    branch = git_target_branch()
+    for slug, path in list_write_repos():
+        if fetch_origin:
+            subprocess.run(
+                ["git", "-C", str(path), "fetch", "origin", branch, "--quiet"],
+                capture_output=True,
+                text=True,
+                env=git_env,
+                timeout=60,
+            )
+        head_proc = subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            env=git_env,
+        )
+        head = head_proc.stdout.strip() if head_proc.returncode == 0 else ""
+        dirty_proc = subprocess.run(
+            ["git", "-C", str(path), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            env=git_env,
+        )
+        dirty = tuple(
+            line[3:].strip()
+            for line in (dirty_proc.stdout or "").splitlines()
+            if len(line) >= 4
+        )
+        states.append(
+            RepoGitState(
+                slug=slug,
+                path=path,
+                head=head,
+                dirty=dirty,
+                origin_head=_origin_head(path, env=git_env),
+            )
+        )
+    return states
 
 
 def _git_env() -> dict[str, str]:
@@ -52,31 +109,6 @@ def list_write_repos() -> list[tuple[str, Path]]:
         if path and path.is_dir():
             rows.append((slug, path.resolve()))
     return rows
-
-
-def capture_repo_states() -> list[RepoGitState]:
-    states: list[RepoGitState] = []
-    for slug, path in list_write_repos():
-        head_proc = subprocess.run(
-            ["git", "-C", str(path), "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            env=_git_env(),
-        )
-        head = head_proc.stdout.strip() if head_proc.returncode == 0 else ""
-        dirty_proc = subprocess.run(
-            ["git", "-C", str(path), "status", "--porcelain"],
-            capture_output=True,
-            text=True,
-            env=_git_env(),
-        )
-        dirty = tuple(
-            line[3:].strip()
-            for line in (dirty_proc.stdout or "").splitlines()
-            if len(line) >= 4
-        )
-        states.append(RepoGitState(slug=slug, path=path, head=head, dirty=dirty))
-    return states
 
 
 def pull_write_repos() -> list[str]:
@@ -366,23 +398,18 @@ def finalize_cursor_fixes(
         "next_test_scenarios": (qa_report or {}).get("next_test_scenarios") or [],
         "coding_backend": "cursor",
     }
-    if job_id and fixes_applied:
+    if job_id:
         try:
-            from quality_loop.deploy_gate import push_requires_approval, queue_push_approval
+            from quality_loop.deploy_gate import process_push_gate_after_finalize
 
-            if push_requires_approval():
-                hashes = [
-                    str(f.get("commit_hash"))
-                    for f in fixes_applied
-                    if f.get("commit_hash") and f.get("deploy_status") == "pending_approval"
-                ]
-                if hashes:
-                    queue_push_approval(
-                        job_id=job_id,
-                        session_id=None,
-                        fixes=fixes_applied,
-                        commit_hashes=hashes,
-                    )
-        except Exception:
-            pass
+            gate = process_push_gate_after_finalize(
+                job_id=job_id,
+                before_states=before_states,
+                after_states=list(after_map.values()),
+                fixes_applied=fixes_applied,
+            )
+            payload["push_gate"] = gate
+            messages.extend(gate.get("messages") or [])
+        except Exception as exc:
+            messages.append(f"⚠ push gate: {exc}")
     return payload, messages

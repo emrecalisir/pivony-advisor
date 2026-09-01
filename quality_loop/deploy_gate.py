@@ -71,6 +71,194 @@ def auto_deploy_enabled() -> bool:
     return os.environ.get("QUALITY_LOOP_AUTO_DEPLOY", "").lower() in ("1", "true", "yes")
 
 
+def dev_auto_approve_enabled() -> bool:
+    """Dev: keep approval gate but auto-approve when verification/tests pass."""
+    raw = os.environ.get("QUALITY_LOOP_DEV_AUTO_APPROVE", "").strip().lower()
+    return raw in ("1", "true", "yes") and deploy_target() == "dev"
+
+
+def commits_ahead_of_origin(
+    repo: Path,
+    *,
+    head: str | None = None,
+    origin: str | None = None,
+    env: dict[str, str] | None = None,
+) -> list[str]:
+    """Short hashes of commits reachable from HEAD but not from origin/<branch>."""
+    from quality_loop.git_branch import git_target_branch
+
+    git_env = env or os.environ.copy()
+    branch = git_target_branch()
+    if not origin:
+        proc = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", f"origin/{branch}"],
+            capture_output=True,
+            text=True,
+            env=git_env,
+        )
+        if proc.returncode != 0:
+            return []
+        origin = proc.stdout.strip()
+    if not head:
+        proc = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            env=git_env,
+        )
+        if proc.returncode != 0:
+            return []
+        head = proc.stdout.strip()
+    if not origin or not head or origin == head:
+        return []
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "log", "--format=%h", f"{origin}..{head}"],
+        capture_output=True,
+        text=True,
+        env=git_env,
+    )
+    if proc.returncode != 0:
+        return []
+    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+
+def job_push_was_approved(job_id: str) -> bool:
+    data = _load_queue()
+    for row in data.get("pending") or []:
+        if row.get("job_id") == job_id and row.get("status") in ("approved", "pushed"):
+            return True
+    for row in data.get("history") or []:
+        if row.get("job_id") == job_id and row.get("status") == "pushed":
+            return True
+    return False
+
+
+def maybe_auto_approve_dev(job_id: str) -> dict[str, Any] | None:
+    if not dev_auto_approve_enabled():
+        return None
+    try:
+        return approve_push(job_id, approved_by="dev_auto")
+    except KeyError:
+        return None
+
+
+def process_push_gate_after_finalize(
+    *,
+    job_id: str,
+    before_states: list[Any],
+    after_states: list[Any],
+    fixes_applied: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """
+    After Cursor/finalize: detect unpushed commits and unauthorized origin advances.
+    Queues push approval even when finalize saw 'nothing to commit' (cloud already committed).
+    """
+    from quality_loop.coding_git_finalize import _git_env
+
+    git_env = _git_env()
+    before_map = {s.slug: s for s in before_states}
+    after_map = {s.slug: s for s in after_states}
+    unauthorized: list[dict[str, Any]] = []
+    ahead_all: list[str] = []
+    messages: list[str] = []
+
+    for slug, after in after_map.items():
+        before = before_map.get(slug)
+        if not before:
+            continue
+        subprocess.run(
+            ["git", "-C", str(after.path), "fetch", "origin", deploy_target_branch(), "--quiet"],
+            capture_output=True,
+            text=True,
+            env=git_env,
+            timeout=60,
+        )
+        origin_after = _rev_parse(after.path, f"origin/{deploy_target_branch()}", env=git_env)
+        origin_before = before.origin_head or ""
+
+        if (
+            origin_before
+            and origin_after
+            and origin_before != origin_after
+            and not job_push_was_approved(job_id)
+        ):
+            unauthorized.append(
+                {
+                    "repo": slug,
+                    "origin_before": origin_before[:12],
+                    "origin_after": origin_after[:12],
+                }
+            )
+            messages.append(
+                f"⚠ {slug}: origin advanced without deploy_gate approval "
+                f"({origin_before[:7]}→{origin_after[:7]})"
+            )
+
+        ahead = commits_ahead_of_origin(
+            after.path,
+            head=after.head,
+            origin=origin_after or None,
+            env=git_env,
+        )
+        ahead_all.extend(ahead)
+
+        for fix in fixes_applied:
+            if fix.get("repo") == slug and fix.get("deploy_status") == "file_written_and_valid":
+                if ahead and push_requires_approval() and not git_push_allowed(job_id=job_id):
+                    fix["deploy_status"] = "pending_approval"
+                    fix["git_push_status"] = "pending_approval"
+                    if not fix.get("commit_hash") and ahead:
+                        fix["commit_hash"] = ahead[0]
+
+    gate: dict[str, Any] = {
+        "commits_ahead": ahead_all,
+        "unauthorized_origin_push": unauthorized,
+        "push_queued": False,
+    }
+
+    if not git_commit_allowed() or not push_requires_approval():
+        return gate
+
+    hashes = list(dict.fromkeys(ahead_all))
+    pending_fixes = [f for f in fixes_applied if f.get("deploy_status") == "pending_approval"]
+    if hashes or pending_fixes:
+        queue_push_approval(
+            job_id=job_id,
+            session_id=None,
+            fixes=fixes_applied,
+            commit_hashes=hashes or [
+                str(f.get("commit_hash")) for f in pending_fixes if f.get("commit_hash")
+            ],
+        )
+        gate["push_queued"] = True
+        messages.append(f"⏳ push onayı kuyruğa alındı ({len(hashes)} commit)")
+        auto = maybe_auto_approve_dev(job_id)
+        if auto:
+            gate["auto_approved"] = True
+            messages.append("✓ dev auto-approve uygulandı")
+
+    gate["messages"] = messages
+    return gate
+
+
+def deploy_target_branch() -> str:
+    from quality_loop.git_branch import git_target_branch
+
+    return git_target_branch()
+
+
+def _rev_parse(repo: Path, ref: str, *, env: dict[str, str]) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", ref],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
+
+
 def queue_push_approval(
     *,
     job_id: str,
