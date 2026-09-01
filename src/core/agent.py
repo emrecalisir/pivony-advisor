@@ -44,6 +44,7 @@ from core.metrics_normalize import (
     normalize_topic_sentiment_response,
 )
 from core.pivony_platform import (
+    create_kpi,
     fetch_dashboards,
     fetch_decisions,
     fetch_digital_experience_score,
@@ -51,6 +52,8 @@ from core.pivony_platform import (
     fetch_emergent_topics,
     fetch_hotterms,
     fetch_key_drivers,
+    fetch_kpi_metric_list,
+    fetch_kpi_teams,
     fetch_metrics,
     fetch_pivots,
     fetch_reviews,
@@ -311,6 +314,79 @@ class MetricsArgs(BaseModel):
         except (TypeError, ValueError):
             return value
         return parsed if parsed > 0 else None
+
+
+class ListKpiTeamsArgs(BaseModel):
+    """list_kpi_teams takes no parameters; ignore spurious LLM-invented fields."""
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class GetKpiMetricListArgs(BaseModel):
+    dashboard_id: int = Field(
+        ..., description="Dashboard ID (from list_dashboards) to list KPI topic labels for."
+    )
+
+    @field_validator("dashboard_id", mode="before")
+    @classmethod
+    def _coerce_dashboard_id(cls, value: Any) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return value
+        return parsed
+
+
+class CreateKpiViewMetricArgs(BaseModel):
+    dashboard_id: int = Field(
+        ..., description="Dashboard ID (from list_dashboards) that feeds the KPI."
+    )
+    metric: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Topic/category labels from get_kpi_metric_list (custom_metrics). "
+            "Leave empty when the KPI is pivot-only."
+        ),
+    )
+    team_id: str | None = Field(
+        default=None,
+        description=(
+            "KPI board team id from list_kpi_teams or page context kpiTeamId. "
+            "Required before create."
+        ),
+    )
+    pivot_key: str | None = Field(
+        default=None,
+        description="Optional pivot key from get_dashboard_pivots (e.g. vendorName).",
+    )
+    pivot_value: str | None = Field(
+        default=None,
+        description="Optional pivot value (e.g. hotel name).",
+    )
+    operation: str = Field(
+        default="sum",
+        description="Aggregation operation — usually 'sum'.",
+    )
+    mode: str = Field(
+        default="combined",
+        description="'combined' merges topics in one KPI; 'separate' creates one KPI per topic.",
+    )
+    confirmed: bool = Field(
+        default=False,
+        description=(
+            "Must be true only after the user explicitly confirms the KPI summary "
+            "(dashboard, pivot, topic, team)."
+        ),
+    )
+
+    @field_validator("dashboard_id", mode="before")
+    @classmethod
+    def _coerce_dashboard_id(cls, value: Any) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return value
+        return parsed
 
 
 def _build_tools(
@@ -1049,6 +1125,135 @@ def _build_tools(
             ensure_ascii=False,
         )
 
+    def _list_kpi_teams(**_kwargs: Any) -> str:
+        data = fetch_kpi_teams(user_id)
+        if data is None:
+            return json.dumps(
+                {"error": "KPI team servisi şu anda kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _get_kpi_metric_list(dashboard_id: int) -> str:
+        resolved = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved, str):
+            return resolved
+        data = fetch_kpi_metric_list(user_id, [resolved])
+        if data is None:
+            return json.dumps(
+                {"error": "KPI metric list servisi şu anda kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
+    def _create_kpi_view_metric(
+        dashboard_id: int,
+        metric: list[str] | None = None,
+        team_id: str | None = None,
+        pivot_key: str | None = None,
+        pivot_value: str | None = None,
+        operation: str = "sum",
+        mode: str = "combined",
+        confirmed: bool = False,
+    ) -> str:
+        if not confirmed:
+            return json.dumps(
+                {
+                    "error": "confirmation_required",
+                    "message": (
+                        "Önce kullanıcıya dashboard, pivot (varsa), topic ve team "
+                        "özetini göster; açık onay aldıktan sonra confirmed=true ile "
+                        "tekrar çağır."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+
+        resolved_dash = _require_locked_dashboard(dashboard_id)
+        if isinstance(resolved_dash, str):
+            return resolved_dash
+
+        metrics = [m for m in (metric or []) if m and str(m).strip()]
+        has_pivot = bool(
+            pivot_key and str(pivot_key).strip() and pivot_value and str(pivot_value).strip()
+        )
+        if not metrics and not has_pivot:
+            return json.dumps(
+                {
+                    "error": "validation_error",
+                    "message": "En az bir topic (metric) veya pivot seçilmeli.",
+                },
+                ensure_ascii=False,
+            )
+
+        resolved_team = (
+            team_id or _pc.get("kpiTeamId") or _pc.get("kpi_team_id") or ""
+        ).strip() or None
+        if not resolved_team:
+            teams_payload = fetch_kpi_teams(user_id)
+            teams = (
+                teams_payload.get("teams")
+                if isinstance(teams_payload, dict)
+                else None
+            )
+            default_team = (
+                teams_payload.get("default_team_id")
+                if isinstance(teams_payload, dict)
+                else None
+            )
+            if default_team:
+                resolved_team = str(default_team)
+            elif teams and len(teams) == 1:
+                resolved_team = str(teams[0].get("team_id"))
+            else:
+                return json.dumps(
+                    {
+                        "error": "team_required",
+                        "teams": teams or [],
+                        "message": (
+                            "Hangi KPI board (team) kullanılacak? list_kpi_teams "
+                            "ile seçenekleri göster veya team_id ver."
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
+
+        pivots = None
+        if has_pivot:
+            pivots = [
+                {
+                    "key": str(pivot_key).strip(),
+                    "value": str(pivot_value).strip(),
+                }
+            ]
+
+        data = create_kpi(
+            user_id,
+            team=str(resolved_team),
+            dashboard_ids=[resolved_dash],
+            metric=metrics,
+            pivots=pivots,
+            operation=operation or "sum",
+            mode=mode or "combined",
+        )
+        if data is None:
+            return json.dumps(
+                {"error": "KPI oluşturma servisi şu anda kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        if isinstance(data, dict) and data.get("error"):
+            return json.dumps(data, ensure_ascii=False)
+        return json.dumps(
+            {
+                **(data if isinstance(data, dict) else {}),
+                "message": (
+                    "KPI oluşturuldu. KPIs & Alerts sayfasında (global executive) "
+                    "görünecek; sayfayı yenilemeleri gerekebilir."
+                ),
+            },
+            ensure_ascii=False,
+        )
+
     search_tool = StructuredTool.from_function(
         func=_search,
         name="search_qdrant_reviews",
@@ -1331,6 +1536,40 @@ def _build_tools(
         ),
         args_schema=ScopedDashboardArgs,
     )
+    list_kpi_teams_tool = StructuredTool.from_function(
+        func=_list_kpi_teams,
+        name="list_kpi_teams",
+        description=(
+            "List KPI boards (teams) the user can write KPI cards to on the "
+            "KPIs & Alerts / global executive page. Call when team is unknown."
+        ),
+        args_schema=ListKpiTeamsArgs,
+    )
+    get_kpi_metric_list_tool = StructuredTool.from_function(
+        func=_get_kpi_metric_list,
+        name="get_kpi_metric_list",
+        description=(
+            "List topic/category labels available as KPI metrics for a dashboard "
+            "(custom_metrics, general_metrics, ai_topics). Use before create_kpi_view_metric."
+        ),
+        args_schema=GetKpiMetricListArgs,
+    )
+    create_kpi_view_metric_tool = StructuredTool.from_function(
+        func=_create_kpi_view_metric,
+        name="create_kpi_view_metric",
+        description=(
+            "Create a KPI card on the user's KPIs & Alerts board after explicit user "
+            "confirmation. Flow: list_dashboards → get_dashboard_pivots (if hotel/branch) "
+            "→ get_kpi_metric_list → summarize → confirmed=true. Requires dashboard_id, "
+            "team_id, and at least one topic label or pivot filter."
+        ),
+        args_schema=CreateKpiViewMetricArgs,
+    )
+    kpi_tools = [
+        list_kpi_teams_tool,
+        get_kpi_metric_list_tool,
+        create_kpi_view_metric_tool,
+    ]
     # Discovery + metrics tools ground every Advisor tier in Pivony's existing
     # analysis outputs. list_reviews surfaces the user's own dashboard reviews
     # (capped on freemium). Raw-review semantic search (Qdrant sector RAG) is an
@@ -1363,7 +1602,7 @@ def _build_tools(
     ]
     if advisor_mode == MODE_ADVISOR:
         return base_tools
-    return [search_tool, *base_tools]
+    return [search_tool, *kpi_tools, *base_tools]
 
 
 def _to_langchain_messages(

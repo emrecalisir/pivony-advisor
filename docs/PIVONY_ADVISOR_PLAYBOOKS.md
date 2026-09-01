@@ -280,6 +280,28 @@ Tickets · CRM · Surveys · Call center · NPS · CSV upload · Capture widget 
 
 ---
 
+## SORU: Advisor ile KPI nasıl oluştururum?
+
+**Kısa cevap:** KPIs & Alerts sayfasında Pivony Advisor'ı açın; dashboard, pivot (otel/şube) ve kategori/topic seçerek onaylayın. Advisor Pro gerekir.
+
+**Ürün:** KPIs & Alerts (`/console/global_executive`)  
+**Plan:** Advisor Pro + KPI yazma izni
+
+### Adım 1 — KPI sayfasını aç
+
+1. `/console/global_executive` — team seçili olduğundan emin olun
+2. **Advisor ile KPI oluştur** (veya sağdaki Pivony Advisor paneli)
+
+### Adım 2 — Advisor akışı
+
+1. Dashboard seçin (`list_dashboards`)
+2. Otel/şube gerekiyorsa pivot çözün (`get_dashboard_pivots`, genelde `vendorName`)
+3. Kategori/topic listesini alın (`get_kpi_metric_list`)
+4. Özet gösterin; kullanıcı onayladıktan sonra `create_kpi_view_metric(..., confirmed=true)`
+5. KPI kartı board'da görünür (sayfayı yenilemek gerekebilir)
+
+---
+
 ## Hızlı rota indeksi
 
 | Ne yapmak istiyorum | Rota |

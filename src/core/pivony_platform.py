@@ -653,3 +653,63 @@ def fetch_stored_genai(
         user_id, dashboard_id, pivot_key, pivot_value, days, since=since, until=until
     )
     return _post_worker(f"{_worker_base()}/advisor/stored-genai", payload)
+
+
+def fetch_kpi_teams(user_id: Optional[str]) -> Optional[dict[str, Any]]:
+    """Writable KPI teams for the user (KPIs & Alerts board)."""
+    if not user_id:
+        logger.warning("fetch_kpi_teams called without user_id")
+        return None
+    return _post_worker(f"{_worker_base()}/advisor/kpi-teams", {"user_id": user_id})
+
+
+def fetch_kpi_metric_list(
+    user_id: Optional[str],
+    dashboard_ids: list[int],
+    *,
+    block_location: str = "Top",
+) -> Optional[dict[str, Any]]:
+    """Topic/metric labels available for KPI cards on the given dashboards."""
+    if not user_id:
+        logger.warning("fetch_kpi_metric_list called without user_id")
+        return None
+    if not dashboard_ids:
+        return {"error": "dashboard_ids_required"}
+    return _post_worker(
+        f"{_worker_base()}/advisor/metric-list",
+        {
+            "user_id": user_id,
+            "dashboard_ids": dashboard_ids,
+            "block_location": block_location,
+        },
+    )
+
+
+def create_kpi(
+    user_id: Optional[str],
+    *,
+    team: str,
+    dashboard_ids: list[int],
+    metric: Optional[list[str]] = None,
+    pivots: Optional[list[dict[str, str]]] = None,
+    pivot_filter: Optional[dict[str, list[str]]] = None,
+    operation: str = "sum",
+    mode: str = "combined",
+) -> Optional[dict[str, Any]]:
+    """Create Top-location KPI card(s) on the executive KPI board."""
+    if not user_id:
+        logger.warning("create_kpi called without user_id")
+        return None
+    payload: dict[str, Any] = {
+        "user_id": user_id,
+        "team": team,
+        "dashboard_ids": dashboard_ids,
+        "metric": metric or [],
+        "operation": operation or "sum",
+        "mode": mode or "combined",
+    }
+    if pivots:
+        payload["pivots"] = pivots
+    if pivot_filter:
+        payload["pivot_filter"] = pivot_filter
+    return _post_worker(f"{_worker_base()}/advisor/create-kpi", payload)

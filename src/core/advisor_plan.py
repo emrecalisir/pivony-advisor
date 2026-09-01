@@ -22,6 +22,9 @@ ADVISOR_PRO_ONLY_TOOLS = frozenset(
         "search_reviews",
         "analyze_root_cause_live",
         "get_pivots",
+        "list_kpi_teams",
+        "get_kpi_metric_list",
+        "create_kpi_view_metric",
     }
 )
 
