@@ -5,7 +5,11 @@ from pathlib import Path
 _PROMPTS_PATH = (
     Path(__file__).resolve().parents[1] / "src" / "core" / "prompts.py"
 )
+_PLATFORM_PATH = (
+    Path(__file__).resolve().parents[1] / "src" / "core" / "pivony_platform.py"
+)
 AGENT_TOOL_GUIDANCE = _PROMPTS_PATH.read_text(encoding="utf-8")
+PLATFORM_SRC = _PLATFORM_PATH.read_text(encoding="utf-8")
 
 
 def test_prompts_route_topic_complaint_to_topic_intent_tool():
@@ -42,3 +46,12 @@ def test_prompts_document_topic_daily_tools():
 def test_prompts_no_longer_claim_daily_sentiment_unavailable():
     assert "not yet available" not in AGENT_TOOL_GUIDANCE
     assert "get_topic_sentiment_daily" in AGENT_TOOL_GUIDANCE
+
+
+def test_dashboards_timeout_does_not_ask_for_date_range():
+    start = PLATFORM_SRC.index("DASHBOARDS_TIMEOUT_RESULT")
+    end = PLATFORM_SRC.index("def _worker_base")
+    block = PLATFORM_SRC[start:end].lower()
+    assert "tarih" not in block
+    assert "date range" not in block
+    assert "dashboard listesi" in block

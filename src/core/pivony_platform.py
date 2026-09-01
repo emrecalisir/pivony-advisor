@@ -39,6 +39,15 @@ WORKER_TIMEOUT_RESULT: dict[str, Any] = {
     "advisor_action": "ask_user_to_narrow_scope",
 }
 
+DASHBOARDS_TIMEOUT_RESULT: dict[str, Any] = {
+    "error": "timeout",
+    "message": (
+        "Dashboard listesi şu anda alınamadı. Lütfen tekrar deneyin ya da "
+        "kullanmak istediğiniz dashboard adını yazın."
+    ),
+    "advisor_action": "retry_list_dashboards",
+}
+
 
 def _worker_base() -> Optional[str]:
     """'.../worker' base derived from the configured advisor-metrics URL."""
@@ -47,7 +56,11 @@ def _worker_base() -> Optional[str]:
     return PIVONY_API_METRICS_URL.rsplit("/", 1)[0]
 
 
-def _post_worker(url: str, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
+def _post_worker(
+    url: str,
+    payload: dict[str, Any],
+    timeout_result: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
     """POST to a pivony-api worker endpoint with the shared secret. Returns the
     parsed JSON dict, or None on misconfiguration / network / HTTP / parse error."""
     if not url or not PIVONY_API_WORKER_SECRET:
@@ -71,7 +84,7 @@ def _post_worker(url: str, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
             "pivony platform request timed out (%s) after %ss",
             url, PIVONY_API_TIMEOUT_SEC,
         )
-        return dict(WORKER_TIMEOUT_RESULT)
+        return dict(timeout_result or WORKER_TIMEOUT_RESULT)
     except requests.exceptions.RequestException as exc:
         logger.error("pivony platform request failed (%s): %s", url, exc)
         return None
@@ -106,7 +119,13 @@ def fetch_dashboards(user_id: Optional[str]) -> Optional[dict[str, Any]]:
     if not user_id:
         logger.warning("fetch_dashboards called without user_id")
         return None
-    return _post_worker(f"{_worker_base()}/advisor/dashboards", {"user_id": user_id})
+    url = f"{_worker_base()}/advisor/dashboards"
+    payload = {"user_id": user_id}
+    result = _post_worker(url, payload, timeout_result=DASHBOARDS_TIMEOUT_RESULT)
+    if isinstance(result, dict) and result.get("error") == "timeout":
+        logger.info("fetch_dashboards retry after timeout user=%s", user_id)
+        result = _post_worker(url, payload, timeout_result=DASHBOARDS_TIMEOUT_RESULT)
+    return result
 
 
 def fetch_pivots(
