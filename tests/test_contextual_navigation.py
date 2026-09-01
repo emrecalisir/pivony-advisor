@@ -21,14 +21,20 @@ def _load_contextual_navigation():
     sys.modules.setdefault("core", core_pkg)
 
     chip_mod = _load_file_module("core/chip_capabilities.py", "_chip_caps_for_nav")
-    followups_mod = _load_file_module("core/followups.py", "_followups_for_nav")
-    guidance_mod = _load_file_module("core/guidance.py", "_guidance_for_nav")
     sys.modules["core.chip_capabilities"] = chip_mod
-    sys.modules["core.followups"] = followups_mod
-    sys.modules["core.guidance"] = guidance_mod
     core_pkg.chip_capabilities = chip_mod
+
+    followups_mod = _load_file_module("core/followups.py", "_followups_for_nav")
+    sys.modules["core.followups"] = followups_mod
     core_pkg.followups = followups_mod
+
+    guidance_mod = _load_file_module("core/guidance.py", "_guidance_for_nav")
+    sys.modules["core.guidance"] = guidance_mod
     core_pkg.guidance = guidance_mod
+
+    llm_mod = _load_file_module("core/llm_resilience.py", "_llm_resilience_for_nav")
+    sys.modules["core.llm_resilience"] = llm_mod
+    core_pkg.llm_resilience = llm_mod
 
     return _load_file_module(
         "core/contextual_navigation.py",
@@ -38,6 +44,8 @@ def _load_contextual_navigation():
 
 mod = _load_contextual_navigation()
 generate_contextual_navigation = mod.generate_contextual_navigation
+should_offer_navigation_chips = mod.should_offer_navigation_chips
+maybe_generate_contextual_navigation = mod.maybe_generate_contextual_navigation
 
 
 def test_refusal_uses_rule_based_fallback():
@@ -73,3 +81,41 @@ def test_vertex_failure_falls_back():
     )
     assert len(followups) == 3
     assert guidance
+
+
+def test_should_offer_skips_kpi_flow():
+    assert not should_offer_navigation_chips(
+        "kpi oluşturabilir misin",
+        "Hangi dashboard için KPI oluşturmak istersiniz?",
+    )
+
+
+def test_should_offer_skips_confirmation():
+    assert not should_offer_navigation_chips(
+        "evet",
+        "Survey dashboard, Voyage Torba ve Yüzme doğru mu — onaylıyor musunuz?",
+    )
+
+
+def test_should_offer_skips_single_dashboard_prompt():
+    assert not should_offer_navigation_chips(
+        "kaç yorum var",
+        "Hangi dashboard'u inceleyelim?",
+    )
+
+
+def test_should_offer_allows_substantive_data_answer():
+    assert should_offer_navigation_chips(
+        "nps nedir",
+        "Bu dönemde NPS 42. Pozitif duyarlılık %65.",
+    )
+
+
+def test_maybe_generate_skips_kpi_without_chips():
+    followups, guidance = maybe_generate_contextual_navigation(
+        "kpi oluştur",
+        "Hangi dashboard için KPI oluşturalım?",
+        use_vertex=False,
+    )
+    assert followups == []
+    assert guidance == ""

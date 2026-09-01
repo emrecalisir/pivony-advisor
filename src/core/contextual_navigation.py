@@ -16,6 +16,7 @@ from core.chip_capabilities import (
 )
 from core.followups import generate_followups as rule_based_followups
 from core.guidance import generate_contextual_guidance as template_guidance
+from core.llm_resilience import is_terminal_llm_user_message
 
 if TYPE_CHECKING:
     from langchain_google_genai import ChatGoogleGenerativeAI
@@ -105,16 +106,40 @@ Rules:
 - Write one short closing paragraph (guidance) that naturally offers those directions. Use **bold** markdown only for metric/topic names inside guidance.
 - If the Advisor could not answer (no data), suggest trying a different dashboard or a wider date range instead."""
 
-KPI_NAVIGATION_SYSTEM = f"""You are the Pivony Advisor follow-up assistant after a KPI CREATION request.
+_CONFIRMATION_MARKERS: tuple[str, ...] = (
+    "onaylıyor musun",
+    "onayliyor musun",
+    "onaylar mısın",
+    "onaylar misin",
+    "onaylıyor musunuz",
+    "doğru anladım",
+    "dogru anladim",
+    "emin olmak için",
+    "emin olmak icin",
+)
 
-{ADVISOR_CHIP_CAPABILITY_SUMMARY}
+_TIMEOUT_MARKERS: tuple[str, ...] = (
+    "zaman aşım",
+    "zaman asim",
+    "timeout",
+    "advisor_action",
+)
 
-Rules:
-- Match the user's language (Turkish by default).
-- The user asked to CREATE a KPI card on KPIs & Alerts. NEVER say KPI creation is unavailable — Advisor Pro can create KPIs via create_kpi_view_metric after confirmation.
-- Propose exactly 2 or 3 short follow-up QUESTIONS that advance the KPI setup flow: which dashboard, which hotel/pivot (if relevant), which topic/category, or asking the user to confirm the summary.
-- Do NOT pivot to unrelated analytics (NPS trend, general sentiment) unless the user clearly changed topic.
-- Write one short guidance paragraph that keeps the user in the KPI creation flow (e.g. pick dashboard, then pivot/topic, then confirm)."""
+_SINGLE_PROMPT_MARKERS: tuple[str, ...] = (
+    "hangi dashboard",
+    "hangi dönem",
+    "hangi donem",
+    "hangi metrik",
+    "hangi otel",
+    "hangi pivot",
+    "hangi konu",
+    "belirtir misiniz",
+    "belirtir misin",
+    "seçer misiniz",
+    "secer misiniz",
+    "seçelim",
+    "secelim",
+)
 
 
 def _is_kpi_creation_turn(question: str, answer: str) -> bool:
@@ -127,6 +152,74 @@ def _is_kpi_creation_turn(question: str, answer: str) -> bool:
     return "kpi" in q and any(
         token in a for token in ("dashboard", "hangi dashboard", "oluştur", "olustur")
     )
+
+
+def _conversation_in_kpi_flow(
+    question: str,
+    answer: str,
+    chat_history: str | None,
+) -> bool:
+    if _is_kpi_creation_turn(question, answer):
+        return True
+    hist = _normalize(chat_history or "")
+    if not hist:
+        return False
+    if is_kpi_creation_intent(hist):
+        return True
+    return "kpi" in hist and any(
+        token in hist
+        for token in (
+            "oluştur",
+            "olustur",
+            "metrik",
+            "onay",
+            "dashboard",
+            "pivot",
+            "kategori",
+        )
+    )
+
+
+def _assistant_single_clear_prompt(answer: str) -> bool:
+    """True when the reply is one short CTA — chips would duplicate it."""
+    text = (answer or "").strip()
+    if not text or len(text) > 360 or "?" not in text:
+        return False
+    if text.count("?") > 2:
+        return False
+    lower = _normalize(text)
+    return any(marker in lower for marker in _SINGLE_PROMPT_MARKERS)
+
+
+def should_offer_navigation_chips(
+    question: str,
+    answer: str,
+    *,
+    chat_history: str | None = None,
+    dashboard_picker: dict | None = None,
+    period_picker: dict | None = None,
+) -> bool:
+    """
+    Decide whether this turn should show suggested follow-up chips + guidance.
+
+    Chips are optional navigation — skip when the UI or assistant reply already
+    provides a clear next step (picker, KPI wizard, confirmation, errors).
+    """
+    if dashboard_picker or period_picker:
+        return False
+    if is_terminal_llm_user_message(answer):
+        return False
+
+    answer_norm = _normalize(answer)
+    if any(marker in answer_norm for marker in _TIMEOUT_MARKERS):
+        return False
+    if _conversation_in_kpi_flow(question, answer, chat_history):
+        return False
+    if any(marker in answer_norm for marker in _CONFIRMATION_MARKERS):
+        return False
+    if _assistant_single_clear_prompt(answer):
+        return False
+    return True
 
 
 class ContextualNavigationResult(BaseModel):
@@ -311,33 +404,6 @@ def generate_contextual_navigation(
     if _is_conversational_turn(question, answer):
         return _starter_navigation(question, answer, llm=llm, use_vertex=use_vertex)
 
-    if _is_kpi_creation_turn(question, answer):
-        if use_vertex and llm is not None:
-            try:
-                return _vertex_navigation(
-                    system=KPI_NAVIGATION_SYSTEM,
-                    question=question,
-                    answer=answer,
-                    chat_history=chat_history,
-                    context_hint=context_hint,
-                    llm=llm,
-                )
-            except Exception as exc:
-                logger.warning("Vertex KPI navigation failed, using fallback: %s", exc)
-        kpi_followups = sanitize_chip_questions(
-            [
-                "Hangi dashboard için KPI oluşturalım?",
-                "Hangi otel veya pivot filtresi kullanılsın?",
-                "Hangi konu/kategori KPI olarak eklensin?",
-            ],
-            user_question=question,
-            limit=3,
-        )
-        return kpi_followups, (
-            "KPI oluşturmaya devam edelim — önce dashboard'u, ardından gerekirse pivot "
-            "ve konuyu netleştirip onayını aldıktan sonra kartı ekleyebilirim."
-        )
-
     if _is_refusal(answer):
         return _fallback_navigation(question, answer, context_hint=context_hint)
 
@@ -356,3 +422,38 @@ def generate_contextual_navigation(
     except Exception as exc:
         logger.warning("Vertex contextual navigation failed, using fallback: %s", exc)
         return _fallback_navigation(question, answer, context_hint=context_hint)
+
+
+def maybe_generate_contextual_navigation(
+    question: str,
+    answer: str,
+    *,
+    chat_history: str | None = None,
+    context_hint: str | None = None,
+    llm: ChatGoogleGenerativeAI | None = None,
+    use_vertex: bool = True,
+    dashboard_picker: dict | None = None,
+    period_picker: dict | None = None,
+) -> tuple[list[str], str]:
+    """Generate chips only when they add value for this turn."""
+    if not should_offer_navigation_chips(
+        question,
+        answer,
+        chat_history=chat_history,
+        dashboard_picker=dashboard_picker,
+        period_picker=period_picker,
+    ):
+        logger.info(
+            "Navigation chips skipped (question=%r answer_len=%s)",
+            (question or "")[:80],
+            len(answer or ""),
+        )
+        return [], ""
+    return generate_contextual_navigation(
+        question,
+        answer,
+        chat_history=chat_history,
+        context_hint=context_hint,
+        llm=llm,
+        use_vertex=use_vertex,
+    )

@@ -34,13 +34,12 @@ from core.config import (
 from core.llm_resilience import (
     GENERIC_LLM_ERROR_MESSAGE,
     LlmTurnFailed,
-    is_terminal_llm_user_message,
     make_thinking_status,
     user_message_for_llm_error,
 )
 from core.conversation import extract_turns, prepare_conversational_input
 from core.agent_stream import stream_advisor_agent, stream_simple_completion
-from core.contextual_navigation import generate_contextual_navigation
+from core.contextual_navigation import maybe_generate_contextual_navigation
 from core.logging_config import get_advisor_logger, log_conversation, setup_logging
 from core.rag import (
     build_embeddings,
@@ -377,17 +376,16 @@ async def _stream_chat_events(
             {"type": "content", "delta": answer, "replace": True}
         )
 
-    if dashboard_picker or period_picker or is_terminal_llm_user_message(answer):
-        followups, guidance = [], ""
-    else:
-        followups, guidance = generate_contextual_navigation(
-            chat_input.get("retrieval_query") or chat_input["question"],
-            answer,
-            chat_history=chat_input.get("chat_history"),
-            context_hint=api_system,
-            llm=llm,
-            use_vertex=USE_VERTEX_CONTEXTUAL_NAVIGATION,
-        )
+    followups, guidance = maybe_generate_contextual_navigation(
+        chat_input.get("retrieval_query") or chat_input["question"],
+        answer,
+        chat_history=chat_input.get("chat_history"),
+        context_hint=api_system,
+        llm=llm,
+        use_vertex=USE_VERTEX_CONTEXTUAL_NAVIGATION,
+        dashboard_picker=dashboard_picker,
+        period_picker=period_picker,
+    )
     log_conversation(
         user_id=user_id,
         user_email=user_email,
@@ -494,17 +492,16 @@ async def chat_completions(
         else:
             chain = _get_chain(sector, api_system)
             answer = chain.invoke(chat_input)
-        if dashboard_picker or period_picker:
-            followups, guidance = [], ""
-        else:
-            followups, guidance = generate_contextual_navigation(
-                chat_input.get("retrieval_query") or chat_input["question"],
-                answer,
-                chat_history=chat_input.get("chat_history"),
-                context_hint=api_system,
-                llm=llm,
-                use_vertex=USE_VERTEX_CONTEXTUAL_NAVIGATION,
-            )
+        followups, guidance = maybe_generate_contextual_navigation(
+            chat_input.get("retrieval_query") or chat_input["question"],
+            answer,
+            chat_history=chat_input.get("chat_history"),
+            context_hint=api_system,
+            llm=llm,
+            use_vertex=USE_VERTEX_CONTEXTUAL_NAVIGATION,
+            dashboard_picker=dashboard_picker,
+            period_picker=period_picker,
+        )
         log_conversation(
             user_id=user_id,
             user_email=user_email,
@@ -551,7 +548,7 @@ async def advisor_query(
     try:
         answer = invoke_advisor(request.question, sector_slug=sector)
         _, _, llm = _components()
-        followups, guidance = generate_contextual_navigation(
+        followups, guidance = maybe_generate_contextual_navigation(
             request.question,
             answer,
             llm=llm,
