@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from core.chip_capabilities import (
     ADVISOR_CHIP_CAPABILITY_SUMMARY,
+    is_kpi_creation_intent,
     sanitize_chip_questions,
 )
 from core.followups import generate_followups as rule_based_followups
@@ -103,6 +104,29 @@ Rules:
 - Do not repeat the user's exact question and do not invent metrics outside the worker tool capabilities above.
 - Write one short closing paragraph (guidance) that naturally offers those directions. Use **bold** markdown only for metric/topic names inside guidance.
 - If the Advisor could not answer (no data), suggest trying a different dashboard or a wider date range instead."""
+
+KPI_NAVIGATION_SYSTEM = f"""You are the Pivony Advisor follow-up assistant after a KPI CREATION request.
+
+{ADVISOR_CHIP_CAPABILITY_SUMMARY}
+
+Rules:
+- Match the user's language (Turkish by default).
+- The user asked to CREATE a KPI card on KPIs & Alerts. NEVER say KPI creation is unavailable — Advisor Pro can create KPIs via create_kpi_view_metric after confirmation.
+- Propose exactly 2 or 3 short follow-up QUESTIONS that advance the KPI setup flow: which dashboard, which hotel/pivot (if relevant), which topic/category, or asking the user to confirm the summary.
+- Do NOT pivot to unrelated analytics (NPS trend, general sentiment) unless the user clearly changed topic.
+- Write one short guidance paragraph that keeps the user in the KPI creation flow (e.g. pick dashboard, then pivot/topic, then confirm)."""
+
+
+def _is_kpi_creation_turn(question: str, answer: str) -> bool:
+    q = _normalize(question)
+    a = _normalize(answer)
+    if is_kpi_creation_intent(q):
+        return True
+    if is_kpi_creation_intent(a):
+        return True
+    return "kpi" in q and any(
+        token in a for token in ("dashboard", "hangi dashboard", "oluştur", "olustur")
+    )
 
 
 class ContextualNavigationResult(BaseModel):
@@ -286,6 +310,33 @@ def generate_contextual_navigation(
     """
     if _is_conversational_turn(question, answer):
         return _starter_navigation(question, answer, llm=llm, use_vertex=use_vertex)
+
+    if _is_kpi_creation_turn(question, answer):
+        if use_vertex and llm is not None:
+            try:
+                return _vertex_navigation(
+                    system=KPI_NAVIGATION_SYSTEM,
+                    question=question,
+                    answer=answer,
+                    chat_history=chat_history,
+                    context_hint=context_hint,
+                    llm=llm,
+                )
+            except Exception as exc:
+                logger.warning("Vertex KPI navigation failed, using fallback: %s", exc)
+        kpi_followups = sanitize_chip_questions(
+            [
+                "Hangi dashboard için KPI oluşturalım?",
+                "Hangi otel veya pivot filtresi kullanılsın?",
+                "Hangi konu/kategori KPI olarak eklensin?",
+            ],
+            user_question=question,
+            limit=3,
+        )
+        return kpi_followups, (
+            "KPI oluşturmaya devam edelim — önce dashboard'u, ardından gerekirse pivot "
+            "ve konuyu netleştirip onayını aldıktan sonra kartı ekleyebilirim."
+        )
 
     if _is_refusal(answer):
         return _fallback_navigation(question, answer, context_hint=context_hint)

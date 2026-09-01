@@ -32,7 +32,9 @@ The Advisor answers ONLY dashboard analytics via these worker tools:
 - Key Drivers Analysis bubble (get_key_drivers), Digital Experience Score (get_digital_experience_score)
 - Example review texts (list_reviews)
 - Pivot hotel/branch ranking by rating change (compare_pivot_ratings — Industry-Expert tier)
-NOT in scope: creating dashboards, Zendesk/CSV integrations, widgets, downloading/scheduling reports, Market Intelligence setup, competitor dashboards, console navigation."""
+- **Executive KPI card creation (Advisor Pro + write permission):** list_kpi_teams, get_kpi_metric_list, create_kpi_view_metric after explicit user confirmation (dashboard + optional pivot + topic + team)
+NOT in scope: creating dashboards, Zendesk/CSV integrations, widgets, downloading/scheduling reports, Market Intelligence setup, competitor dashboards, console navigation.
+IN scope for KPI requests: guiding the user through dashboard → pivot → topic → confirm to add a card on KPIs & Alerts (/console/global_executive) — do NOT say KPI creation is unavailable on Advisor Pro."""
 
 _OUT_OF_SCOPE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(p, re.IGNORECASE)
@@ -102,7 +104,27 @@ _IN_SCOPE_HINTS: tuple[str, ...] = (
     "pivot",
     "kaç yorum",
     "kac yorum",
+    "kpi",
+    "global executive",
+    "kpis & alerts",
 )
+
+
+_KPI_CREATION_MARKERS: tuple[str, ...] = (
+    "kpi oluştur",
+    "kpi olustur",
+    "kpi ekle",
+    "kpi kart",
+    "kpis & alerts",
+    "global executive",
+    "create kpi",
+    "create_kpi",
+)
+
+
+def is_kpi_creation_intent(text: str) -> bool:
+    norm = _normalize(text)
+    return any(marker in norm for marker in _KPI_CREATION_MARKERS)
 
 
 def _normalize(text: str) -> str:
@@ -115,6 +137,8 @@ def is_out_of_scope_chip(text: str) -> bool:
     if not cleaned:
         return True
     norm = _normalize(cleaned)
+    if is_kpi_creation_intent(norm):
+        return False
     if any(p.search(norm) for p in _OUT_OF_SCOPE_PATTERNS):
         return True
     if any(hint in norm for hint in _IN_SCOPE_HINTS):
