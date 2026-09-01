@@ -365,7 +365,7 @@ def stream_advisor_agent(
     tool_map = {tool.name: tool for tool in tools}
     genai_client = _get_genai_client()
 
-    scope_hint = hard_context_prompt_block(_hard)
+    scope_hint = hard_context_prompt_block(_hard, page_context)
     system_prompt = build_agent_system_prompt(
         slug, extra_system_prompt, advisor_mode=advisor_mode
     )

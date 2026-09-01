@@ -685,6 +685,29 @@ def fetch_kpi_metric_list(
     )
 
 
+def fetch_kpi_list(
+    user_id: Optional[str],
+    team_id: str,
+    *,
+    pivot_query: Optional[str] = None,
+    location: str = "Top",
+) -> Optional[dict[str, Any]]:
+    """Existing KPI cards on the user's KPIs & Alerts board."""
+    if not user_id:
+        logger.warning("fetch_kpi_list called without user_id")
+        return None
+    if not team_id or not str(team_id).strip():
+        return {"error": "team_required"}
+    payload: dict[str, Any] = {
+        "user_id": user_id,
+        "team": str(team_id).strip(),
+        "location": location or "Top",
+    }
+    if pivot_query and str(pivot_query).strip():
+        payload["pivot_query"] = str(pivot_query).strip()
+    return _post_worker(f"{_worker_base()}/advisor/kpi-list", payload)
+
+
 def create_kpi(
     user_id: Optional[str],
     *,

@@ -32,7 +32,7 @@ The Advisor answers ONLY dashboard analytics via these worker tools:
 - Key Drivers Analysis bubble (get_key_drivers), Digital Experience Score (get_digital_experience_score)
 - Example review texts (list_reviews)
 - Pivot hotel/branch ranking by rating change (compare_pivot_ratings — Industry-Expert tier)
-- **Executive KPI card creation (Advisor Pro + write permission):** list_kpi_teams, get_kpi_metric_list, create_kpi_view_metric after explicit user confirmation (dashboard + optional pivot + topic + team)
+- **Executive KPI card creation (Advisor Pro + write permission):** list_kpi_teams, list_kpi_cards, get_kpi_metric_list, create_kpi_view_metric after explicit user confirmation (dashboard + optional pivot + topic + team)
 NOT in scope: creating dashboards, Zendesk/CSV integrations, widgets, downloading/scheduling reports, Market Intelligence setup, competitor dashboards, console navigation.
 IN scope for KPI requests: guiding the user through dashboard → pivot → topic → confirm to add a card on KPIs & Alerts (/console/global_executive) — do NOT say KPI creation is unavailable on Advisor Pro."""
 

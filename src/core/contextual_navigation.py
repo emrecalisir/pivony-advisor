@@ -191,6 +191,27 @@ def _assistant_single_clear_prompt(answer: str) -> bool:
     return any(marker in lower for marker in _SINGLE_PROMPT_MARKERS)
 
 
+def _is_kpi_inventory_question(question: str) -> bool:
+    q = _normalize(question)
+    if not q:
+        return False
+    if "kpi" not in q:
+        return False
+    return any(
+        token in q
+        for token in (
+            "hangi kpi",
+            "kpilerim",
+            "kpi'ım",
+            "kpim",
+            "kpi var",
+            "which kpi",
+            "my kpi",
+            "list kpi",
+        )
+    )
+
+
 def should_offer_navigation_chips(
     question: str,
     answer: str,
@@ -214,6 +235,8 @@ def should_offer_navigation_chips(
     if any(marker in answer_norm for marker in _TIMEOUT_MARKERS):
         return False
     if _conversation_in_kpi_flow(question, answer, chat_history):
+        return False
+    if _is_kpi_inventory_question(question):
         return False
     if any(marker in answer_norm for marker in _CONFIRMATION_MARKERS):
         return False

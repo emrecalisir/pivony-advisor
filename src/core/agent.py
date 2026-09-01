@@ -53,6 +53,7 @@ from core.pivony_platform import (
     fetch_hotterms,
     fetch_key_drivers,
     fetch_kpi_metric_list,
+    fetch_kpi_list,
     fetch_kpi_teams,
     fetch_metrics,
     fetch_pivots,
@@ -320,6 +321,31 @@ class ListKpiTeamsArgs(BaseModel):
     """list_kpi_teams takes no parameters; ignore spurious LLM-invented fields."""
 
     model_config = ConfigDict(extra="ignore")
+
+
+class ListKpiCardsArgs(BaseModel):
+    """List existing KPI cards on the KPIs & Alerts board."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    team_id: str | None = Field(
+        default=None,
+        description=(
+            "KPI board team id from page context kpiTeamId or list_kpi_teams. "
+            "Omit when the user is already on a KPI board."
+        ),
+    )
+    pivot_query: str | None = Field(
+        default=None,
+        description=(
+            "Optional hotel/pivot/name filter, e.g. 'voyage torba' to list KPIs scoped "
+            "to that pivot."
+        ),
+    )
+    location: str = Field(
+        default="Top",
+        description="KPI board section: Top (default card row) or bottom/bubbles.",
+    )
 
 
 class GetKpiMetricListArgs(BaseModel):
@@ -1134,6 +1160,59 @@ def _build_tools(
             )
         return json.dumps(data, ensure_ascii=False)
 
+    def _list_kpi_cards(
+        team_id: str | None = None,
+        pivot_query: str | None = None,
+        location: str = "Top",
+        **_kwargs: Any,
+    ) -> str:
+        resolved_team = (
+            (team_id or _pc.get("kpiTeamId") or _pc.get("kpi_team_id") or "")
+            .strip()
+            or None
+        )
+        if not resolved_team:
+            teams_payload = fetch_kpi_teams(user_id)
+            teams = (
+                teams_payload.get("teams")
+                if isinstance(teams_payload, dict)
+                else None
+            )
+            default_team = (
+                teams_payload.get("default_team_id")
+                if isinstance(teams_payload, dict)
+                else None
+            )
+            if default_team:
+                resolved_team = str(default_team)
+            elif teams and len(teams) == 1:
+                resolved_team = str(teams[0].get("team_id"))
+            else:
+                return json.dumps(
+                    {
+                        "error": "team_required",
+                        "teams": teams or [],
+                        "message": (
+                            "Hangi KPI board (team) listelensin? list_kpi_teams ile "
+                            "seçenekleri göster veya team_id ver."
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
+
+        data = fetch_kpi_list(
+            user_id,
+            str(resolved_team),
+            pivot_query=pivot_query,
+            location=location or "Top",
+        )
+        if data is None:
+            return json.dumps(
+                {"error": "KPI listesi servisi şu anda kullanılamıyor."},
+                ensure_ascii=False,
+            )
+        return json.dumps(data, ensure_ascii=False)
+
     def _get_kpi_metric_list(dashboard_id: int) -> str:
         resolved = _require_locked_dashboard(dashboard_id)
         if isinstance(resolved, str):
@@ -1545,6 +1624,16 @@ def _build_tools(
         ),
         args_schema=ListKpiTeamsArgs,
     )
+    list_kpi_cards_tool = StructuredTool.from_function(
+        func=_list_kpi_cards,
+        name="list_kpi_cards",
+        description=(
+            "List EXISTING KPI cards already on the user's KPIs & Alerts board "
+            "(name, metrics/topics, pivots, dashboards). Use for 'hangi KPI'larım var', "
+            "'which KPIs do I have', or pivot-scoped inventory — NOT list_dashboards."
+        ),
+        args_schema=ListKpiCardsArgs,
+    )
     get_kpi_metric_list_tool = StructuredTool.from_function(
         func=_get_kpi_metric_list,
         name="get_kpi_metric_list",
@@ -1567,6 +1656,7 @@ def _build_tools(
     )
     kpi_tools = [
         list_kpi_teams_tool,
+        list_kpi_cards_tool,
         get_kpi_metric_list_tool,
         create_kpi_view_metric_tool,
     ]
@@ -1876,7 +1966,7 @@ def run_advisor_agent(
     tool_map = {tool.name: tool for tool in tools}
     llm_with_tools = llm.bind_tools(tools)
 
-    scope_hint = hard_context_prompt_block(_hard)
+    scope_hint = hard_context_prompt_block(_hard, page_context)
     system_prompt = build_agent_system_prompt(slug, extra_system_prompt, advisor_mode=mode)
     if scope_hint:
         system_prompt = f"{system_prompt}\n\n{scope_hint}"

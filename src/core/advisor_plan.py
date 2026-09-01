@@ -23,6 +23,7 @@ ADVISOR_PRO_ONLY_TOOLS = frozenset(
         "analyze_root_cause_live",
         "get_pivots",
         "list_kpi_teams",
+        "list_kpi_cards",
         "get_kpi_metric_list",
         "create_kpi_view_metric",
     }

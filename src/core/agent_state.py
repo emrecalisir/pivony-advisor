@@ -313,15 +313,39 @@ def resolve_hard_agent_state(
     return HardAgentState(since=since_pc, until=until_pc, days=days_pc, source="none")
 
 
-def hard_context_prompt_block(state: HardAgentState) -> str:
+def hard_context_prompt_block(state: HardAgentState, page_context: dict | None = None) -> str:
     """Stronger than scope_prompt_block — marks hard inputs the model must not override."""
+    pc = page_context if isinstance(page_context, dict) else {}
+    kpi_parts: list[str] = []
+    if (
+        pc.get("page") == "global_executive"
+        or pc.get("is_kpi_page")
+        or pc.get("kpiTeamId")
+        or pc.get("kpi_team_id")
+    ):
+        kpi_parts.append(
+            "HARD CONTEXT (authoritative): User is on KPIs & Alerts (/console/global_executive) "
+            "viewing their executive KPI board — NOT a single analytics dashboard."
+        )
+        kpi_team = pc.get("kpiTeamId") or pc.get("kpi_team_id")
+        if kpi_team:
+            kpi_parts.append(
+                f"kpiTeamId={kpi_team} — for existing KPI inventory call "
+                f"list_kpi_cards(team_id='{kpi_team}', pivot_query=...) ; do NOT list_dashboards."
+            )
+        else:
+            kpi_parts.append(
+                "For 'hangi KPI'larım var' call list_kpi_cards — do NOT list_dashboards."
+            )
+
     if state.source == "fresh_session":
-        return (
+        base = (
             "HARD CONTEXT (authoritative): This is a brand-new chat session with no "
             "prior dashboard, topic, or analytics scope. Do NOT reuse context from "
             "earlier sessions. If the user asks a data question, call list_dashboards "
             "first unless they pick a dashboard in this turn."
         )
+        return " ".join(kpi_parts + [base]) if kpi_parts else base
     base = scope_prompt_block(state.as_established())
     if state.dashboard_locked and state.dashboard_id is not None:
         parts = [
@@ -345,7 +369,9 @@ def hard_context_prompt_block(state: HardAgentState) -> str:
             "explicitly asks to list other dashboards or change the current dashboard, "
             "you MAY call list_dashboards to assist them."
         )
-        return " ".join(parts)
+        base = " ".join(parts)
+        return " ".join(kpi_parts + [base]) if kpi_parts else base
     if base:
-        return f"HARD CONTEXT (authoritative): {base}"
-    return ""
+        base = f"HARD CONTEXT (authoritative): {base}"
+        return " ".join(kpi_parts + [base]) if kpi_parts else base
+    return " ".join(kpi_parts) if kpi_parts else ""
