@@ -298,7 +298,8 @@ Tickets · CRM · Surveys · Call center · NPS · CSV upload · Capture widget 
 2. Otel/şube gerekiyorsa pivot çözün (`get_dashboard_pivots`, genelde `vendorName`)
 3. Kategori/topic listesini alın (`get_kpi_metric_list`)
 4. Özet gösterin; kullanıcı onayladıktan sonra `create_kpi_view_metric(..., confirmed=true)`
-5. KPI kartı board'da görünür (sayfayı yenilemek gerekebilir)
+5. Parent kategori (ör. F&B) **tek karttır**; alt konular aynı kartta kapsanır (oklarla gezilir). Advisor çocuklar için ayrı kart açmaz. Kullanıcıya `subtopic_labels` listesini söyleyin.
+6. KPI kartı board'da görünür (sayfayı yenilemek gerekebilir)
 
 ---
 

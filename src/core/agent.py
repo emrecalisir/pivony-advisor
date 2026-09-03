@@ -90,6 +90,38 @@ from core.tier_gating import industry_expert_gate
 
 logger = logging.getLogger(__name__)
 
+
+def _kpi_create_user_message(data: Any) -> str:
+    base = (
+        "KPI oluşturuldu. KPIs & Alerts sayfasında görünecek; "
+        "sayfayı yenilemeleri gerekebilir."
+    )
+    if not isinstance(data, dict):
+        return base
+    labels = [
+        str(label).strip()
+        for label in (data.get("subtopic_labels") or [])
+        if str(label).strip()
+    ]
+    if not labels and isinstance(data.get("subtopics"), list):
+        labels = [
+            str(row.get("label") or "").strip()
+            for row in data["subtopics"]
+            if isinstance(row, dict) and str(row.get("label") or "").strip()
+        ]
+    count = int(data.get("subtopic_count") or 0) or len(labels)
+    if not count:
+        return base
+    names = ", ".join(labels[:12])
+    if len(labels) > 12:
+        names += "…"
+    return (
+        f"{base} Tek kart: {count} alt konu da kapsandı ({names}). "
+        "Kullanıcıya kartta oklarla gezilebileceğini söyle. "
+        "Çocuklar için ayrı kart açılmadı, kota artmadı."
+    )
+
+
 # Advisor product tiers (forwarded from pivony-api as pivony_advisor_mode).
 #   industry_expert : paid — raw-review RAG (Qdrant) + aggregate metrics
 #   advisor         : freemium — aggregate metrics only (no raw-review indexing)
@@ -1366,10 +1398,7 @@ def _build_tools(
         return json.dumps(
             {
                 **(data if isinstance(data, dict) else {}),
-                "message": (
-                    "KPI oluşturuldu. KPIs & Alerts sayfasında (global executive) "
-                    "görünecek; sayfayı yenilemeleri gerekebilir."
-                ),
+                "message": _kpi_create_user_message(data),
             },
             ensure_ascii=False,
         )
@@ -1691,7 +1720,9 @@ def _build_tools(
             "Create a KPI card on the user's KPIs & Alerts board after explicit user "
             "confirmation. Flow: list_dashboards → get_dashboard_pivots (if hotel/branch) "
             "→ get_kpi_metric_list → summarize → confirmed=true. Requires dashboard_id, "
-            "team_id, and at least one topic label or pivot filter."
+            "team_id, and at least one topic label or pivot filter. Parent topics "
+            "(e.g. F&B) create ONE card that already includes all child topics — "
+            "do not create extra cards for subcategories; tell the user the child names."
         ),
         args_schema=CreateKpiViewMetricArgs,
     )
