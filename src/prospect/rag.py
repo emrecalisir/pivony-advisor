@@ -17,7 +17,7 @@ from prospect.qdrant_store import search_bot_knowledge
 
 DEFAULT_SYSTEM = (
     "You are a helpful site assistant. Answer using ONLY the provided knowledge context. "
-    "Knowledge may be in any language — respond in the visitor's latest message language. "
+    "Knowledge may be in any language — respond in the conversation language. "
     "Be concise and friendly."
 )
 
@@ -165,10 +165,11 @@ def answer_visitor_question(
     context = _format_context(sources)
     history = _format_history(chat_history)
 
-    page_locale = normalize_page_locale(language)
+    conversation_locale = normalize_page_locale(language)
     system = augment_prospect_system_prompt(
         (system_prompt or "").strip() or DEFAULT_SYSTEM,
-        page_locale=page_locale,
+        page_locale=conversation_locale,
+        conversation_locale=conversation_locale,
     )
 
     llm = ChatGoogleGenerativeAI(

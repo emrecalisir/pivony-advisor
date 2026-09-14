@@ -34,7 +34,7 @@ class ProspectIngestRequest(BaseModel):
     org_id: str = Field(..., min_length=1)
     bot_id: int
     bot_slug: str = ""
-    language: str = "tr"
+    language: str = "en"
     faq_items: list[dict[str, Any]] = Field(default_factory=list)
     pdf_documents: list[dict[str, Any]] = Field(default_factory=list)
     website_chunks: list[dict[str, Any]] = Field(default_factory=list)
@@ -46,7 +46,7 @@ class ProspectChatRequest(BaseModel):
     bot_id: int
     message: str = Field(..., min_length=1)
     system_prompt: str = ""
-    language: str = "tr"
+    language: str = "en"
     chat_history: list[dict[str, str]] = Field(default_factory=list)
 
 
