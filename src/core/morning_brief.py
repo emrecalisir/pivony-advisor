@@ -15,9 +15,12 @@ BRIEF_TOPICS = ("F&B", "Oda", "Hizmet")
 BRIEF_VENDORS = ("VOYAGE TORBA", "MAXX ROYAL BODRUM")
 VENDOR_PIVOT_KEY = "vendorName"
 BASELINE_DAYS = 7
+# pivony-api hosts run a single uWSGI worker each; wider fan-out queues past the 60s timeout.
+FETCH_CONCURRENCY = 2
+UNAVAILABLE = {"status": "unavailable"}
 
 MORNING_BRIEF_INSTRUCTIONS = """MORNING BRIEF MODE
-The JSON below was fetched server-side for dashboard "{dashboard}" and is the only data you may use. `day` is one full calendar day; `prior_day` is the day before; `baseline_7d` is the {baseline_days} days before `day`. Do not ask for a dashboard or period, do not mention tools, APIs or timeouts, and never write a number that is not in the JSON. null means no data: write "—", never 0.
+The JSON below was fetched server-side for dashboard "{dashboard}" and is the only data you may use. `day` is one full calendar day; `prior_day` is the day before; `baseline_7d` is the {baseline_days} days before `day`. Do not ask for a dashboard or period, do not mention tools, APIs or timeouts, and never write a number that is not in the JSON. null means no data: write "—", never 0. {{"status": "unavailable"}} means the data could not be loaded: write "—" and never describe it as zero or no reviews. If `totals.day` is unavailable, reply with only one sentence saying yesterday's data could not be loaded and to try again in a few minutes.
 
 Write the whole brief in the language the user's request specifies. Keep topic and hotel names exactly as they appear in the JSON (do not translate "F&B").
 
@@ -38,9 +41,13 @@ def is_morning_brief(page_context: dict | None) -> bool:
     return isinstance(page_context, dict) and page_context.get("page") == MORNING_BRIEF_PAGE
 
 
+def _loaded(metrics: dict | None) -> bool:
+    return isinstance(metrics, dict) and not metrics.get("error")
+
+
 def _slice(metrics: dict | None) -> dict[str, Any]:
-    if not isinstance(metrics, dict) or metrics.get("error"):
-        return {"reviews": None, "negative_pct": None, "positive_pct": None}
+    if not _loaded(metrics):
+        return dict(UNAVAILABLE)
     sentiment = metrics.get("sentiment") or {}
     return {
         "reviews": metrics.get("review_count"),
@@ -50,8 +57,9 @@ def _slice(metrics: dict | None) -> dict[str, Any]:
 
 
 def _topic(metrics: dict | None, name: str) -> dict[str, Any]:
-    rows = metrics.get("topics") if isinstance(metrics, dict) else None
-    for row in rows or []:
+    if not _loaded(metrics):
+        return dict(UNAVAILABLE)
+    for row in metrics.get("topics") or []:
         if isinstance(row, dict) and row.get("topic") == name:
             return {"reviews": row.get("count"), "negative_pct": row.get("negative_pct")}
     return {"reviews": None, "negative_pct": None}
@@ -82,17 +90,21 @@ def fetch_morning_brief_data(user_id: str, dashboard_id: int, day: str) -> dict[
             until=until,
         )
 
-    with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+    with ThreadPoolExecutor(max_workers=FETCH_CONCURRENCY) as pool:
         results = dict(zip(jobs, pool.map(_run, jobs.values())))
+    for key, value in results.items():
+        if not _loaded(value):
+            results[key] = _run(jobs[key])
 
     places = []
     for vendor in BRIEF_VENDORS:
         today = results[("day", vendor)]
-        complaints = today.get("complaint_topics") if isinstance(today, dict) else None
+        complaints = today.get("complaint_topics") if _loaded(today) else None
+        baseline = _slice(results[("baseline_7d", vendor)])
         places.append({
             "vendor": vendor,
             "day": _slice(today),
-            "baseline_7d": {"reviews": _slice(results[("baseline_7d", vendor)])["reviews"]},
+            "baseline_7d": {"reviews": baseline["reviews"]} if "reviews" in baseline else baseline,
             "top_complaint_topic": (complaints[0] if complaints else None),
         })
 

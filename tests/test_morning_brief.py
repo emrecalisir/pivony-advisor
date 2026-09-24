@@ -35,3 +35,24 @@ def test_fetch_morning_brief_data_windows_topics_and_places(monkeypatch):
     assert torba["day"]["reviews"] == 0
     assert torba["baseline_7d"] == {"reviews": 12}
     assert torba["top_complaint_topic"] is None
+
+
+def test_failed_fetch_is_retried_then_marked_unavailable(monkeypatch):
+    attempts = {}
+
+    def flaky_fetch_metrics(user_id, dashboard_id, pivot_key, pivot_value, since, until):
+        key = (pivot_value, since, until)
+        attempts[key] = attempts.get(key, 0) + 1
+        if key == (None, "2026-09-23", "2026-09-23") and attempts[key] == 1:
+            return None
+        if key == (None, "2026-09-22", "2026-09-22"):
+            return None
+        return {"review_count": 5, "sentiment": {}, "topics": []}
+
+    monkeypatch.setattr(morning_brief, "fetch_metrics", flaky_fetch_metrics)
+    data = fetch_morning_brief_data("uid", 6208, "2026-09-23")
+
+    assert data["totals"]["day"]["reviews"] == 5
+    assert data["totals"]["prior_day"] == {"status": "unavailable"}
+    assert data["topics"]["F&B"]["prior_day"] == {"status": "unavailable"}
+    assert attempts[(None, "2026-09-22", "2026-09-22")] == 2
