@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
+from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 
 from core.agent import DEFAULT_ADVISOR_MODE, run_advisor_agent
 from core.agent_state import resolve_hard_agent_state
@@ -350,7 +351,8 @@ async def _stream_chat_events(
         )
 
     try:
-        for event in stream:
+        # The agent generator makes blocking HTTP/LLM calls; stepping it on the event loop stalls every other request.
+        async for event in iterate_in_threadpool(stream):
             if event.get("type") == "done":
                 answer = str(event.get("content") or "")
                 dashboard_picker = event.get("dashboard_picker")
@@ -410,7 +412,8 @@ async def _stream_chat_events(
             {"type": "content", "delta": answer, "replace": True}
         )
 
-    followups, guidance = maybe_generate_contextual_navigation(
+    followups, guidance = await run_in_threadpool(
+        maybe_generate_contextual_navigation,
         chat_input.get("retrieval_query") or chat_input["question"],
         answer,
         chat_history=chat_input.get("chat_history"),
@@ -514,7 +517,8 @@ async def chat_completions(
         dashboard_selection: dict | None = None
         if USE_AGENT:
             answer, dashboard_picker, period_picker, kpi_metric_picker, kpi_team_picker = (
-                run_advisor_agent(
+                await run_in_threadpool(
+                    run_advisor_agent,
                     turns=extract_turns(request.messages),
                     sector_slug=sector,
                     extra_system_prompt=api_system,
@@ -533,8 +537,9 @@ async def chat_completions(
             dashboard_selection = _hard.dashboard_selection_payload()
         else:
             chain = _get_chain(sector, api_system)
-            answer = chain.invoke(chat_input)
-        followups, guidance = maybe_generate_contextual_navigation(
+            answer = await run_in_threadpool(chain.invoke, chat_input)
+        followups, guidance = await run_in_threadpool(
+            maybe_generate_contextual_navigation,
             chat_input.get("retrieval_query") or chat_input["question"],
             answer,
             chat_history=chat_input.get("chat_history"),
@@ -592,9 +597,10 @@ async def advisor_query(
     sector = sector_slugify(request.sector)
     user_id, user_email = _resolve_user_context(request, http_request)
     try:
-        answer = invoke_advisor(request.question, sector_slug=sector)
+        answer = await run_in_threadpool(invoke_advisor, request.question, sector_slug=sector)
         _, _, llm = _components()
-        followups, guidance = maybe_generate_contextual_navigation(
+        followups, guidance = await run_in_threadpool(
+            maybe_generate_contextual_navigation,
             request.question,
             answer,
             llm=llm,
