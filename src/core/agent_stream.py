@@ -63,6 +63,7 @@ from core.morning_brief import (
     build_morning_brief_system_prompt,
     fetch_morning_brief_data,
     is_morning_brief,
+    is_todays_brief,
 )
 from core.prompts import build_agent_system_prompt
 
@@ -462,7 +463,9 @@ def _stream_morning_brief(
     page_context: dict,
 ) -> Iterator[dict[str, Any]]:
     yield {"type": "status", "phase": "tool", "detail": "get_pivony_metrics"}
-    data = fetch_morning_brief_data(user_id, hard.dashboard_id, hard.since)
+    data = fetch_morning_brief_data(
+        user_id, hard.dashboard_id, hard.since, partial=is_todays_brief(page_context)
+    )
     last_selection = page_context.get("last_dashboard_selection") or {}
     dashboard_name = (
         hard.dashboard_name

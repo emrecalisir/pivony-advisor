@@ -1,11 +1,14 @@
 from core import morning_brief
-from core.morning_brief import fetch_morning_brief_data, is_morning_brief
+from core.morning_brief import fetch_morning_brief_data, is_morning_brief, is_todays_brief
 
 
 def test_is_morning_brief():
     assert is_morning_brief({"page": "morning_brief"})
+    assert is_morning_brief({"page": "todays_brief"})
     assert not is_morning_brief({"page": "global_executive"})
     assert not is_morning_brief(None)
+    assert is_todays_brief({"page": "todays_brief"})
+    assert not is_todays_brief({"page": "morning_brief"})
 
 
 def test_fetch_morning_brief_data_windows_topics_and_places(monkeypatch):
@@ -35,6 +38,8 @@ def test_fetch_morning_brief_data_windows_topics_and_places(monkeypatch):
     assert torba["day"]["reviews"] == 0
     assert torba["baseline_7d"] == {"reviews": 12}
     assert torba["top_complaint_topic"] is None
+    assert data["day_is_partial"] is False
+    assert fetch_morning_brief_data("uid", 6208, "2026-09-24", partial=True)["day_is_partial"] is True
 
 
 def test_failed_fetch_is_retried_then_marked_unavailable(monkeypatch):

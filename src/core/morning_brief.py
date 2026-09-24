@@ -11,6 +11,7 @@ from core.pivony_platform import fetch_metrics
 from core.prompts import MASTER_PROMPT, get_sector_prompt
 
 MORNING_BRIEF_PAGE = "morning_brief"
+TODAYS_BRIEF_PAGE = "todays_brief"
 BRIEF_TOPICS = ("F&B", "Oda", "Hizmet")
 BRIEF_VENDORS = ("VOYAGE TORBA", "MAXX ROYAL BODRUM")
 VENDOR_PIVOT_KEY = "vendorName"
@@ -20,7 +21,7 @@ FETCH_CONCURRENCY = 2
 UNAVAILABLE = {"status": "unavailable"}
 
 MORNING_BRIEF_INSTRUCTIONS = """MORNING BRIEF MODE
-The JSON below was fetched server-side for dashboard "{dashboard}" and is the only data you may use. `day` is one full calendar day; `prior_day` is the day before; `baseline_7d` is the {baseline_days} days before `day`. Do not ask for a dashboard or period, do not mention tools, APIs or timeouts, and never write a number that is not in the JSON. null means no data: write "—", never 0. {{"status": "unavailable"}} means the data could not be loaded: write "—" and never describe it as zero or no reviews. If `totals.day` is unavailable, reply with only one sentence saying yesterday's data could not be loaded and to try again in a few minutes.
+The JSON below was fetched server-side for dashboard "{dashboard}" and is the only data you may use. `day` is one calendar day; if `day_is_partial` is true it is today so far, so never compare its review counts with other windows (only negative_pct) and never call its lower volume a drop. `prior_day` is the day before; `baseline_7d` is the {baseline_days} days before `day`. Do not ask for a dashboard or period, do not mention tools, APIs or timeouts, and never write a number that is not in the JSON. null means no data: write "—", never 0. {{"status": "unavailable"}} means the data could not be loaded: write "—" and never describe it as zero or no reviews. If `totals.day` is unavailable, reply with only one sentence saying the day's data could not be loaded and to try again in a few minutes.
 
 Write the whole brief in the language the user's request specifies. Keep topic and hotel names exactly as they appear in the JSON (do not translate "F&B").
 
@@ -38,7 +39,14 @@ DATA:
 
 
 def is_morning_brief(page_context: dict | None) -> bool:
-    return isinstance(page_context, dict) and page_context.get("page") == MORNING_BRIEF_PAGE
+    return isinstance(page_context, dict) and page_context.get("page") in (
+        MORNING_BRIEF_PAGE,
+        TODAYS_BRIEF_PAGE,
+    )
+
+
+def is_todays_brief(page_context: dict | None) -> bool:
+    return isinstance(page_context, dict) and page_context.get("page") == TODAYS_BRIEF_PAGE
 
 
 def _loaded(metrics: dict | None) -> bool:
@@ -65,7 +73,9 @@ def _topic(metrics: dict | None, name: str) -> dict[str, Any]:
     return {"reviews": None, "negative_pct": None}
 
 
-def fetch_morning_brief_data(user_id: str, dashboard_id: int, day: str) -> dict[str, Any]:
+def fetch_morning_brief_data(
+    user_id: str, dashboard_id: int, day: str, partial: bool = False
+) -> dict[str, Any]:
     d = date.fromisoformat(day)
     prior = (d - timedelta(days=1)).isoformat()
     base_since = (d - timedelta(days=BASELINE_DAYS)).isoformat()
@@ -110,6 +120,7 @@ def fetch_morning_brief_data(user_id: str, dashboard_id: int, day: str) -> dict[
 
     return {
         "day": day,
+        "day_is_partial": partial,
         "prior_day": prior,
         "baseline_7d": f"{base_since} → {prior}",
         "totals": {label: _slice(results[(label, None)]) for label in windows},
