@@ -59,6 +59,11 @@ from core.config import (
     LLM_TEMPERATURE,
     sector_slugify,
 )
+from core.morning_brief import (
+    build_morning_brief_system_prompt,
+    fetch_morning_brief_data,
+    is_morning_brief,
+)
 from core.prompts import build_agent_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -357,6 +362,15 @@ def stream_advisor_agent(
         )
     slug = sector_slugify(sector_slug or DEFAULT_SECTOR)
     _hard = resolve_hard_agent_state(turns, page_context)
+    if (
+        is_morning_brief(page_context)
+        and user_id
+        and _hard.dashboard_id is not None
+        and _hard.since
+        and _hard.since == _hard.until
+    ):
+        yield from _stream_morning_brief(slug, turns, user_id, _hard, page_context)
+        return
     tools = filter_tools_for_state(
         _build_tools(
             sector_slug=slug,
@@ -438,6 +452,28 @@ def stream_advisor_agent(
         logger.warning("Agent stream aborted: %s", exc.user_message)
         yield from _yield_llm_failure(exc, picker, charts, dashboard_selection)
         return
+
+
+def _stream_morning_brief(
+    slug: str,
+    turns: list[tuple[str, str]],
+    user_id: str,
+    hard: Any,
+    page_context: dict,
+) -> Iterator[dict[str, Any]]:
+    yield {"type": "status", "phase": "tool", "detail": "get_pivony_metrics"}
+    data = fetch_morning_brief_data(user_id, hard.dashboard_id, hard.since)
+    last_selection = page_context.get("last_dashboard_selection") or {}
+    dashboard_name = (
+        hard.dashboard_name
+        or last_selection.get("name")
+        or f"Dashboard {hard.dashboard_id}"
+    )
+    system_prompt = build_morning_brief_system_prompt(slug, dashboard_name, data)
+    for event in stream_simple_completion(system_prompt=system_prompt, user_messages=turns):
+        if event.get("type") == "done":
+            event = {**event, "dashboard_selection": hard.dashboard_selection_payload()}
+        yield event
 
 
 def _run_agent_stream_loop(
