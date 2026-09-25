@@ -40,7 +40,6 @@ from core.kpi_flow import (
 )
 from core.tool_routing import (
     DEFAULT_PERIOD_PICKER,
-    _PERIOD_ARG_TOOLS,
     blocked_tool_result,
     filter_tools_for_state,
     sanitize_tool_calls,
@@ -1899,7 +1898,6 @@ def _resolve_period_picker_fallback(
     hard: HardAgentState,
     dashboard_picker: dict | None,
     assistant_text: str,
-    tools_called: set[str],
     saw_period_selection: bool,
 ) -> dict | None:
     """Attach period chips when dashboard is known but no date window is set."""
@@ -1908,8 +1906,6 @@ def _resolve_period_picker_fallback(
     if not hard.scope_resolved or hard.period_resolved:
         return None
     if saw_period_selection or _assistant_asks_for_period(assistant_text):
-        return _build_period_picker()
-    if tools_called & _PERIOD_ARG_TOOLS:
         return _build_period_picker()
     return None
 
@@ -2119,7 +2115,6 @@ def run_advisor_agent(
                 hard=_hard,
                 dashboard_picker=dash,
                 assistant_text=text,
-                tools_called=tools_called,
                 saw_period_selection=saw_period_selection,
             )
         if dash:

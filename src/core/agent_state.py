@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from core.analytics_scope import (
     EstablishedAnalyticsScope,
@@ -11,6 +14,9 @@ from core.analytics_scope import (
     parse_days_from_text,
     scope_prompt_block,
 )
+
+# Used only when the client does not send its local date; most users are in Turkey.
+_FALLBACK_TZ = ZoneInfo("Europe/Istanbul")
 
 
 def _int_or_none(value: Any) -> int | None:
@@ -315,6 +321,16 @@ def resolve_hard_agent_state(
 
 def hard_context_prompt_block(state: HardAgentState, page_context: dict | None = None) -> str:
     """Stronger than scope_prompt_block — marks hard inputs the model must not override."""
+    local_date = str((page_context or {}).get("local_date") or "")
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", local_date):
+        today = local_date
+    else:
+        today = datetime.now(_FALLBACK_TZ).date().isoformat()
+    body = _hard_context_body(state, page_context)
+    return f"Today's date: {today}. {body}".strip()
+
+
+def _hard_context_body(state: HardAgentState, page_context: dict | None) -> str:
     pc = page_context if isinstance(page_context, dict) else {}
     kpi_parts: list[str] = []
     if (
@@ -360,9 +376,11 @@ def hard_context_prompt_block(state: HardAgentState, page_context: dict | None =
             parts.append(f"Look-back: last {state.days} days.")
         else:
             parts.append(
-                "Period is NOT set. Do not guess days (not 90, not 'recent' / 'son günlerde'). "
-                "Ask in one short sentence which window to use. The UI shows 7/30/90 day chips. "
-                "Do not call analysis tools until the user picks a period."
+                "The page sets no period. If the user expressed a time window in any wording "
+                "(e.g. 'dün', 'geçen hafta', 'eylülden beri'), convert it to since/until "
+                "(YYYY-MM-DD, inclusive) using today's date and pass it to the tools. "
+                "Only if they gave none, ask in one short sentence which window to use; "
+                "the UI shows 7/30/90 day chips. Do not guess days and do not default to 90."
             )
         parts.append(
             "You SHOULD primarily use this locked dashboard for analysis. However, if the user "

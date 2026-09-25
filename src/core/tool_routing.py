@@ -56,9 +56,10 @@ DEFAULT_PERIOD_PICKER = {
         {"days": 90},
     ],
     "instruction": (
-        "Do not guess a look-back window and do not use 90 days or 'son günlerde'. "
-        "Ask in one short sentence which period to use. The UI shows 7/30/90 day chips. "
-        "Do not call analysis tools until the user picks a period."
+        "No period was passed. If the user expressed a time window in any wording, "
+        "convert it to since/until (or days) using today's date and call the tool again. "
+        "Otherwise ask in one short sentence which period to use; the UI shows 7/30/90 day chips. "
+        "Do not guess a window and do not default to 90 days."
     ),
 }
 
@@ -199,11 +200,11 @@ def pin_tool_args_for_state(
                 out["until"] = state.until
             if state.days is not None:
                 out["days"] = state.days
-        elif state.scope_resolved:
-            out.pop("days", None)
-            out.pop("since", None)
-            out.pop("until", None)
     return out
+
+
+def _args_have_period(args: dict[str, Any]) -> bool:
+    return bool(args.get("days") or (args.get("since") and args.get("until")))
 
 
 def validated_tool_invoke(
@@ -220,6 +221,7 @@ def validated_tool_invoke(
             tool.name in _PERIOD_ARG_TOOLS
             and state.scope_resolved
             and not state.period_resolved
+            and not _args_have_period(args)
         ):
             return period_selection_required_payload()
     if tool.name == "search_qdrant_reviews":

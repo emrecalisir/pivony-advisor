@@ -200,7 +200,7 @@ def test_pin_tool_args_injects_user_selected_dashboard_id():
     )
     assert args["dashboard_id"] == 6208
     assert "org_wide" not in args
-    assert "days" not in args
+    assert args["days"] == 7
 
 
 def test_pin_tool_args_sets_org_wide_for_metrics():
@@ -227,7 +227,7 @@ def test_pin_tool_args_strips_org_wide_from_dashboard_tools():
     )
     assert args["dashboard_id"] == 6208
     assert "org_wide" not in args
-    assert "days" not in args
+    assert args["days"] == 7
 
 
 def test_pin_tool_args_strips_org_wide_when_scope_unresolved():
@@ -253,7 +253,7 @@ def test_pin_tool_args_for_new_topic_intent_tool():
         state,
     )
     assert args["dashboard_id"] == 6208
-    assert "days" not in args
+    assert args["days"] == 7
 
 
 def test_dashboard_selection_payload_from_hard_state():
@@ -367,6 +367,40 @@ def test_pin_injects_days_when_period_is_resolved():
     args = pin_tool_args_for_state("get_pivony_metrics", {}, state)
     assert args["dashboard_id"] == 6208
     assert args["days"] == 30
+
+
+def test_tool_runs_with_model_period_and_asks_without_one():
+    import json
+
+    from langchain_core.tools import StructuredTool
+
+    def get_trends(
+        dashboard_id: int,
+        days: int | None = None,
+        since: str | None = None,
+        until: str | None = None,
+    ) -> str:
+        return json.dumps({"since": since, "until": until})
+
+    tool = StructuredTool.from_function(get_trends, name="get_trends", description="t")
+    state = HardAgentState(dashboard_id=6208, dashboard_locked=True, source="page_dashboard_id")
+
+    ran = json.loads(
+        _tool_routing.validated_tool_invoke(
+            tool, {"since": "2026-09-24", "until": "2026-09-24"}, state
+        )
+    )
+    assert ran == {"since": "2026-09-24", "until": "2026-09-24"}
+
+    asked = json.loads(_tool_routing.validated_tool_invoke(tool, {}, state))
+    assert asked["need_period_selection"] is True
+
+
+def test_hard_context_tells_the_model_today():
+    state = HardAgentState(dashboard_id=6208, dashboard_locked=True, source="page_dashboard_id")
+    assert hard_context_prompt_block(state).startswith("Today's date: 20")
+    block = hard_context_prompt_block(state, {"local_date": "2026-01-02"})
+    assert block.startswith("Today's date: 2026-01-02.")
 
 
 def test_period_selection_payload_lists_7_30_90():

@@ -293,8 +293,9 @@ def _scope_locked_tool_nudge(_hard: Any) -> types.Content:
         if not getattr(_hard, "period_resolved", True):
             text = (
                 f"Dashboard scope is already locked to id={_hard.dashboard_id}. "
-                "Do not call list_dashboards. Period is not set — ask which window "
-                "(7/30/90 days) in one short sentence. Do not guess days."
+                "Do not call list_dashboards. If the user expressed a time window in any "
+                "wording, convert it to since/until using today's date; otherwise ask which "
+                "window in one short sentence. Do not guess days."
             )
         else:
             text = (
@@ -712,7 +713,6 @@ def _run_agent_stream_loop(
             hard=_hard,
             dashboard_picker=picker,
             assistant_text=final_text,
-            tools_called=tools_called,
             saw_period_selection=saw_period_selection,
         )
         if period_picker:
