@@ -24,7 +24,9 @@ from pydantic import BaseModel, Field
 
 from core.agent import DEFAULT_ADVISOR_MODE, run_advisor_agent
 from core.agent_state import resolve_hard_agent_state
+from api.auth import install_api_token_check
 from core.config import (
+    ADVISOR_API_TOKEN,
     CREDS_PATH,
     DEFAULT_SECTOR,
     USE_AGENT,
@@ -114,6 +116,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+install_api_token_check(app, ADVISOR_API_TOKEN)
 
 
 class QueryRequest(BaseModel):

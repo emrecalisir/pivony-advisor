@@ -38,6 +38,7 @@ from core.config import (
     GCP_LOCATION,
     GCP_PROJECT,
     GCS_BUCKET_NAME,
+    QDRANT_API_KEY,
     QDRANT_HOST,
     QDRANT_TIMEOUT_SEC,
     QDRANT_URL,
@@ -397,7 +398,7 @@ def main() -> None:
 
     logger.info("Connecting to Qdrant at %s...", QDRANT_URL)
     try:
-        client = QdrantClient(url=QDRANT_URL, timeout=QDRANT_TIMEOUT_SEC)
+        client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=QDRANT_TIMEOUT_SEC)
         client.get_collections()
         logger.info("Qdrant is reachable.")
     except Exception as exc:
