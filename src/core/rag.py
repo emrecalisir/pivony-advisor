@@ -22,6 +22,7 @@ from core.config import (
     LLM_TEMPERATURE,
     PLATFORM_COLLECTION,
     PLATFORM_K,
+    QDRANT_API_KEY,
     QDRANT_TIMEOUT_SEC,
     QDRANT_URL,
     SECTOR_K,
@@ -110,7 +111,7 @@ def format_review_docs(docs) -> str:
 
 
 def create_qdrant_client() -> QdrantClient:
-    client = QdrantClient(url=QDRANT_URL, timeout=QDRANT_TIMEOUT_SEC)
+    client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=QDRANT_TIMEOUT_SEC)
     client.get_collections()
     return client
 

@@ -11,17 +11,18 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 QDRANT_URL="${QDRANT_URL:-http://${QDRANT_HOST:-127.0.0.1}:6333}"
+QDRANT_AUTH=(-H "api-key: ${QDRANT_API_KEY:-}")
 
 delete_collection() {
   local name="$1"
   echo "Deleting collection: $name"
-  curl -sf -X DELETE "${QDRANT_URL}/collections/${name}" >/dev/null \
+  curl -sf "${QDRANT_AUTH[@]}" -X DELETE "${QDRANT_URL}/collections/${name}" >/dev/null \
     || echo "  (missing or already deleted)"
 }
 
 if [[ "${1:-}" == "--all-pivony" ]]; then
   if command -v jq >/dev/null 2>&1; then
-    mapfile -t names < <(curl -sf "${QDRANT_URL}/collections" | jq -r '.result.collections[].name')
+    mapfile -t names < <(curl -sf "${QDRANT_AUTH[@]}" "${QDRANT_URL}/collections" | jq -r '.result.collections[].name')
     for name in "${names[@]}"; do
       [[ "$name" == pivony_* ]] && delete_collection "$name"
     done

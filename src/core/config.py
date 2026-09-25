@@ -49,6 +49,10 @@ QDRANT_HOST = os.environ.get("QDRANT_HOST", "127.0.0.1")
 QDRANT_PORT = int(os.environ.get("QDRANT_PORT", "6333"))
 QDRANT_TIMEOUT_SEC = int(os.environ.get("QDRANT_TIMEOUT_SEC", "30"))
 QDRANT_URL = f"http://{QDRANT_HOST}:{QDRANT_PORT}"
+QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "").strip() or None
+
+# When set, non-loopback callers must send "Authorization: Bearer <token>".
+ADVISOR_API_TOKEN = os.environ.get("ADVISOR_API_TOKEN", "").strip()
 
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "text-embedding-004")
 ADVISOR_LLM_MODEL = (
