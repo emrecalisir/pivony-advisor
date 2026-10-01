@@ -1,8 +1,8 @@
 # Pivony Platform — Master Kılavuz
 
-**Versiyon:** 2026-05  
+**Versiyon:** 2026-10  
 **Amaç:** Pivony Advisor eğitimi ve kurumsal referans dokümanı  
-**Kaynak:** pivony.com ürün portföyü (pivony-website), platform kod tabanı (My Workspace, Aylık AI Insights), güncel ürün tanımları
+**Kaynak:** pivony.com ürün portföyü (pivony-website), platform kod tabanı (My Workspace, Aylık AI Insights), güncel ürün tanımları (Sonic Survey, Sonic Prospect Channels, Sonic Prospect for Shopify)
 
 > Bu doküman eski Notion Knowledge Center PDF'inin yerine geçer. Ürün bazlı yapılandırılmıştır; My Workspace, widget oluşturma ve periyodik aylık rapor akışları dahil edilmiştir.
 
@@ -15,7 +15,7 @@
 3. [Ürün 1: Voice of Customer (VoC)](#3-ürün-1-voice-of-customer-voc)
 4. [Ürün 2: Market Intelligence](#4-ürün-2-market-intelligence)
 5. [Ürün 3: Full Intelligence](#5-ürün-3-full-intelligence)
-6. [Ürün 4: Pivony Capture](#6-ürün-4-pivony-capture)
+6. [Ürün 4: Sonic Survey & Sonic Prospect](#6-ürün-4-sonic-survey--sonic-prospect)
 7. [Ürün 5: Pivony Advisor](#7-ürün-5-pivony-advisor)
 8. [Ürün 6: AI Ticket Triage](#8-ürün-6-ai-ticket-triage)
 9. [Ürün 7: Engage](#9-ürün-7-engage)
@@ -44,19 +44,27 @@ Pivony, **iç veri** (müşterilerin size doğrudan söyledikleri) ile **dış v
 2. **Understand** — Pivony Advisor: Kök neden · Sentiment · Segment analizi
 3. **Act** — Pivony Engage: WhatsApp · Otomatik veya 1 tık onay · Anında teslim
 
-### Yedi ürün
+### Platform ürünleri (CX Intelligence)
 
 | # | Ürün | Veri tipi | Hedef kitle |
 |---|------|-----------|-------------|
 | 1 | Voice of Customer | İç veri (inside-out) | CX, CS, Support |
 | 2 | Market Intelligence | Dış veri (outside-in) | CMO, Strategy, Marketing |
 | 3 | Full Intelligence | İç + dış + Agentic AI | CEO, CDO, Enterprise CX |
-| 4 | Pivony Capture | Widget · Transkript · Video | CX, Product, UX, Growth |
-| 5 | Pivony Advisor | Tüm bağlı veri | Tüm plan kullanıcıları |
-| 6 | AI Ticket Triage | Helpdesk ticketları | Support operasyonları |
-| 7 | Engage | WhatsApp aksiyonları | CX, Operations |
+| 4 | Pivony Advisor | Tüm bağlı veri | Tüm plan kullanıcıları |
+| 5 | AI Ticket Triage | Helpdesk ticketları | Support operasyonları |
+| 6 | Engage / Sonic Engage | WhatsApp · AI voice (VoC-backed) | CX, Operations |
 
-**Not:** Advisor, AI Ticket Triage ve Engage ayrı plan kartı değildir; ilgili planla birlikte paketlenir.
+### Sonic hattı (pre- & post-purchase sinyaller)
+
+| Ürün | Rol | Nasıl başlanır |
+|------|-----|----------------|
+| **Sonic Survey** | Satın alma **sonrası** açık geri bildirim (yazılı · ses · video) → VoC AI | Ücretsiz onay sonrası self-serve (`pivony.com/plans`) |
+| **Sonic Prospect** | Satın alma **öncesi** niyet, itiraz, değerlendirme → **Qualified Prospect** | **Request Access** + Pivony onayı (Full Engine) |
+| **Sonic Prospect Channels** | Aynı Prospect Engine — web sitesi, WhatsApp, Instagram | Channels aboneliği / onaylı erişim |
+| **Sonic Prospect for Shopify** | Aynı engine — collection · product · cart · checkout | Shopify üzerinden usage-based abonelik |
+
+**Not:** Advisor, AI Ticket Triage ve Engage ayrı plan kartı değildir; ilgili planla birlikte paketlenir. Sonic Survey ve Sonic Prospect bağımsız çalışır; birlikte kullanıldığında VoC katmanında pre- + post-purchase resmi birleşir.
 
 ### Temel farklılaştırıcılar
 
@@ -77,7 +85,8 @@ Pivony, **iç veri** (müşterilerin size doğrudan söyledikleri) ile **dış v
 
 | Tip | Ürün | Soru | Veri kaynakları |
 |-----|------|------|-----------------|
-| **İç veri (Internal / Inside-out)** | Voice of Customer | Müşteriler bize ne söylüyor? | Ticket, CRM, anket, çağrı merkezi, Capture widget |
+| **İç veri (Internal / Inside-out)** | Voice of Customer | Müşteriler bize ne söylüyor? | Ticket, CRM, anket, çağrı merkezi, Sonic Survey widget |
+| **Pre-purchase sinyaller** | Sonic Prospect | Ziyaretçi / prospect ne soruyor, neyi tartıyor? | Web, WhatsApp, Instagram (Channels); Shopify storefront |
 | **Dış veri (External / Outside-in)** | Market Intelligence | Pazar ve rakipler ne diyor? | App Store, sosyal medya, forum, rakip sinyalleri |
 | **Her ikisi** | Full Intelligence | 360° görünüm + otomasyon | İç + dış + Agentic AI |
 
@@ -88,13 +97,28 @@ Pivony, **iç veri** (müşterilerin size doğrudan söyledikleri) ile **dış v
 | **VoC** | Kendi müşterilerinizin sesi | CX Director, Customer Success, Support Lead |
 | **Market** | Pazar ve rakipler | CMO, Strategy Director, Marketing |
 | **Full** | Her ikisi + Agentic AI | CEO, CDO, Enterprise CX |
-| **Capture** | Yazılı, sesli, video geri bildirim | CX, Product, UX, Growth |
+| **Sonic Survey** | Yazılı, sesli, video geri bildirim (eski ad: Capture) | CX, Product, UX, Growth |
+| **Sonic Prospect** | AI Prospect Engine — Qualified Prospect | Sales, E-commerce, Growth |
 | **Enterprise** | Sınırsız, SSO, dedicated analyst | Büyük programlar, regüle sektörler |
 
-### 2.3 Capture Free Tier
+### 2.3 Sonic Survey — self-serve planlar (USD/ay)
 
-- 100 yanıt/ay, yazılı widget, temel sentiment, sınırlı Highlights
-- Pro: kök neden analizi, ses & video, VoC entegrasyonu
+| Plan | Fiyat | Yanıt/ay | Öne çıkanlar |
+|------|-------|----------|--------------|
+| **Free** | $0 | 100 | Yazılı widget, temel sentiment, sınırlı Highlights, watermark |
+| **Plus** | $89 | 1.500 | Çok dilli, marka rengi/logo, sınırlı kök neden |
+| **Pro** | $179 | 3.000 | Ses + video, tam kök neden, VoC dashboard derinliği, temel otonom aksiyon |
+| **Pro+** | $379 | 10.000 | CRM/helpdesk entegrasyonları, API, SSO/SAML, white-label, sınırsız koltuk |
+
+Yıllık faturalama: 10 ay öde, 12 ay kullan. Kota aşımında response overage uygulanır.
+
+### 2.4 Sonic Prospect — fiyatlandırma özeti
+
+- **Konuşma ücreti yok** — chat, mesaj, AI yanıt, oturum veya yüksek niyetli ziyaretçi tek başına faturalanmaz.
+- **Qualified Prospect (QP)** — yeterli kanıtla satış anlamlı adım (niyet + fit + değerlendirme) oluştuğunda faturalanır.
+- **Standart:** $9 / Qualified Prospect; **lansman:** ilk 1.000 QP için $5,99; ilk **5 QP ücretsiz** (Shopify Channels ile uyumlu).
+- **Niyet tek başına QP değildir** — örn. yalnızca "fiyatınız nedir?" veya yalnızca "satın almak istiyorum" otomatik faturalanmaz; bağlam + fit + satış adımı gerekir.
+- **Aktivasyon:** `app.pivony.com/signup` → hesap + **Request Access**; Full Engine Pivony onayından sonra açılır.
 
 ---
 
@@ -140,7 +164,7 @@ Müşteri geri bildirimini kargo verisi, satış kanalı ve segment bilgisiyle b
 - Çağrı merkezi kayıtları
 - NPS anketleri
 - CSV / Excel yükleme
-- Pivony Capture widget
+- Sonic Survey widget (eski ad: Capture)
 
 **Segment / operasyonel:**
 - Kargo firması ve teslimat verisi
@@ -270,18 +294,31 @@ Vodafone: iç + dış ses birlikte CX süreçlerine entegre. Samsung: 360° cons
 
 ---
 
-## 6. Ürün 4: Pivony Capture
+## 6. Ürün 4: Sonic Survey & Sonic Prospect
 
-**URL:** pivony.com/products/voice-capture  
-**Badge:** Pivony Capture · 2026 · NEW
+Sonic hattı iki tamamlayıcı sinyal katmanıdır:
 
-### 6.1 Konumlandırma
+| Katman | Ürün | Soru |
+|--------|------|------|
+| Post-purchase | **Sonic Survey** | Müşteri deneyimini nasıl anlatıyor? |
+| Pre-purchase | **Sonic Prospect** | Prospect karar vermeden önce ne soruyor / neyi tartıyor? |
 
-> "Collect Feedback. Let AI Understand. Let the System Act."
+Platform (VoC / Full Intelligence) bu sinyalleri segment keşfi ve Customer 365 ile birleştirir.
 
-Yazılı, sesli veya video — müşteri tercih ettiği formatta anlatır. VoC AI anında analiz eder. Hotjar + Typeform + UserTesting tek platformda.
+---
 
-### 6.2 Üç geri bildirim modu
+### 6.1 Sonic Survey (eski ad: Pivony Capture)
+
+**URL:** pivony.com/products/voice-capture · pivony.com/plans (Sonic Survey)  
+**Badge:** Sonic Survey by Pivony · 📋
+
+#### Konumlandırma
+
+> "See who is asking — before they buy." (ekosistem mesajı) · "Collect Feedback. Let AI Understand."
+
+Yazılı, sesli veya video — müşteri tercih ettiği formatta anlatır. Yanıtlar doğrudan VoC AI'a akar. Hotjar + Typeform + UserTesting tek platformda.
+
+#### Üç geri bildirim modu
 
 | Mod | Akış |
 |-----|------|
@@ -289,24 +326,19 @@ Yazılı, sesli veya video — müşteri tercih ettiği formatta anlatır. VoC A
 | **Voice (Sesli)** | ~2 dk kayıt → AI transkript → VoC analizi → aksiyon |
 | **Video** | Kamera → konuşma + yüz ifadesi → VoC analizi → aksiyon |
 
-### 6.3 Özellikler
+#### Özellikler
 
-- 3 format, tek platform
+- Self-serve planlar: Free → Plus → Pro → Pro+ (bkz. bölüm 2.3)
 - Native Turkish speech (çeviri katmanı yok)
-- Video + facial sentiment analysis
-- Instant VoC AI
-- Tek satır entegrasyon (~5 dakika)
+- Instant VoC AI; Pro+ ile Salesforce, Zendesk, HubSpot, Slack
+- Tek satır embed (~5 dakika)
 - VoC dashboard, ticket ve CRM ile birleşme
 
-### 6.4 Tetikleyici seçenekleri
+#### Tetikleyici seçenekleri
 
 Exit intent, time on page, scroll depth, manual, cart abandonment, after form submit, after purchase, error page
 
-### 6.5 Rakip karşılaştırma (özet)
-
-Pivony Capture; Hotjar, Typeform, UserTesting'e karşı: AI analizi, kök neden, otonom aksiyon, native Turkish NLU, VoC entegrasyonu ve anında sonuç sunar.
-
-### 6.6 Entegrasyon örneği (HTML)
+#### Entegrasyon örneği (HTML)
 
 ```html
 <script
@@ -320,7 +352,99 @@ Pivony Capture; Hotjar, Typeform, UserTesting'e karşı: AI analizi, kök neden,
 </script>
 ```
 
+**Advisor notu:** Dokümantasyonda "Capture" geçen eski metinler **Sonic Survey** ile aynı widget ailesini ifade eder.
+
 ---
+
+### 6.2 Sonic Prospect — AI Prospect Engine
+
+**URL:** pivony.com/products/sonic-prospect
+
+#### Konumlandırma
+
+> "Your prospects are already talking. Sonic Prospect listens, understands, and helps them decide."
+
+Script okuyan chatbot değil; **niyet, itiraz, değerlendirme davranışı ve journey bağlamını** okuyup prospect'in bir sonraki adımda neye ihtiyaç duyduğuna göre rehberlik eden **AI Prospect Engine**.
+
+#### Prospect Decision Loop (5 aşama)
+
+1. **LISTEN** — Prospect ne soruyor?
+2. **UNDERSTAND** — Arkasındaki sinyal (fiyat, kanıt, entegrasyon, rakip, güvenlik…)
+3. **GUIDE** — Script değil, bağlama uygun kanıt ve yönlendirme
+4. **CONVERT** — Satış anlamlı adım (Qualified Prospect oluşumu)
+5. **LEARN** — Konuşmalar VoC intelligence'a geri beslenir (pattern → kök neden → journey iyileştirme)
+
+#### Klasik chatbot vs Sonic Prospect
+
+| Klasik chatbot | Sonic Prospect |
+|----------------|----------------|
+| Soruya cevap verir | Niyet + itiraz + journey stage okur |
+| Script / FAQ | Değerlendirme davranışına göre adapte olur |
+| Konuşmayı saklar | Kararı neyin durdurduğunu anlar |
+| İnsanı bekler | Uygun sinyalde aksiyona dönüştürür |
+| Oturumları bağımsız görür | VoC intelligence'a öğrenir |
+
+#### Context-aware conversations
+
+Prospect'in yalnızca sorduğu soru değil, journey bağlamı (teknik ve yasal olarak desteklendiği ölçüde) dikkate alınır — amaç **ilgili rehberlik**, ham gezinme geçmişini ifşa etmek değil.
+
+#### Faturalama (Qualified Prospect)
+
+- Konuşma, mesaj, sayfa görüntüleme, intent sinyali → **ücret yok**
+- **Qualified Prospect** → standart **$9** (lansman: ilk 1.000 adet **$5,99**; ilk **5 QP ücretsiz**)
+- QP tanımı: satış anlamlı prospect + gerçek satın alma niyeti + fit + satın alma ile ilgili sonraki adım için **yeterli kanıt**
+- Qualify olmayan konuşmalar → **$0**
+
+**Başlangıç:** Request Access → Pivony onayı → aktivasyon.
+
+---
+
+### 6.3 Sonic Prospect Channels
+
+**Channels**, Shopify dışındaki **aynı AI Prospect Engine** dağıtım yüzeyidir. Shopify ayrı SKU / ucuz tier değildir — **One Engine**, farklı journey.
+
+| Kanal | Kullanım | Not |
+|-------|----------|-----|
+| **Website** | Gömülü prospect agent; canlı sayfa + PDF crawl ile öğrenme; kilitli yanıtlar (fiyat, politika) | `pivony.com/plans`: web sitesi prospect soruları |
+| **WhatsApp** | Prospect / pre-purchase diyalog | Platform planlarıyla birlikte "website, WhatsApp, and Instagram" ifadesi |
+| **Instagram** | Sosyal prospect etkileşimi | Channels erişimi onay sonrası |
+
+**Channels vs Shopify:** Aynı Qualified Prospect fiyat mantığı; Shopify'da faturalama Shopify aboneliği üzerinden usage-based; Channels tarafında Request Access / üye ekonomisi.
+
+**Engage / Sonic ayrımı:** **Sonic Prospect** = satın alma öncesi prospect engine. **Sonic Engage** (`pivony.com/products/engage`, eski Engage) = VoC insight tetiklemeli **WhatsApp + AI voice outbound** (NPS detractor, kargo, VIP churn). Karıştırma.
+
+---
+
+### 6.4 Sonic Prospect for Shopify
+
+**URL:** pivony.com/products/sonic-prospect/shopify
+
+#### Konumlandırma
+
+Shopify'da "chatbot / sales bot" arayan merchant'lar için **AI Prospect Agent** — **Shopify Inbox / WISMO** (sipariş nerede?) yerine geçmez; **satın alma kararı** sırasında yanlarında durur.
+
+#### Journey noktaları
+
+Collection · product · cart · checkout — stall senaryoları: kargo/duty, beden/fit, beauty shade, rakip SKU karşılaştırması, yüksek AOV / hediye, wholesale / Plus.
+
+#### Shopify'a özel kurallar
+
+| Konu | Detay |
+|------|--------|
+| App Store chatbot mu? | **Hayır** — ayrı App Store chatbot SKU'su değil; storefront journey agent |
+| WISMO | Sipariş takibi → Shopify Inbox; Prospect purchase intent'i ayırır |
+| Faturalama | Konuşma ücretsiz; **Qualified Prospect** usage-based (Shopify üzerinden) |
+| Engine | Channels ile **aynı** AI Prospect Engine; ilk 5 QP free, sonra $5,99 / $9 kademesi |
+| Enterprise | Governance, güvenlik, entegrasyon, ölçek — daha akıllı bot değil |
+
+#### Tipik Shopify chatbot farkı
+
+- Mesaj paketi / conversation metering yok
+- Beden tablosu yapıştırıp kapatmak yerine fit + SKU bağlamında rehberlik
+- Qualified Prospect oluştuğunda **Why?** izi ile satışa anlamlı adım
+
+---
+
 
 ## 7. Ürün 5: Pivony Advisor
 
@@ -408,15 +532,19 @@ Ayrı plan kartı değil; mevcut planla paketlenir. VoC triage verisini kök ned
 
 ---
 
-## 9. Ürün 7: Engage
+## 9. Ürün 6: Engage / Sonic Engage
 
-**URL:** pivony.com/products/engage
+**URL:** pivony.com/products/engage · pivony.com/products/sonic (VoC-backed agent)
 
 ### 9.1 Konumlandırma
 
-> "The Right Message. WhatsApp. Right Now."
+> "A voice agent backed by Voice of Customer."
 
-Pivony insight'ı veya müşteri yolculuğu adımı tetikler → kişiselleştirilmiş WhatsApp mesajı → webhook ile yanıt takibi → döngü kapanır.
+Klasik voice agent script okur; **Sonic Engage** VoC intelligence (kök neden, sentiment, journey) ile başlar → WhatsApp veya AI voice ile müşteriye ulaşır → yanıtlar insight katmanına geri akar.
+
+**Sonic Prospect ile fark:** Prospect = **pre-purchase** prospect engine (Qualified Prospect). Engage = **post-purchase / insight-triggered** outbound (NPS detractor, kargo, VIP risk).
+
+Pivony insight'ı veya müşteri yolculuğu adımı tetikler → kişiselleştirilmiş WhatsApp (veya uygun segmentte AI voice) → webhook ile yanıt takibi → döngü kapanır.
 
 ### 9.2 Akış
 
@@ -1204,9 +1332,11 @@ Welcome footer ve yardım menüsünden erişilen AI asistan. Pivony Advisor (`/c
 
 ## 15. Planlar ve Özellik Matrisi
 
-### 15.1 Plan karşılaştırma (özet)
+**Güncel self-serve fiyatlandırma:** Sonic Survey (Free / Plus / Pro / Pro+) → `pivony.com/plans`. Sonic Prospect → Qualified Prospect başına (bkz. bölüm 2.4). VoC · Market · Full → demo quote.
 
-| Özellik | Free | VoC | Market | Full | Capture Pro | Enterprise |
+### 15.1 Plan karşılaştırma (özet — CX platform)
+
+| Özellik | Free | VoC | Market | Full | Sonic Survey Pro+ | Enterprise |
 |---------|------|-----|--------|------|-------------|------------|
 | Root-cause analysis | — | ✓ | — | ✓ | ✓ | ✓ |
 | Sentiment analysis | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -1246,7 +1376,7 @@ pivony.com/vs — Qualtrics, Medallia, Artiwise, Pisano, AlternaCX, ChatGPT, Cla
 - GDPR & KVKK uyumu
 - **Müşteri verisiyle AI eğitimi yapılmaz**
 - ISO 27001 altyapı
-- PII masking (VoC, Full, Capture, Enterprise)
+- PII masking (VoC, Full, Sonic Survey Pro+, Enterprise)
 - Enterprise: SSO/SAML, RBAC, on-prem/VPC
 
 ### 16.2 Destek kaynakları
@@ -1327,6 +1457,9 @@ VoC playbook (17.2) + Market playbook (17.1) + aynı My Workspace'te brand + com
 | Workspace PDF? | My Workspace → Generate PDF → `/console/report` |
 | Kullanıcı davet? | `/settings/teams` + `/settings/team/invite` |
 | Zendesk? | `/settings/integrations` → subdomain + token → dashboard wizard |
+| Sonic Survey widget? | `pivony.com/plans` — Free onay sonrası embed; Pro ses/video |
+| Sonic Prospect / Shopify? | `pivony.com/products/sonic-prospect` · `/shopify` — Request Access; QP faturalama |
+| Sonic Prospect Channels? | Website · WhatsApp · Instagram — aynı engine, Channels erişimi |
 
 Detaylı adımlar: `docs/PIVONY_ADVISOR_PLAYBOOKS.md`
 
@@ -1350,4 +1483,4 @@ Vodafone Turkey, Samsung, Allianz, Karaca, Papara, Akbank, Millenicom, Etstur
 
 ---
 
-*Bu doküman Pivony Advisor RAG koleksiyonu (`pivony_customer_knowledge`) için birincil eğitim kaynağıdır. Güncelleme: ürün veya platform değişikliklerinde pivony-website locale dosyaları ve pivony-api-dev/api/welcome.py referans alınmalıdır.*
+*Bu doküman Pivony Advisor RAG koleksiyonu (`pivony_customer_knowledge`) için birincil eğitim kaynağıdır. Güncelleme: ürün veya platform değişikliklerinde pivony-website locale dosyaları, `pivony.com/plans`, `pivony.com/products/sonic-prospect` (+ `/shopify`) ve pivony-api-dev/api/welcome.py referans alınmalıdır.*
